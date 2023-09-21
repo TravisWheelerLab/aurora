@@ -9,6 +9,7 @@ use crate::{
     substitution_matrix::SubstitutionMatrix,
     support::windowed_confidence_slow,
     viterbi::{traceback, viterbi},
+    viz::AuroraSodaData,
     windowed_scores::windowed_score,
     BACKGROUND_WINDOW_SIZE, CONSENSUS_JOIN_DISTANCE, SCORE_WINDOW_SIZE, TARGET_JOIN_DISTANCE,
 };
@@ -43,7 +44,6 @@ pub fn run_pipeline(
     let mut last_num_cols = active_cols.len();
     let mut results: Vec<Annotation> = vec![];
 
-    // let mut json: Vec<serde_json::Value> = vec![];
     let mut join_id_cnt = 1usize;
     while !active_cols.is_empty() {
         viterbi(
@@ -60,7 +60,6 @@ pub fn run_pipeline(
         let mut segments = Segments::new(&trace, &confidence_matrix, &active_cols);
         segments.create_links(CONSENSUS_JOIN_DISTANCE, TARGET_JOIN_DISTANCE);
         segments.process_links();
-        // json.push(segments.json(&matrix_def));
 
         let (mut removed_results, cols) =
             segments.get_results_and_active_cols(&matrix_def, region_idx);
@@ -74,15 +73,36 @@ pub fn run_pipeline(
         last_num_cols = active_cols.len();
     }
 
-    // let mut file = std::fs::File::create("a.json").expect("failed to create a.json");
-    // file.write_all(serde_json::to_string(&json).unwrap().as_bytes())
-    //     .expect("failed to write to a.json");
-
     results.sort_by_key(|r| (r.join_id, r.target_start));
     results.sort_by_key(|r| r.target_start);
     results.retain(|r| r.query_name != "skip");
 
     Annotation::write(&results, &mut std::io::stdout());
+
+    // TODO: command line flag for this
+    if true {
+        let reference_bed_path = "";
+        let names_path = "";
+        let data = AuroraSodaData::new(
+            &matrix_def,
+            alignments,
+            &results,
+            reference_bed_path,
+            names_path,
+        );
+
+        let html_template = std::fs::read_to_string("./fixtures/html/template-new.html")
+            .expect("failed to read template html");
+
+        let viz_html = html_template.replace(
+            "DATA_TARGET",
+            &serde_json::to_string(&data).expect("failed to serialize JSON data"),
+        );
+
+        let mut file = std::fs::File::create("index.html").expect("failed to create index.html");
+        std::io::Write::write_all(&mut file, viz_html.as_bytes())
+            .expect("failed to write to index.html");
+    }
 }
 
 pub trait StrSliceExt {

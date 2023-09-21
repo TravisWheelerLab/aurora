@@ -10,6 +10,7 @@ mod segments;
 mod substitution_matrix;
 mod support;
 mod viterbi;
+mod viz;
 mod windowed_scores;
 
 use std::fs::File;

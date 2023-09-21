@@ -1,19 +1,50 @@
 use phf::phf_map;
 
 pub trait NucleotideByteUtils {
-    fn as_utf8_string(&self) -> String;
+    fn into_utf8_string(self) -> String;
+    fn to_utf8_string(&self) -> String;
 }
 
 impl NucleotideByteUtils for Vec<u8> {
-    fn as_utf8_string(&self) -> String {
-        self.iter()
-            .map(|&b| ALIGNMENT_ALPHABET_STR[b as usize])
-            .collect()
+    fn to_utf8_string(&self) -> String {
+        String::from_utf8(
+            self.iter()
+                .map(|&b| ALIGNMENT_ALPHABET_UTF8[b as usize])
+                .collect::<Vec<u8>>(),
+        )
+        .expect("failed to convert digital nucleotide byte vector to utf8 string")
+    }
+
+    fn into_utf8_string(self) -> String {
+        String::from_utf8(
+            self.into_iter()
+                .map(|b| ALIGNMENT_ALPHABET_UTF8[b as usize])
+                .collect::<Vec<u8>>(),
+        )
+        .expect("failed to convert digital nucleotide byte vector to utf8 string")
     }
 }
 
 pub const ALIGNMENT_ALPHABET_STR: [&str; 15] = [
-    "A", "C", "G", "T", "K", "M", "N", "R", "S", "W", "X", "Y", "-", "+", "*",
+    "A", "C", "G", "T", "K", "M", "N", "R", "S", "W", "X", "Y", "-", "-", "*",
+];
+
+pub const ALIGNMENT_ALPHABET_UTF8: [u8; 15] = [
+    "A".as_bytes()[0],
+    "C".as_bytes()[0],
+    "G".as_bytes()[0],
+    "T".as_bytes()[0],
+    "K".as_bytes()[0],
+    "M".as_bytes()[0],
+    "N".as_bytes()[0],
+    "R".as_bytes()[0],
+    "S".as_bytes()[0],
+    "W".as_bytes()[0],
+    "X".as_bytes()[0],
+    "Y".as_bytes()[0],
+    "-".as_bytes()[0],
+    "-".as_bytes()[0],
+    "*".as_bytes()[0],
 ];
 
 pub const NUCLEOTIDE_ALPHABET_UTF8: [u8; 12] = [

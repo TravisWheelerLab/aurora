@@ -1,9 +1,12 @@
 use anyhow::Result;
+use std::fmt;
 use std::io::{BufRead, BufReader, Read};
 
+use serde::{ser::SerializeStruct, Serialize, Serializer};
+
 use crate::alphabet::{
-    ALIGNMENT_ALPHABET_STR, DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
-    NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, UTF8_TO_DIGITAL_NUCLEOTIDE,
+    NucleotideByteUtils, ALIGNMENT_ALPHABET_STR, DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL,
+    GAP_OPEN_DIGITAL, NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, UTF8_TO_DIGITAL_NUCLEOTIDE,
 };
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
@@ -15,11 +18,30 @@ pub enum Strand {
 }
 
 impl Strand {
-    pub fn to_string(&self) -> String {
+    pub fn from_str(str: &str) -> Self {
+        match str {
+            "+" => Self::Forward,
+            "-" => Self::Reverse,
+            str => panic!("unknown strand str: {}", str),
+        }
+    }
+}
+
+impl Serialize for Strand {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl fmt::Display for Strand {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Strand::Forward => "+".to_string(),
-            Strand::Reverse => "-".to_string(),
-            Strand::Unset => panic!("can't convert Strand::Unset to String"),
+            Strand::Forward => write!(f, "+"),
+            Strand::Reverse => write!(f, "-"),
+            Strand::Unset => write!(f, "?"),
         }
     }
 }
@@ -41,6 +63,33 @@ pub struct Alignment {
     pub gap_init: f64,
     pub gap_extend: f64,
 }
+
+impl Serialize for Alignment {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("Alignment", 6)?;
+        state.serialize_field("name", &self.query_name)?;
+        state.serialize_field("start", &self.target_start)?;
+        state.serialize_field("end", &self.target_end)?;
+        state.serialize_field("row", &self.query_id)?;
+        state.serialize_field("strand", &self.strand.to_string())?;
+        state.serialize_field("targetSeq", &self.target_seq.to_utf8_string())?;
+        state.serialize_field("sequence", &self.query_seq.to_utf8_string())?;
+        state.end()
+    }
+}
+
+// TODO: flesh this out
+pub struct AlignmentGroup {
+    pub target_id: usize,
+    pub target_start: usize,
+    pub target_end: usize,
+    pub alignments: Vec<Alignment>,
+}
+
+impl AlignmentGroup {}
 
 pub fn caf_str_to_digital_nucleotides(caf_str: &str) -> (Vec<u8>, Vec<u8>) {
     //  Robert's notes on the CAF format:
