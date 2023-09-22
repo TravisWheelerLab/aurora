@@ -65,6 +65,7 @@ pub const NUCLEOTIDE_ALPHABET_UTF8: [u8; 12] = [
 pub const PLUS_UTF8: u8 = "+".as_bytes()[0];
 pub const FORWARD_SLASH_UTF8: u8 = "/".as_bytes()[0];
 pub const DASH_UTF8: u8 = "-".as_bytes()[0];
+pub const SPACE_UTF8: u8 = " ".as_bytes()[0];
 
 pub const A_DIGITAL: u8 = 0;
 pub const C_DIGITAL: u8 = 1;

@@ -81,15 +81,10 @@ pub fn run_pipeline(
 
     // TODO: command line flag for this
     if true {
-        let reference_bed_path = "";
-        let names_path = "";
-        let data = AuroraSodaData::new(
-            &matrix_def,
-            alignments,
-            &results,
-            reference_bed_path,
-            names_path,
-        );
+        // let reference_bed_path = "./fixtures/hg38.fa.out.bed";
+        let reference_bed_path = "./fixtures/chr13.bed";
+        let data =
+            AuroraSodaData::new(&confidence_matrix, alignments, &results, reference_bed_path);
 
         let html_template = std::fs::read_to_string("./fixtures/html/template-new.html")
             .expect("failed to read template html");

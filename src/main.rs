@@ -47,7 +47,6 @@ pub const BACKGROUND_WINDOW_SIZE: usize = 61;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-
     let alignments_file = File::open(cli.alignments)?;
     let matrices_file = File::open(cli.matrices)?;
 
