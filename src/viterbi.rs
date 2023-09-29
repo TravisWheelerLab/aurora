@@ -1,4 +1,4 @@
-use crate::{matrix::Matrix, score_params::ScoreParams, CONSENSUS_JOIN_DISTANCE};
+use crate::{matrix::Matrix, score_params::ScoreParams};
 
 use itertools::multizip;
 
@@ -8,6 +8,7 @@ pub fn viterbi(
     sources_matrix: &mut Matrix<usize>,
     active_cols: &[usize],
     score_params: &ScoreParams,
+    consensus_join_distance: usize,
 ) {
     let first_col_idx = active_cols[0];
 
@@ -123,7 +124,7 @@ pub fn viterbi(
                         viterbi_matrix.consensus_position_sparse(sparse_row_to_idx, col_to_idx);
 
                     let consensus_delta = consensus_pos_from.abs_diff(consensus_pos_to);
-                    let join_delta = CONSENSUS_JOIN_DISTANCE.saturating_sub(consensus_delta);
+                    let join_delta = consensus_join_distance.saturating_sub(consensus_delta);
                     join_delta_sum += join_delta as f64;
                     join_probs[sparse_row_from_idx][sparse_row_to_idx] = join_delta as f64;
                 });
@@ -313,7 +314,7 @@ pub fn traceback(
         });
 
     let mut trace: Trace = vec![TraceStep::default(); viterbi_matrix.num_cols()];
-    let mut join_id_cnt = join_id_start;
+    let mut join_id_cnt = join_id_start + 1;
 
     let first_col_idx = active_cols[0];
     let first_col_length = viterbi_matrix.col_length(first_col_idx);

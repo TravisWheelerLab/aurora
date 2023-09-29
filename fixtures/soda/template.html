@@ -1,0 +1,170 @@
+<!doctype html>
+<html>
+  <style>
+    :root {
+      --primary-color: cadetblue;
+      --darker-primary-color: darkcyan;
+      --background-color: white;
+    }
+    body {
+      margin: 0;
+      font-family: "Lato", sans-serif;
+    }
+
+    .container {
+      display: flex;
+    }
+
+    .sidebar {
+      width: 30px;
+      height: 100vh;
+      border: 1px solid black;
+      overflow-x: hidden;
+      transition: width 0.3s ease;
+      top: 0;
+      position: -webkit-sticky;
+      position: sticky;
+    }
+
+    .inner-sidebar {
+      width: 200px;
+    }
+
+    .viz {
+      flex-grow: 1;
+    }
+
+    .button {
+      border: none;
+      border-radius: 10px;
+      text-decoration: none;
+      display: inline-block;
+      margin: 4px;
+      padding: 6px 4px;
+      transition-duration: 0.4s;
+      user-select: none;
+      cursor: pointer;
+      outline: none;
+      background: var(--primary-color);
+      color: white;
+    }
+
+    .button:hover {
+      background: var(--darker-primary-color);
+    }
+
+    .widget-horizontal {
+      padding-left: 20px;
+      margin: 10px;
+      display: flex;
+    }
+
+    .widget-vertical {
+      padding-left: 20px;
+      margin: 10px;
+      display: flex-col;
+    }
+  </style>
+
+  <body>
+    <div class="container">
+      <div class="sidebar" id="sidebar">
+        <div class="inner-sidebar">
+          <span class="button" id="toggle">&#xFF0B;</span>
+
+          <div class="widget-vertical">
+            <label for="slider">Confidence shading min:</label><br />
+            <input
+              type="range"
+              id="confMin"
+              min="0.0"
+              max="1.0"
+              step="0.01"
+              value="0.0"
+            />
+            <div id="confMin">0</div>
+          </div>
+
+          <div class="widget-vertical">
+            <label for="slider">Confidence shading max:</label><br />
+            <input
+              type="range"
+              id="confMax"
+              min="0.0"
+              max="1.0"
+              step="0.01"
+              value="1.0"
+            />
+            <div id="confMax">1</div>
+          </div>
+
+          <div class="widget-vertical">
+            <label for="confThresh">Confidence threshold:</label><br />
+            <input
+              type="range"
+              id="confThresh"
+              min="0.0"
+              max="1.0"
+              step="0.0001"
+              value="0.0"
+            />
+            <div id="confThresh">0</div>
+          </div>
+
+          <div class="widget-vertical">
+            <label for="aliThresh">Alignment threshold:</label><br />
+            <input
+              type="range"
+              id="aliThresh"
+              min="0"
+              max="1000"
+              step="1"
+              value="250"
+            />
+            <div id="aliThresh">250</div>
+          </div>
+
+          <div class="widget-horizontal">
+            <label>
+              <input
+                type="checkbox"
+                id="traceAtTop"
+                name="traceAtTop"
+                checked
+              />
+              Trace at top
+            </label>
+          </div>
+
+          <div class="widget-horizontal">
+            <label>
+              <input type="checkbox" id="labels" name="labels" checked />
+              Labels
+            </label>
+          </div>
+
+          <div class="widget-horizontal">
+            <label>
+              <input type="checkbox" id="segments" name="segments" />
+              Segments
+            </label>
+          </div>
+
+          <div class="widget-vertical">
+            <label for="filters">Filters:</label><br />
+            <textarea id="filters" rows="15" cols="15" resize="none"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="viz"></div>
+    </div>
+  </body>
+
+  <script type="module">
+    JS_TARGET;
+
+    let data = DATA_TARGET;
+
+    run(data);
+  </script>
+</html>
