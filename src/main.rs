@@ -13,7 +13,12 @@ mod viterbi;
 mod viz;
 mod windowed_scores;
 
-use std::fs::File;
+use std::{
+    collections::HashMap,
+    fs::{create_dir_all, File},
+    io::{BufRead, BufReader},
+    path::PathBuf,
+};
 
 use alignment::Alignment;
 use chunks::chunks_by_query_distance;
@@ -26,36 +31,139 @@ use substitution_matrix::SubstitutionMatrix;
 #[derive(Debug, Parser)]
 #[command(name = "aurora")]
 #[command(about = "stuff")]
-pub struct Cli {
+pub struct Args {
     /// The path to CAF formatted alignments
     #[arg()]
     alignments: String,
+
     /// The path to substitution matrices
     #[arg()]
     matrices: String,
+
+    /// The probability of jumping between query models
+    #[arg(
+        short = 'J',
+        long = "query-jump",
+        default_value = "1e-55",
+        value_name = "f"
+    )]
+    pub query_jump_probability: f64,
+
+    /// The number of skip loops that are
+    /// equal to a jump between query models
+    #[arg(
+        short = 'L',
+        long = "skip-loop",
+        default_value = "30",
+        value_name = "n"
+    )]
+    pub num_skip_loops_eq_to_jump: usize,
+
+    /// The max distance across unaligned positions
+    /// in the target (genome) at which a join is
+    /// considered between compatible alignments
+    #[arg(
+        short = 'T',
+        long = "target-join-distance",
+        default_value = "10000",
+        value_name = "n"
+    )]
+    pub target_join_distance: usize,
+
+    /// The max consensus position difference at which
+    /// a join is considered between compatible alignments.
+    #[arg(
+        short = 'C',
+        long = "consensus-join-distance",
+        default_value = "50",
+        value_name = "n"
+    )]
+    pub consensus_join_distance: usize,
+
+    /// The minimum length of an alignment fragment
+    /// at which a join is considered between another
+    /// alignment fragment.
+    #[arg(
+        short = 'M',
+        long = "min-fragment-length",
+        default_value = "10",
+        value_name = "n"
+    )]
+    pub min_fragment_length: usize,
+
+    /// Produce visualization output
+    #[arg(long = "viz")]
+    pub viz: bool,
+
+    /// The path to the directory to which
+    /// vizualization output will be written
+    #[arg(long = "viz-out", default_value = "./viz", value_name = "path")]
+    pub viz_output_path: PathBuf,
+
+    /// The path to the BED file that contains
+    /// reference annotations for visualization
+    #[arg(long = "viz-ref-bed", value_name = "path")]
+    pub viz_reference_bed_path: Option<PathBuf>,
+
+    #[clap(skip)]
+    pub viz_reference_bed_index: HashMap<String, usize>,
 }
-
-pub const DEFAULT_QUERY_JUMP_PROBABILITY: f64 = 1e-55;
-pub const NUM_SKIP_LOOPS_EQ_TO_JUMP: usize = 30;
-
-pub const MIN_FRAGMENT_LENGTH: usize = 10;
-pub const TARGET_JOIN_DISTANCE: usize = 10_000;
-pub const CONSENSUS_JOIN_DISTANCE: usize = 50;
 
 pub const SCORE_WINDOW_SIZE: usize = 31;
 pub const BACKGROUND_WINDOW_SIZE: usize = 61;
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
-    let alignments_file = File::open(cli.alignments)?;
-    let matrices_file = File::open(cli.matrices)?;
+    let mut args = Args::parse();
+
+    if args.viz {
+        create_dir_all(&args.viz_output_path)?;
+        args.viz_output_path = args.viz_output_path.canonicalize()?;
+
+        if let Some(path) = &args.viz_reference_bed_path {
+            let file = File::open(path).expect("failed to open viz reference bed file");
+            let reader = BufReader::new(file);
+
+            let mut chrom_list = vec![String::from("sentinel")];
+            let mut prev_start = 0usize;
+            let mut index: HashMap<String, usize> = HashMap::new();
+            reader
+                .lines()
+                .map(|l| l.unwrap())
+                .enumerate()
+                .for_each(|(line_num, line)| {
+                    let tokens: Vec<&str> = line.split_whitespace().collect();
+                    let chrom = tokens[0].to_string();
+                    let start = tokens[1].parse::<usize>().expect("failed to parse int");
+
+                    let last_chrom = chrom_list.last().expect("chrom list is empty");
+
+                    if chrom == *last_chrom {
+                        if prev_start > start {
+                            panic!("bed file is unsorted");
+                        }
+                    } else if !chrom_list.contains(&chrom) {
+                        chrom_list.push(chrom.clone());
+                        index.insert(chrom, line_num);
+                    } else {
+                        panic!("bed file is unsorted");
+                    }
+
+                    prev_start = start;
+                });
+
+            args.viz_reference_bed_index = index;
+        }
+    }
+
+    let alignments_file = File::open(&args.alignments)?;
+    let matrices_file = File::open(&args.matrices)?;
 
     let (mut alignments, query_names) = Alignment::from_caf(alignments_file)?;
     let substitution_matrices = SubstitutionMatrix::parse(matrices_file);
 
     let num_queries = query_names.len();
 
-    let chunks = chunks_by_query_distance(&mut alignments, num_queries, TARGET_JOIN_DISTANCE);
+    let chunks = chunks_by_query_distance(&mut alignments, num_queries, args.target_join_distance);
 
     chunks
         .iter()
@@ -63,7 +171,13 @@ fn main() -> Result<()> {
         .map(|c| &alignments[c.start_idx..=c.end_idx])
         .enumerate()
         .for_each(|(region_idx, ali_slice)| {
-            run_pipeline(ali_slice, &query_names, &substitution_matrices, region_idx)
+            run_pipeline(
+                ali_slice,
+                &query_names,
+                &substitution_matrices,
+                region_idx,
+                &args,
+            )
         });
 
     Ok(())

@@ -1,3 +1,5 @@
+use std::fs;
+
 use crate::{
     alignment::Alignment,
     alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE,
@@ -11,7 +13,7 @@ use crate::{
     viterbi::{traceback, viterbi},
     viz::AuroraSodaData,
     windowed_scores::windowed_score,
-    BACKGROUND_WINDOW_SIZE, CONSENSUS_JOIN_DISTANCE, SCORE_WINDOW_SIZE, TARGET_JOIN_DISTANCE,
+    Args, BACKGROUND_WINDOW_SIZE, SCORE_WINDOW_SIZE,
 };
 
 pub fn run_pipeline(
@@ -19,8 +21,13 @@ pub fn run_pipeline(
     query_names: &[String],
     substitution_matrices: &[SubstitutionMatrix],
     region_idx: usize,
+    args: &Args,
 ) {
-    let score_params = ScoreParams::new(alignments.len());
+    let score_params = ScoreParams::new(
+        alignments.len(),
+        args.query_jump_probability,
+        args.num_skip_loops_eq_to_jump,
+    );
 
     let matrix_def = MatrixDef::new(alignments, &alignments[0].target_name, query_names);
     let mut confidence_matrix = Matrix::<f64>::new(&matrix_def);
@@ -44,7 +51,12 @@ pub fn run_pipeline(
     let mut last_num_cols = active_cols.len();
     let mut results: Vec<Annotation> = vec![];
 
-    let mut join_id_cnt = 1usize;
+    let mut trace_strings = vec![];
+    let mut fragment_strings = vec![];
+    let mut segment_strings = vec![];
+
+    let mut join_id_cnt = 0usize;
+
     while !active_cols.is_empty() {
         viterbi(
             &confidence_matrix,
@@ -52,19 +64,35 @@ pub fn run_pipeline(
             &mut sources_matrix,
             &active_cols,
             &score_params,
+            args.consensus_join_distance,
         );
 
         let trace = traceback(&viterbi_matrix, &sources_matrix, &active_cols, join_id_cnt);
-        join_id_cnt = trace[*active_cols.last().expect("active_cols is empty")].join_id;
+        join_id_cnt = trace
+            .iter()
+            .map(|t| t.join_id)
+            .max()
+            .expect("trace is empty");
 
         let mut segments = Segments::new(&trace, &confidence_matrix, &active_cols);
-        segments.create_links(CONSENSUS_JOIN_DISTANCE, TARGET_JOIN_DISTANCE);
+        segments.create_links(
+            args.consensus_join_distance,
+            args.target_join_distance,
+            args.num_skip_loops_eq_to_jump,
+            args.min_fragment_length,
+        );
         segments.process_links();
 
-        let (mut removed_results, cols) =
+        let (mut iteration_results, cols) =
             segments.get_results_and_active_cols(&matrix_def, region_idx);
-        results.append(&mut removed_results);
+        results.append(&mut iteration_results);
         active_cols = cols;
+
+        if args.viz {
+            trace_strings.push(segments.trace_soda_string(&matrix_def));
+            fragment_strings.push(segments.fragments_soda_string(&matrix_def));
+            segment_strings.push(segments.segments_soda_string());
+        }
 
         if active_cols.len() == last_num_cols {
             panic!();
@@ -79,24 +107,39 @@ pub fn run_pipeline(
 
     Annotation::write(&results, &mut std::io::stdout());
 
-    // TODO: command line flag for this
-    if true {
-        // let reference_bed_path = "./fixtures/hg38.fa.out.bed";
-        let reference_bed_path = "./fixtures/chr13.bed";
-        let data =
-            AuroraSodaData::new(&confidence_matrix, alignments, &results, reference_bed_path);
+    if args.viz {
+        let data = AuroraSodaData::new(
+            &confidence_matrix,
+            alignments,
+            &results,
+            trace_strings,
+            fragment_strings,
+            segment_strings,
+            args,
+        );
 
-        let html_template = std::fs::read_to_string("./fixtures/html/template-new.html")
-            .expect("failed to read template html");
+        let html_template = fs::read_to_string("./fixtures/soda/template.html")
+            .expect("failed to read template.html");
 
-        let viz_html = html_template.replace(
+        let viz_js = fs::read_to_string("./fixtures/soda/viz.js").expect("failed to read viz.js");
+
+        let mut viz_html = html_template.replace(
             "DATA_TARGET",
             &serde_json::to_string(&data).expect("failed to serialize JSON data"),
         );
 
-        let mut file = std::fs::File::create("index.html").expect("failed to create index.html");
-        std::io::Write::write_all(&mut file, viz_html.as_bytes())
-            .expect("failed to write to index.html");
+        viz_html = viz_html.replace("JS_TARGET", &viz_js);
+
+        let file_path = args.viz_output_path.join(format!(
+            "{}-{}-{}.html",
+            matrix_def.target_name,
+            matrix_def.target_start,
+            matrix_def.target_start + matrix_def.num_cols
+        ));
+
+        let mut file = std::fs::File::create(file_path).expect("failed to create file");
+
+        std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
     }
 }
 

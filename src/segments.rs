@@ -6,7 +6,6 @@ use crate::{
     matrix::{Matrix, MatrixDef},
     results::Annotation,
     viterbi::Trace,
-    MIN_FRAGMENT_LENGTH, NUM_SKIP_LOOPS_EQ_TO_JUMP,
 };
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -315,7 +314,13 @@ impl Segments {
         }
     }
 
-    pub fn create_links(&mut self, consensus_join_distance: usize, target_join_distance: usize) {
+    pub fn create_links(
+        &mut self,
+        consensus_join_distance: usize,
+        target_join_distance: usize,
+        num_skip_loops_eq_to_jump: usize,
+        min_fragment_length: usize,
+    ) {
         self.trace_fragments
             .iter()
             .enumerate()
@@ -354,8 +359,8 @@ impl Segments {
                                     f.query_id == query_id
                                         && f.strand == strand
                                         && f.avg_confidence >= 0.03
-                                        && f.len() >= MIN_FRAGMENT_LENGTH
-                                        && f.right_distance < NUM_SKIP_LOOPS_EQ_TO_JUMP
+                                        && f.len() >= min_fragment_length
+                                        && f.right_distance < num_skip_loops_eq_to_jump
                                         && f.consensus_end.abs_diff(consensus_start)
                                             <= consensus_join_distance
                                         && start_col_idx - f.end_col_idx < target_join_distance
@@ -379,8 +384,8 @@ impl Segments {
                                     f.query_id == query_id
                                         && f.strand == strand
                                         && f.avg_confidence >= 0.03
-                                        && f.len() >= MIN_FRAGMENT_LENGTH
-                                        && f.left_distance < NUM_SKIP_LOOPS_EQ_TO_JUMP
+                                        && f.len() >= min_fragment_length
+                                        && f.left_distance < num_skip_loops_eq_to_jump
                                         && f.consensus_start.abs_diff(consensus_end)
                                             <= consensus_join_distance
                                         && f.start_col_idx - end_col_idx < target_join_distance

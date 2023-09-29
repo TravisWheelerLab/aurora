@@ -7,7 +7,6 @@ use block::*;
 use std::{
     fs::File,
     io::{BufRead, BufReader},
-    path::Path,
 };
 
 use itertools::Itertools;
@@ -16,11 +15,13 @@ use serde::Serialize;
 use crate::{
     alignment::Alignment,
     alphabet::{
-        NucleotideByteUtils, DASH_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
-        NUCLEOTIDE_ALPHABET_UTF8, PAD_DIGITAL, SPACE_UTF8,
+        NucleotideByteUtils, ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
+        PAD_DIGITAL, SPACE_UTF8,
     },
-    matrix::Matrix,
+    matrix::{Matrix, MatrixDef},
     results::Annotation,
+    segments::Segments,
+    Args,
 };
 
 ///
@@ -35,14 +36,16 @@ pub struct AuroraSodaData {
     target_seq: String,
     aurora_ann: Vec<BlockGroup>,
     reference_ann: Vec<BlockGroup>,
-    alignments_ann: Vec<String>,
+    alignment_strings: Vec<String>,
+    trace_strings: Vec<String>,
+    fragment_strings: Vec<String>,
+    segment_strings: Vec<String>,
 }
 
 impl Alignment {
-    pub fn soda_string(&self) -> String {
-        let mut matches: Vec<u8> = vec![];
-        let mut substitutions: Vec<u8> = vec![];
-        let mut inserts: Vec<u8> = vec![];
+    pub fn soda_string(&self, row: usize) -> String {
+        let mut green_bytes: Vec<u8> = vec![];
+        let mut orange_bytes: Vec<u8> = vec![];
 
         self.target_seq
             .iter()
@@ -54,35 +57,80 @@ impl Alignment {
                     }
                     _ => {
                         if t == q {
-                            matches.push(NUCLEOTIDE_ALPHABET_UTF8[q as usize]);
-                            substitutions.push(SPACE_UTF8);
-                            inserts.push(SPACE_UTF8);
-                        } else if q == GAP_OPEN_DIGITAL || q == GAP_EXTEND_DIGITAL {
-                            matches.push(SPACE_UTF8);
-                            substitutions.push(SPACE_UTF8);
-                            inserts.push(DASH_UTF8);
+                            green_bytes.push(ALIGNMENT_ALPHABET_UTF8[q as usize]);
+                            orange_bytes.push(SPACE_UTF8);
                         } else {
-                            matches.push(SPACE_UTF8);
-                            substitutions.push(NUCLEOTIDE_ALPHABET_UTF8[q as usize]);
-                            inserts.push(SPACE_UTF8);
+                            green_bytes.push(SPACE_UTF8);
+                            orange_bytes.push(ALIGNMENT_ALPHABET_UTF8[q as usize]);
                         }
                     }
                 }
             });
 
-        let match_string = String::from_utf8(matches).unwrap();
-        let substitution_string = String::from_utf8(substitutions).unwrap();
-        let insert_string = String::from_utf8(inserts).unwrap();
-        debug_assert_eq!(self.target_end - self.target_start + 1, match_string.len());
+        let green_string = String::from_utf8(green_bytes).unwrap();
+        let orange_string = String::from_utf8(orange_bytes).unwrap();
+        debug_assert_eq!(self.target_end - self.target_start + 1, green_string.len());
 
         format!(
-            "{},{},{},{},{}",
-            match_string,
-            substitution_string,
-            insert_string,
+            "{},{},{},{},{},{},{},{}",
+            green_string,
+            orange_string,
             self.target_start,
             self.target_end + 1,
+            self.query_name,
+            row,
+            self.query_id,
+            self.strand,
         )
+    }
+}
+
+impl Segments {
+    pub fn trace_soda_string(&self, matrix_def: &MatrixDef) -> String {
+        (0..self.num_segments)
+            // only look at the segments removed
+            .filter(|&idx| self.marked_for_removal[idx])
+            // (segments have multiple fragments if there was a join)
+            .flat_map(|idx| &self.trace_fragments[idx])
+            .map(|f| {
+                format!(
+                    "{},{},{},{}, {}",
+                    f.start_col_idx,
+                    f.end_col_idx,
+                    f.query_id,
+                    f.row_idx,
+                    matrix_def.query_names[f.query_id]
+                )
+            })
+            .join("|")
+    }
+
+    pub fn fragments_soda_string(&self, matrix_def: &MatrixDef) -> String {
+        (0..self.num_segments)
+            .filter(|&idx| self.marked_for_removal[idx])
+            .flat_map(|idx| &self.fragments[idx])
+            .map(|f| {
+                format!(
+                    "{},{},{},{:5.4},{},{},{},{}",
+                    f.start_col_idx,
+                    f.end_col_idx,
+                    f.row_idx,
+                    f.avg_confidence,
+                    matrix_def.query_names[f.query_id],
+                    f.consensus_start,
+                    f.consensus_end,
+                    f.strand
+                )
+            })
+            .join("|")
+    }
+
+    pub fn segments_soda_string(&self) -> String {
+        (0..self.num_segments)
+            .filter(|&idx| self.marked_for_removal[idx])
+            .map(|idx| &self.segments[idx])
+            .map(|s| format!("{},{}", s.start_col_idx, s.end_col_idx))
+            .join("|")
     }
 }
 
@@ -91,11 +139,15 @@ impl Alignment {
 ///
 ///
 impl AuroraSodaData {
+    // TODO: these parameters need a refactor
     pub fn new(
         confidence_matrix: &Matrix<f64>,
         alignments: &[Alignment],
         annotations: &[Annotation],
-        reference_bed_path: impl AsRef<Path>,
+        trace_strings: Vec<String>,
+        fragment_strings: Vec<String>,
+        segment_strings: Vec<String>,
+        args: &Args,
     ) -> Self {
         let target_start = confidence_matrix.target_start();
         let target_length = confidence_matrix.num_cols();
@@ -130,22 +182,33 @@ impl AuroraSodaData {
             .collect();
 
         let mut overlapping_bed = vec![];
-        let reference_bed_file = File::open(reference_bed_path).expect("failed to open");
-        let reader = BufReader::new(reference_bed_file);
-        for line in reader.lines() {
-            match line {
-                Ok(line) => {
+
+        let target_name = &alignments[0].target_name;
+        if let (Some(path), Some(&offset)) = (
+            &args.viz_reference_bed_path,
+            args.viz_reference_bed_index.get(target_name),
+        ) {
+            let file = File::open(path).expect("failed to open reference bed");
+            let reader = BufReader::new(file);
+
+            reader
+                .lines()
+                .skip(offset)
+                .map(|l| l.expect("failed to read line"))
+                .for_each(|line| {
                     let tokens: Vec<&str> = line.split_whitespace().collect();
 
-                    let chrom = tokens[0];
+                    let target = tokens[0];
+                    if target != target_name {
+                        return;
+                    }
+
                     let thick_start = tokens[6].parse::<usize>().expect("failed to parse usize");
                     let thick_end = tokens[7].parse::<usize>().expect("failed to parse usize");
                     if thick_start < target_end && thick_end > target_start {
                         overlapping_bed.push(BedRecord::from_tokens(&tokens));
                     }
-                }
-                Err(_) => panic!("failed to read line"),
-            }
+                });
         }
 
         let reference_ann = overlapping_bed
@@ -153,7 +216,11 @@ impl AuroraSodaData {
             .map(BlockGroup::from_bed_record)
             .collect::<Vec<BlockGroup>>();
 
-        let alignments_ann: Vec<String> = alignments.iter().map(|a| a.soda_string()).collect();
+        let alignment_strings: Vec<String> = alignments
+            .iter()
+            .enumerate()
+            .map(|(idx, a)| a.soda_string(idx + 1))
+            .collect();
 
         Self {
             target_start,
@@ -161,7 +228,10 @@ impl AuroraSodaData {
             target_seq,
             aurora_ann,
             reference_ann,
-            alignments_ann,
+            alignment_strings,
+            trace_strings,
+            fragment_strings,
+            segment_strings,
         }
     }
 }

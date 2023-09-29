@@ -185,15 +185,6 @@ impl BedRecord {
     }
 
     pub fn from_block_group(group: &BlockGroup) -> Self {
-        //   5                       <-- count
-        //   2939,235,11,196,11      <-- sizes
-        //   -1,2940,-1,3389,-1      <-- starts
-        //
-        // example visual:
-        //     2939, -1           235, 2940     11, -1     196, 3389     11, -1
-        //   |-----------------[             ]/   --   \[             ]---------|
-        //
-
         let mut block_sizes: Vec<i32> = vec![];
         let mut block_starts: Vec<i32> = vec![];
 
