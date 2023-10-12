@@ -20,8 +20,8 @@ use std::{
     path::PathBuf,
 };
 
-use alignment::Alignment;
-use chunks::chunks_by_query_distance;
+use alignment::AlignmentData;
+use chunks::ProximityGroup;
 use pipeline::run_pipeline;
 
 use anyhow::Result;
@@ -158,27 +158,29 @@ fn main() -> Result<()> {
     let alignments_file = File::open(&args.alignments)?;
     let matrices_file = File::open(&args.matrices)?;
 
-    let (mut alignments, query_names) = Alignment::from_caf(alignments_file)?;
-    let substitution_matrices = SubstitutionMatrix::parse(matrices_file);
+    println!("parsing...");
+    let mut alignment_data = AlignmentData::from_caf_and_matrices(alignments_file, matrices_file)?;
+    println!(" done");
 
-    let num_queries = query_names.len();
+    println!("grouping...");
+    let proximity_groups =
+        ProximityGroup::from_alignment_data(&mut alignment_data, args.target_join_distance);
+    println!(" done, {} groups", proximity_groups.len());
 
-    let chunks = chunks_by_query_distance(&mut alignments, num_queries, args.target_join_distance);
-
-    chunks
-        .iter()
-        // .inspect(|c| println!("{} - {}", c.start_idx, c.end_idx))
-        .map(|c| &alignments[c.start_idx..=c.end_idx])
-        .enumerate()
-        .for_each(|(region_idx, ali_slice)| {
-            run_pipeline(
-                ali_slice,
-                &query_names,
-                &substitution_matrices,
-                region_idx,
-                &args,
-            )
-        });
+    // chunks
+    //     .iter()
+    //     // .inspect(|c| println!("{} - {}", c.start_idx, c.end_idx))
+    //     .map(|c| &alignments[c.start_idx..=c.end_idx])
+    //     .enumerate()
+    //     .for_each(|(region_idx, ali_slice)| {
+    //         run_pipeline(
+    //             ali_slice,
+    //             &query_names,
+    //             &substitution_matrices,
+    //             region_idx,
+    //             &args,
+    //         )
+    //     });
 
     Ok(())
 }

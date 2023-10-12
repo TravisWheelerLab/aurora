@@ -30,6 +30,12 @@ pub struct SubstitutionMatrix {
     pub core_ratios: [[f64; 4]; 4],
 }
 
+impl PartialEq for SubstitutionMatrix {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
 enum ParserState {
     Header,
     Chars,

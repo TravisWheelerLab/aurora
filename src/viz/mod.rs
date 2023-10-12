@@ -77,7 +77,7 @@ impl Alignment {
             orange_string,
             self.target_start,
             self.target_end + 1,
-            self.query_name,
+            todo!(),
             row,
             self.query_id,
             self.strand,
@@ -183,7 +183,7 @@ impl AuroraSodaData {
 
         let mut overlapping_bed = vec![];
 
-        let target_name = &alignments[0].target_name;
+        let target_name = "";
         if let (Some(path), Some(&offset)) = (
             &args.viz_reference_bed_path,
             args.viz_reference_bed_index.get(target_name),

@@ -106,7 +106,7 @@ pub fn windowed_score(
                 ali_idx + 1,
                 alignments[ali_idx].target_start - matrix_target_start,
                 &alignments[ali_idx],
-                substitution_matrices.retrieve(&alignments[ali_idx].substitution_matrix),
+                substitution_matrices.retrieve(todo!()),
             )
         })
         .for_each(|(row_idx, start_col_idx, alignment, substitution_matrix)| {

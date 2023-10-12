@@ -29,7 +29,7 @@ pub fn run_pipeline(
         args.num_skip_loops_eq_to_jump,
     );
 
-    let matrix_def = MatrixDef::new(alignments, &alignments[0].target_name, query_names);
+    let matrix_def = MatrixDef::new(alignments, todo!(), query_names);
     let mut confidence_matrix = Matrix::<f64>::new(&matrix_def);
     let mut viterbi_matrix = Matrix::<f64>::new(&matrix_def);
     let mut sources_matrix = Matrix::<usize>::new(&matrix_def);
@@ -170,8 +170,6 @@ mod tests {
     fn test_pipeline() {
         let ali = [
             Alignment {
-                target_name: "target".to_string(),
-                query_name: "query_1".to_string(),
                 query_id: 1,
                 target_seq: "AAAAAAAAAAGGGGGGGGGG".to_digital_nucleotides(),
                 query_seq: "AAAAAAAAAAGGGGGGGGGG".to_digital_nucleotides(),
@@ -180,14 +178,9 @@ mod tests {
                 query_start: 1,
                 query_end: 20,
                 strand: Strand::Forward,
-                score: 0,
-                substitution_matrix: "".to_string(),
-                gap_init: -30.0,
-                gap_extend: -5.0,
+                substitution_matrix_id: 0,
             },
             Alignment {
-                target_name: "target".to_string(),
-                query_name: "query_2".to_string(),
                 query_id: 2,
                 target_seq: "AAAAAAAAAAGGGGGGGGGG".to_digital_nucleotides(),
                 query_seq: "AAAAAAAAAAGGGGGGGGGG".to_digital_nucleotides(),
@@ -196,10 +189,7 @@ mod tests {
                 query_start: 1,
                 query_end: 20,
                 strand: Strand::Forward,
-                score: 0,
-                substitution_matrix: "".to_string(),
-                gap_init: -30.0,
-                gap_extend: -5.0,
+                substitution_matrix_id: 0,
             },
         ];
     }
