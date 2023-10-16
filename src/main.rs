@@ -26,7 +26,8 @@ use pipeline::run_pipeline;
 
 use anyhow::Result;
 use clap::Parser;
-use substitution_matrix::SubstitutionMatrix;
+
+use crate::chunks::validate_groups;
 
 #[derive(Debug, Parser)]
 #[command(name = "aurora")]
@@ -158,29 +159,21 @@ fn main() -> Result<()> {
     let alignments_file = File::open(&args.alignments)?;
     let matrices_file = File::open(&args.matrices)?;
 
-    println!("parsing...");
-    let mut alignment_data = AlignmentData::from_caf_and_matrices(alignments_file, matrices_file)?;
-    println!(" done");
+    let alignment_data = AlignmentData::from_caf_and_matrices(alignments_file, matrices_file)?;
 
-    println!("grouping...");
     let proximity_groups =
-        ProximityGroup::from_alignment_data(&mut alignment_data, args.target_join_distance);
-    println!(" done, {} groups", proximity_groups.len());
+        ProximityGroup::from_alignment_data(&alignment_data, args.target_join_distance);
 
-    // chunks
-    //     .iter()
-    //     // .inspect(|c| println!("{} - {}", c.start_idx, c.end_idx))
-    //     .map(|c| &alignments[c.start_idx..=c.end_idx])
-    //     .enumerate()
-    //     .for_each(|(region_idx, ali_slice)| {
-    //         run_pipeline(
-    //             ali_slice,
-    //             &query_names,
-    //             &substitution_matrices,
-    //             region_idx,
-    //             &args,
-    //         )
-    //     });
+    debug_assert!(validate_groups(
+        &proximity_groups,
+        args.target_join_distance
+    ));
+
+    proximity_groups
+        .iter()
+        .inspect(|g| println!("{g:?}"))
+        .enumerate()
+        .for_each(|(region_idx, group)| run_pipeline(group, &alignment_data, region_idx, &args));
 
     Ok(())
 }

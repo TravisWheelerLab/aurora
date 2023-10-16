@@ -13,12 +13,13 @@ use itertools::Itertools;
 use serde::Serialize;
 
 use crate::{
-    alignment::Alignment,
+    alignment::{Alignment, VecMap},
     alphabet::{
         NucleotideByteUtils, ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
         PAD_DIGITAL, SPACE_UTF8,
     },
-    matrix::{Matrix, MatrixDef},
+    chunks::ProximityGroup,
+    matrix::Matrix,
     results::Annotation,
     segments::Segments,
     Args,
@@ -43,7 +44,7 @@ pub struct AuroraSodaData {
 }
 
 impl Alignment {
-    pub fn soda_string(&self, row: usize) -> String {
+    pub fn soda_string(&self, row: usize, query_name: &str) -> String {
         let mut green_bytes: Vec<u8> = vec![];
         let mut orange_bytes: Vec<u8> = vec![];
 
@@ -77,7 +78,7 @@ impl Alignment {
             orange_string,
             self.target_start,
             self.target_end + 1,
-            todo!(),
+            query_name,
             row,
             self.query_id,
             self.strand,
@@ -86,7 +87,7 @@ impl Alignment {
 }
 
 impl Segments {
-    pub fn trace_soda_string(&self, matrix_def: &MatrixDef) -> String {
+    pub fn trace_soda_string(&self, query_names: &VecMap<String>) -> String {
         (0..self.num_segments)
             // only look at the segments removed
             .filter(|&idx| self.marked_for_removal[idx])
@@ -99,13 +100,13 @@ impl Segments {
                     f.end_col_idx,
                     f.query_id,
                     f.row_idx,
-                    matrix_def.query_names[f.query_id]
+                    query_names.value(f.query_id)
                 )
             })
             .join("|")
     }
 
-    pub fn fragments_soda_string(&self, matrix_def: &MatrixDef) -> String {
+    pub fn fragments_soda_string(&self, query_names: &VecMap<String>) -> String {
         (0..self.num_segments)
             .filter(|&idx| self.marked_for_removal[idx])
             .flat_map(|idx| &self.fragments[idx])
@@ -116,7 +117,7 @@ impl Segments {
                     f.end_col_idx,
                     f.row_idx,
                     f.avg_confidence,
-                    matrix_def.query_names[f.query_id],
+                    query_names.value(f.query_id),
                     f.consensus_start,
                     f.consensus_end,
                     f.strand
@@ -141,20 +142,21 @@ impl Segments {
 impl AuroraSodaData {
     // TODO: these parameters need a refactor
     pub fn new(
-        confidence_matrix: &Matrix<f64>,
-        alignments: &[Alignment],
+        group: &ProximityGroup,
+        query_names: &VecMap<String>,
         annotations: &[Annotation],
         trace_strings: Vec<String>,
         fragment_strings: Vec<String>,
         segment_strings: Vec<String>,
         args: &Args,
     ) -> Self {
-        let target_start = confidence_matrix.target_start();
-        let target_length = confidence_matrix.num_cols();
-        let target_end = target_start + target_length - 1;
+        let target_start = group.target_start;
+        let target_end = group.target_end;
+        let target_length = target_end - target_start + 1;
 
         let mut target_seq_digital_bytes = vec![PAD_DIGITAL; target_length];
-        alignments
+        group
+            .alignments
             .iter()
             .flat_map(|a| {
                 a.target_seq
@@ -216,10 +218,11 @@ impl AuroraSodaData {
             .map(BlockGroup::from_bed_record)
             .collect::<Vec<BlockGroup>>();
 
-        let alignment_strings: Vec<String> = alignments
+        let alignment_strings: Vec<String> = group
+            .alignments
             .iter()
             .enumerate()
-            .map(|(idx, a)| a.soda_string(idx + 1))
+            .map(|(ali_idx, a)| a.soda_string(ali_idx + 1, query_names.value(a.query_id)))
             .collect();
 
         Self {

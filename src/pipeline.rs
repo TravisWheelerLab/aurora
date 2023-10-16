@@ -1,14 +1,14 @@
 use std::fs;
 
 use crate::{
-    alignment::Alignment,
+    alignment::AlignmentData,
     alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE,
+    chunks::ProximityGroup,
     confidence::confidence,
     matrix::{Matrix, MatrixDef},
     results::Annotation,
     score_params::ScoreParams,
     segments::Segments,
-    substitution_matrix::SubstitutionMatrix,
     support::windowed_confidence_slow,
     viterbi::{traceback, viterbi},
     viz::AuroraSodaData,
@@ -17,27 +17,26 @@ use crate::{
 };
 
 pub fn run_pipeline(
-    alignments: &[Alignment],
-    query_names: &[String],
-    substitution_matrices: &[SubstitutionMatrix],
+    group: &ProximityGroup,
+    alignment_data: &AlignmentData,
     region_idx: usize,
     args: &Args,
 ) {
     let score_params = ScoreParams::new(
-        alignments.len(),
+        group.alignments.len(),
         args.query_jump_probability,
         args.num_skip_loops_eq_to_jump,
     );
 
-    let matrix_def = MatrixDef::new(alignments, todo!(), query_names);
+    let matrix_def = MatrixDef::new(group);
     let mut confidence_matrix = Matrix::<f64>::new(&matrix_def);
     let mut viterbi_matrix = Matrix::<f64>::new(&matrix_def);
     let mut sources_matrix = Matrix::<usize>::new(&matrix_def);
 
     windowed_score(
         &mut confidence_matrix,
-        alignments,
-        substitution_matrices,
+        group.alignments,
+        &alignment_data.substitution_matrices,
         SCORE_WINDOW_SIZE,
         BACKGROUND_WINDOW_SIZE,
     );
@@ -64,6 +63,7 @@ pub fn run_pipeline(
             &mut sources_matrix,
             &active_cols,
             &score_params,
+            alignment_data.query_name_map.size(),
             args.consensus_join_distance,
         );
 
@@ -83,14 +83,19 @@ pub fn run_pipeline(
         );
         segments.process_links();
 
-        let (mut iteration_results, cols) =
-            segments.get_results_and_active_cols(&matrix_def, region_idx);
+        let (mut iteration_results, cols) = segments.get_results_and_active_cols(
+            &alignment_data.query_name_map,
+            alignment_data.target_name_map.value(group.target_id),
+            group.target_start,
+            region_idx,
+        );
+
         results.append(&mut iteration_results);
         active_cols = cols;
 
         if args.viz {
-            trace_strings.push(segments.trace_soda_string(&matrix_def));
-            fragment_strings.push(segments.fragments_soda_string(&matrix_def));
+            trace_strings.push(segments.trace_soda_string(&alignment_data.query_name_map));
+            fragment_strings.push(segments.fragments_soda_string(&alignment_data.query_name_map));
             segment_strings.push(segments.segments_soda_string());
         }
 
@@ -109,8 +114,8 @@ pub fn run_pipeline(
 
     if args.viz {
         let data = AuroraSodaData::new(
-            &confidence_matrix,
-            alignments,
+            group,
+            &alignment_data.query_name_map,
             &results,
             trace_strings,
             fragment_strings,
@@ -130,9 +135,10 @@ pub fn run_pipeline(
 
         viz_html = viz_html.replace("JS_TARGET", &viz_js);
 
+        let target_name = alignment_data.target_name_map.value(group.target_id);
         let file_path = args.viz_output_path.join(format!(
             "{}-{}-{}.html",
-            matrix_def.target_name,
+            target_name,
             matrix_def.target_start,
             matrix_def.target_start + matrix_def.num_cols
         ));

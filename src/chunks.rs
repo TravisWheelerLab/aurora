@@ -1,7 +1,8 @@
-use crate::alignment::{Alignment, AlignmentData, VecMap};
+use crate::alignment::{Alignment, AlignmentData};
 
 #[derive(Copy, Clone)]
 struct Interval {
+    target_id: usize,
     target_start: usize,
     target_end: usize,
 }
@@ -16,17 +17,36 @@ impl Interval {
 /// proximity to each other. The alignments
 /// are implicitly in the same TargetGroup
 pub struct ProximityGroup<'a> {
+    pub target_id: usize,
     pub target_start: usize,
     pub target_end: usize,
     pub alignments: &'a [Alignment],
-    pub row_map: VecMap<usize>,
+}
+
+impl<'a> std::fmt::Debug for ProximityGroup<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}-{}: {}",
+            self.target_start,
+            self.target_end,
+            self.alignments.len()
+        )
+    }
 }
 
 impl<'a> ProximityGroup<'a> {
     pub fn from_alignment_data(
-        alignment_data: &mut AlignmentData,
+        alignment_data: &AlignmentData,
         join_distance: usize,
     ) -> Vec<ProximityGroup> {
+        alignment_data.target_groups.iter().for_each(|g| {
+            debug_assert!(g
+                .alignments
+                .windows(2)
+                .all(|w| w[0].target_start <= w[1].target_start));
+        });
+
         alignment_data
             .target_groups
             .iter()
@@ -43,21 +63,27 @@ impl<'a> ProximityGroup<'a> {
                             .collect();
 
                         (0..alignments.len()).map(move |idx| {
-                            let ali = alignments[idx];
-                            let other_ali = &alignments[(idx + 1)..];
+                            let first_alignment = alignments[idx];
+                            let other_alignments = &alignments[(idx + 1)..];
+
                             let mut interval = Interval {
-                                target_start: alignments[0].target_start,
-                                target_end: alignments[0].target_end,
+                                target_id: target_group.target_id,
+                                target_start: first_alignment.target_start,
+                                target_end: first_alignment.target_end,
                             };
-                            for next_ali in other_ali {
-                                let distance = next_ali.target_start.saturating_sub(ali.target_end);
+
+                            for next_alignment in other_alignments {
+                                let distance = next_alignment
+                                    .target_start
+                                    .saturating_sub(first_alignment.target_end);
 
                                 if distance > join_distance {
                                     break;
                                 }
 
-                                if ali.strand == next_ali.strand {
-                                    interval.target_end = next_ali.target_end;
+                                if first_alignment.strand == next_alignment.strand {
+                                    interval.target_end =
+                                        interval.target_end.max(next_alignment.target_end);
                                 }
                             }
 
@@ -69,47 +95,37 @@ impl<'a> ProximityGroup<'a> {
                 target_intervals.sort_by_key(|interval| interval.target_start);
 
                 let merged_intervals = target_intervals.iter().skip(1).fold(
-                    vec![target_intervals[0].clone()],
+                    vec![target_intervals[0]],
                     |mut acc, interval| {
                         let last = acc.last_mut().unwrap();
-                        if last.overlaps(&interval) {
-                            last.target_end = interval.target_end
+                        if last.overlaps(interval) {
+                            last.target_end = last.target_end.max(interval.target_end)
                         } else {
-                            acc.push(interval.clone())
+                            acc.push(*interval);
                         }
                         acc
                     },
                 );
 
-                merged_intervals.into_iter().map(|interval| {
-                    let start_idx = target_group
-                        .alignments
-                        .iter()
-                        .enumerate()
-                        .find(|(_, a)| a.target_start == interval.target_start)
-                        .expect("failed to match interval start")
-                        .0;
-
+                let mut start_idx = 0usize;
+                merged_intervals.into_iter().map(move |interval| {
                     let end_idx = target_group
                         .alignments
                         .iter()
                         .enumerate()
-                        .rev()
-                        .find(|(_, a)| a.target_end == interval.target_end)
-                        .expect("failed to match interval end")
+                        .skip(start_idx)
+                        .find(|(_, a)| a.target_start > interval.target_end)
+                        .unwrap_or((target_group.alignments.len(), &Alignment::default()))
                         .0;
 
-                    let alignments = &target_group.alignments[start_idx..=end_idx];
-                    let mut row_map = VecMap::new();
-                    alignments.iter().for_each(|a| {
-                        row_map.insert(a.query_id);
-                    });
+                    let alignments = &target_group.alignments[start_idx..end_idx];
 
+                    start_idx = end_idx;
                     ProximityGroup {
+                        target_id: interval.target_id,
                         target_start: interval.target_start,
                         target_end: interval.target_end,
                         alignments,
-                        row_map,
                     }
                 })
             })
@@ -117,96 +133,60 @@ impl<'a> ProximityGroup<'a> {
     }
 }
 
-//fn validate_chunks(chunks: &[Chunk], alignments: &[Alignment], join_distance: usize) -> bool {
-//    for (chunk_idx, chunk) in chunks.iter().enumerate() {
-//        for ali in &alignments[chunk.start_idx..=chunk.end_idx] {
-//            // check if any alignments are outside of the chunk boundaries
-//            if ali.target_start < chunk.target_start || ali.target_end > chunk.target_end {
-//                return false;
-//            }
+pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool {
+    for (group_idx, group) in groups.iter().enumerate() {
+        for ali in group.alignments {
+            // check if any alignments are outside of the chunk boundaries
+            if ali.target_start < group.target_start || ali.target_end > group.target_end {
+                return false;
+            }
 
-//            // now check if we violate the join conditions
+            // now check if we violate the join conditions
 
-//            // first check all chunks to the left
-//            for other_chunk_idx in 0..chunk_idx {
-//                let other_chunk = &chunks[other_chunk_idx];
+            // first check all chunks to the left
+            for other_group_idx in 0..group_idx {
+                let other_group = &groups[other_group_idx];
 
-//                // if the other chunk is farther than the join distance
-//                // away from this alignment, then there's nothing to check
-//                if (ali.target_start - other_chunk.target_end + 1) > join_distance {
-//                    continue;
-//                }
+                // if the other chunk is farther than the join distance
+                // away from this alignment, then there's nothing to check
+                if (ali.target_start - other_group.target_end + 1) > join_distance {
+                    continue;
+                }
 
-//                for other_ali in &alignments[other_chunk.start_idx..=other_chunk.end_idx] {
-//                    if other_ali.query_id != ali.query_id {
-//                        continue;
-//                    }
+                for other_ali in other_group.alignments {
+                    if other_ali.query_id != ali.query_id {
+                        continue;
+                    }
 
-//                    if (ali.target_start - other_ali.target_end + 1) < join_distance {
-//                        return false;
-//                    }
-//                }
-//            }
+                    if ali.strand == other_ali.strand
+                        && (ali.target_start - other_ali.target_end + 1) < join_distance
+                    {
+                        return false;
+                    }
+                }
+            }
 
-//            // then check all chunks to the right
-//            for other_chunk_idx in (chunk_idx..chunks.len()).skip(1) {
-//                let other_chunk = &chunks[other_chunk_idx];
+            // then check all chunks to the right
+            for other_group_idx in (group_idx..groups.len()).skip(1) {
+                let other_group = &groups[other_group_idx];
 
-//                if (other_chunk.target_start - ali.target_end + 1) > join_distance {
-//                    continue;
-//                }
+                if (other_group.target_start - ali.target_end + 1) > join_distance {
+                    continue;
+                }
 
-//                for other_ali in &alignments[other_chunk.start_idx..=other_chunk.end_idx] {
-//                    if other_ali.query_id != ali.query_id {
-//                        continue;
-//                    }
+                for other_ali in other_group.alignments {
+                    if other_ali.query_id != ali.query_id {
+                        continue;
+                    }
 
-//                    if (other_ali.target_start - ali.target_end + 1) < join_distance {
-//                        return false;
-//                    }
-//                }
-//            }
-//        }
-//    }
-//    true
-//}
-
-//#[allow(dead_code)]
-//pub fn chunk_memory_estimate(alignments: &[Alignment], chunks: &[Chunk]) {
-//    let num_bytes_per_cell = 32usize;
-//    let mut mem = vec![];
-
-//    for chunk in chunks.iter() {
-//        let mut target_start = usize::MAX;
-//        let mut target_end = 0usize;
-//        let mut num_cells_sparse = 0usize;
-
-//        alignments[chunk.start_idx..=chunk.end_idx]
-//            .iter()
-//            .for_each(|a| {
-//                target_start = target_start.min(a.target_start);
-//                target_end = target_end.max(a.target_end);
-//                num_cells_sparse += a.target_end - a.target_start + 1;
-//            });
-
-//        let target_width = target_end - target_start + 1;
-//        let num_ali = chunk.end_idx - chunk.start_idx + 1;
-//        num_cells_sparse += target_width;
-//        let num_cells_full = target_width * num_ali + target_width;
-
-//        mem.push((num_ali, num_cells_full, num_cells_sparse));
-//    }
-
-//    mem.sort();
-//    mem.reverse();
-
-//    mem.iter().for_each(|(a, f, s)| {
-//        //
-//        println!(
-//            "{:10}, {:07.2}, {:0.2}",
-//            a,
-//            (f * num_bytes_per_cell) as f64 / 1e9,
-//            (s * num_bytes_per_cell) as f64 / 1e9
-//        )
-//    });
-//}
+                    if other_ali.strand == ali.strand
+                        && (other_ali.target_start - ali.target_end + 1) < join_distance
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
+}

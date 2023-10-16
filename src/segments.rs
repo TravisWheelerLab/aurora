@@ -2,7 +2,7 @@ use itertools::Itertools;
 use serde_json::json;
 
 use crate::{
-    alignment::Strand,
+    alignment::{Strand, VecMap},
     matrix::{Matrix, MatrixDef},
     results::Annotation,
     viterbi::Trace,
@@ -454,7 +454,9 @@ impl Segments {
 
     pub fn get_results_and_active_cols(
         &self,
-        def: &MatrixDef,
+        query_names: &VecMap<String>,
+        target_name: &str,
+        target_start: usize,
         region_id: usize,
     ) -> (Vec<Annotation>, Vec<usize>) {
         let mut results = vec![];
@@ -473,10 +475,10 @@ impl Segments {
                             // congratulations! this fragment has
                             // offically become an annotation
                             results.push(Annotation {
-                                target_name: def.target_name.clone(),
-                                target_start: fragment.start_col_idx + def.target_start,
-                                target_end: fragment.end_col_idx + def.target_start,
-                                query_name: def.query_names[fragment.query_id].clone(),
+                                target_name: target_name.to_string(),
+                                target_start: fragment.start_col_idx + target_start,
+                                target_end: fragment.end_col_idx + target_start,
+                                query_name: query_names.value(fragment.query_id).clone(),
                                 query_start: fragment.consensus_start,
                                 query_end: fragment.consensus_end,
                                 strand: fragment.strand,
@@ -495,141 +497,5 @@ impl Segments {
 
         active_cols.sort();
         (results, active_cols)
-    }
-
-    #[allow(dead_code)]
-    pub fn json(&self, matrix_def: &MatrixDef) -> serde_json::Value {
-        let winner_ids: Vec<usize> = self
-            .trace_fragments
-            .iter()
-            .flatten()
-            .map(|f| f.query_id)
-            .filter(|&id| id != 0)
-            .unique()
-            .collect();
-
-        let mut query_id_to_viz_row = vec![0usize; matrix_def.query_names.len()];
-        // place the winner ids first
-        winner_ids
-            .iter()
-            .enumerate()
-            .for_each(|(idx, id)| query_id_to_viz_row[*id] = idx + 1);
-
-        // now start placing every non-winner after the last winner
-        let mut idx = winner_ids.len();
-        (0..matrix_def.query_names.len())
-            .skip(1)
-            .filter(|id| !winner_ids.contains(id))
-            .for_each(|query_id| {
-                query_id_to_viz_row[query_id] = idx;
-                idx += 1;
-            });
-
-        let segments_json: Vec<serde_json::Value> = self
-            .segments
-            .iter()
-            .enumerate()
-            .map(|(segment_idx, segment)| {
-                json!({
-                    "id": format!("segment-{}", segment_idx),
-                    "start": segment.start_col_idx,
-                    "end": segment.end_col_idx,
-                    "segment": segment_idx,
-                    "remove": self.marked_for_removal[segment_idx],
-                })
-            })
-            .collect();
-
-        let trace_fragments_json: Vec<serde_json::Value> = self
-            .trace_fragments
-            .iter()
-            .flatten()
-            .map(|f| {
-                json!({
-                    "id": format!("trace-{}-{}", f.row_idx, f.join_id),
-                    "start": f.start_col_idx,
-                    "end": f.end_col_idx,
-                    "strand": f.strand.to_string(),
-                    "row": query_id_to_viz_row[f.query_id],
-                    "queryId": matrix_def.query_names[f.query_id],
-                    "dpRowIdx": f.row_idx,
-                    "confidence": f.avg_confidence,
-                    "consensusStart": f.consensus_start,
-                    "consensusEnd": f.consensus_end,
-                })
-            })
-            .collect();
-
-        let mut ali_json_2d: Vec<Vec<serde_json::Value>> =
-            vec![vec![]; matrix_def.query_names.len()];
-
-        (0..matrix_def.num_rows)
-            .map(|idx| {
-                (
-                    idx,
-                    matrix_def.col_range_by_row[idx],
-                    matrix_def.id_by_row[idx],
-                )
-            })
-            .for_each(|(row_idx, (start, end), id_of_row)| {
-                let json_vec_of_id = &mut ali_json_2d[id_of_row];
-                json_vec_of_id.push(json!({
-                    "id": format!("ali-{}", row_idx),
-                    "start": start,
-                    "end": end,
-                    "row": query_id_to_viz_row[id_of_row],
-                    "dpRowIdx": row_idx,
-                }));
-            });
-
-        // keep track of how many times we have seen an alignment
-        // so we can make reasonable fragment IDs
-        let mut ali_counts = vec![0usize; matrix_def.num_rows];
-        let ali_frag_json: Vec<serde_json::Value> = self
-            .segments
-            .iter()
-            .flat_map(|s| &self.fragments[s.idx])
-            .map(|f| {
-                ali_counts[f.row_idx] += 1;
-                json!({
-                    "id": format!("ali-{}-{}", f.row_idx, ali_counts[f.row_idx] - 1),
-                    "start": f.start_col_idx,
-                    "end": f.end_col_idx,
-                    "strand": f.strand.to_string(),
-                    "row": query_id_to_viz_row[f.query_id],
-                    "queryId": matrix_def.query_names[f.query_id],
-                    "dpRowIdx": f.row_idx,
-                    "confidence": f.avg_confidence,
-                    "consensusStart": f.consensus_start,
-                    "consensusEnd": f.consensus_end,
-                })
-            })
-            .collect();
-
-        let links_json: Vec<serde_json::Value> = self
-            .links
-            .iter()
-            .map(|link| {
-                let seg_from_width = (self.segments[link.left_segment_idx].end_col_idx - self.segments[link.left_segment_idx].start_col_idx + 1) / 2;
-                let seg_to_width = (self.segments[link.right_segment_idx].end_col_idx - self.segments[link.right_segment_idx].start_col_idx + 1) / 2;
-                json!({
-                    "id": format!("link-{}-{}-{}", link.left_segment_idx, link.right_segment_idx, link.query_id),
-                    "start": self.segments[link.left_segment_idx].start_col_idx + seg_from_width,
-                    "end": self.segments[link.right_segment_idx].start_col_idx + seg_to_width,
-                    "row": query_id_to_viz_row[link.query_id],
-                })
-            })
-            .collect();
-
-        json!({
-            "segments": segments_json,
-            "trace": trace_fragments_json,
-            "ali": ali_json_2d,
-            "frags": ali_frag_json,
-            "links": links_json,
-            "start": 0,
-            "end": matrix_def.num_cols,
-            "rowCount": matrix_def.query_names.len() * 2,
-        })
     }
 }

@@ -8,6 +8,7 @@ pub fn viterbi(
     sources_matrix: &mut Matrix<usize>,
     active_cols: &[usize],
     score_params: &ScoreParams,
+    num_queries: usize,
     consensus_join_distance: usize,
 ) {
     let first_col_idx = active_cols[0];
@@ -66,9 +67,11 @@ pub fn viterbi(
         let col_from_length = viterbi_matrix.col_length(col_from_idx);
         let col_to_length = viterbi_matrix.col_length(col_to_idx);
 
+        // TODO: compress this by mapping global query IDs
+        //       to a region local compressed ID space
         // precompute the sparse rows by id
-        let mut sparse_rows_from_by_id: Vec<Vec<usize>> = vec![vec![]; viterbi_matrix.num_ids()];
-        let mut sparse_rows_to_by_id: Vec<Vec<usize>> = vec![vec![]; viterbi_matrix.num_ids()];
+        let mut sparse_rows_from_by_id: Vec<Vec<usize>> = vec![vec![]; num_queries];
+        let mut sparse_rows_to_by_id: Vec<Vec<usize>> = vec![vec![]; num_queries];
 
         (0..col_from_length).for_each(|sparse_row_idx| {
             let id = viterbi_matrix.id_of_cell_sparse(sparse_row_idx, col_from_idx);

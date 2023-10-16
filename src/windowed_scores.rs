@@ -1,7 +1,7 @@
-use crate::alignment::Alignment;
+use crate::alignment::{Alignment, VecMap};
 use crate::alphabet::{GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, PAD_DIGITAL};
 use crate::matrix::Matrix;
-use crate::substitution_matrix::{SubstitutionMatrix, SubstitutionMatrixSliceExt};
+use crate::substitution_matrix::SubstitutionMatrix;
 
 ///
 ///
@@ -78,7 +78,7 @@ pub fn background(
 pub fn windowed_score(
     matrix: &mut Matrix<f64>,
     alignments: &[Alignment],
-    substitution_matrices: &[SubstitutionMatrix],
+    substitution_matrices: &VecMap<SubstitutionMatrix>,
     window_size: usize,
     background_window_size: usize,
 ) {
@@ -106,7 +106,7 @@ pub fn windowed_score(
                 ali_idx + 1,
                 alignments[ali_idx].target_start - matrix_target_start,
                 &alignments[ali_idx],
-                substitution_matrices.retrieve(todo!()),
+                substitution_matrices.value(alignments[ali_idx].substitution_matrix_id),
             )
         })
         .for_each(|(row_idx, start_col_idx, alignment, substitution_matrix)| {

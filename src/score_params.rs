@@ -11,11 +11,11 @@ pub struct ScoreParams {
 
 impl ScoreParams {
     pub fn new(
-        num_queries: usize,
+        num_alignments: usize,
         query_jump_probability: f64,
         num_skip_loops_eq_to_jump: usize,
     ) -> Self {
-        let query_jump_probability_per = query_jump_probability / num_queries as f64;
+        let query_jump_probability_per = query_jump_probability / num_alignments as f64;
 
         let query_jump_score = query_jump_probability_per.ln();
 

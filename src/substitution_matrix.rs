@@ -6,18 +6,6 @@ use std::{
 
 use crate::alphabet::STR_TO_DIGITAL_NUCLEOTIDE;
 
-pub trait SubstitutionMatrixSliceExt {
-    fn retrieve(&self, matrix_name: &str) -> &SubstitutionMatrix;
-}
-
-impl SubstitutionMatrixSliceExt for &[SubstitutionMatrix] {
-    fn retrieve(&self, matrix_name: &str) -> &SubstitutionMatrix {
-        self.iter()
-            .find(|m| m.name == matrix_name)
-            .unwrap_or_else(|| panic!("no matrix: {}", matrix_name))
-    }
-}
-
 pub struct SubstitutionMatrix {
     pub name: String,
     pub lambda: f64,

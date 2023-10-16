@@ -60,6 +60,16 @@ pub struct Alignment {
     pub substitution_matrix_id: usize,
 }
 
+impl std::fmt::Display for Alignment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}: {}-{}",
+            self.query_id, self.target_start, self.target_end
+        )
+    }
+}
+
 // TODO: I don't think we need this anymore
 // impl Serialize for Alignment {
 //     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -418,6 +428,10 @@ impl AlignmentData {
                     substitution_matrix_id,
                 });
             });
+
+        target_groups
+            .iter_mut()
+            .for_each(|g| g.alignments.sort_by_key(|a| a.target_start));
 
         Ok(Self {
             target_groups,

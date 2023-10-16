@@ -1,15 +1,13 @@
 use crate::{
-    alignment::{Alignment, Strand},
+    alignment::Strand,
     alphabet::{GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL},
+    chunks::ProximityGroup,
 };
 
-/// This is an auxiliary data structure that describes the layout of a column major (in memory)
-/// sparse matrix.
-pub struct MatrixDef<'a> {
-    ///
-    pub target_name: String,
-    ///
-    pub query_names: &'a [String],
+/// This is an auxiliary data structure that
+/// describes the layout of a column major
+/// (in memory) sparse matrix.
+pub struct MatrixDef {
     /// The logical number of rows in the matrix (also the number of alignments)
     pub num_rows: usize,
     /// The number of columns in the matrix (also the length of the target sequence)
@@ -34,19 +32,13 @@ pub struct MatrixDef<'a> {
     pub strand_by_row: Vec<Strand>,
 }
 
-impl<'a> MatrixDef<'a> {
-    pub fn new(alignments: &[Alignment], target_name: &str, query_names: &'a [String]) -> Self {
-        // the first alignment is the minimum target start position
-        let target_start = alignments[0].target_start;
-
-        // we'll need to find the max target end because it's not
-        // necessarily going to be the last alignment
-        let target_end = alignments
-            .iter()
-            .fold(0usize, |acc, ali| acc.max(ali.target_end));
+impl MatrixDef {
+    pub fn new(group: &ProximityGroup) -> Self {
+        let target_start = group.target_start;
+        let target_end = group.target_end;
 
         // +1 for the skip state
-        let num_rows = alignments.len() + 1;
+        let num_rows = group.alignments.len() + 1;
         // +1 for subtracting across the interval
         let num_cols = target_end - target_start + 1;
 
@@ -63,93 +55,95 @@ impl<'a> MatrixDef<'a> {
         // we'll say the skip state is the forward strand for convenience
         strand_by_row[0] = Strand::Forward;
 
-        alignments.iter().enumerate().for_each(|(ali_idx, ali)| {
-            // the index of the row that the alignment maps to
-            // it's +1 because of the skip state
-            let row_idx = ali_idx + 1;
+        group
+            .alignments
+            .iter()
+            .enumerate()
+            .for_each(|(ali_idx, ali)| {
+                // the index of the row that the alignment maps to
+                // it's +1 because of the skip state
+                let row_idx = ali_idx + 1;
 
-            id_by_row[row_idx] = ali.query_id;
-            strand_by_row[row_idx] = ali.strand;
+                id_by_row[row_idx] = ali.query_id;
+                strand_by_row[row_idx] = ali.strand;
 
-            // the start/end of the alignment in terms of the columns of the matrix
-            let col_start = ali.target_start - target_start;
-            let col_end = ali.target_end - target_start;
-            num_cells += col_end - col_start + 1;
+                // the start/end of the alignment in terms of the columns of the matrix
+                let col_start = ali.target_start - target_start;
+                let col_end = ali.target_end - target_start;
+                num_cells += col_end - col_start + 1;
 
-            col_range_by_row[row_idx] = (col_start, col_end);
-            (col_start..=col_end).for_each(|col_idx| active_rows_by_col[col_idx].push(row_idx));
+                col_range_by_row[row_idx] = (col_start, col_end);
+                (col_start..=col_end).for_each(|col_idx| active_rows_by_col[col_idx].push(row_idx));
 
-            // ali_col_idx is the column index that corresponds to the
-            // current alignment position; we need to manually keep
-            // track of this because of gaps in the target sequence
-            let mut ali_col_idx = col_start;
+                // ali_col_idx is the column index that corresponds to the
+                // current alignment position; we need to manually keep
+                // track of this because of gaps in the target sequence
+                let mut ali_col_idx = col_start;
 
-            // ali_consensus_position is the consensus position that
-            // corresponds to the current alignment position we are
-            // processing; we need to manually keep track of this
-            // because of gaps in the query sequence
-            let mut ali_consensus_position = ali.query_start;
+                // ali_consensus_position is the consensus position that
+                // corresponds to the current alignment position we are
+                // processing; we need to manually keep track of this
+                // because of gaps in the query sequence
+                let mut ali_consensus_position = ali.query_start;
 
-            match ali.strand {
-                Strand::Forward => {
-                    debug_assert!(ali.target_start < ali.target_end);
-                    debug_assert!(ali.query_start < ali.query_end);
-                }
-                Strand::Reverse => {
-                    debug_assert!(ali.target_start < ali.target_end);
-                    debug_assert!(ali.query_start > ali.query_end);
-                }
-                Strand::Unset => {
-                    panic!("Alignment.strand is unset in call to MatrixDef::new()")
-                }
-            }
-
-            for (&target_char, &query_char) in ali.target_seq.iter().zip(ali.query_seq.iter()) {
-                match target_char {
-                    GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
-                        // if the target character is a gap, we advance the
-                        // consensus position and leave the column index alone
-                        match ali.strand {
-                            Strand::Forward => ali_consensus_position += 1,
-                            Strand::Reverse => ali_consensus_position -= 1,
-                            Strand::Unset => {
-                                panic!("Alignment.strand is unset in call to MatrixDef::new()")
-                            }
-                        }
+                match ali.strand {
+                    Strand::Forward => {
+                        debug_assert!(ali.target_start < ali.target_end);
+                        debug_assert!(ali.query_start < ali.query_end);
                     }
-                    _ => {
-                        match query_char {
-                            GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
-                                // if the query character is a gap, we use
-                                // the previous query consensus position
-                            }
-                            _ => {
-                                // if the query character isn't a gap,
-                                // we advance the consensus position
-                                match ali.strand {
-                                    Strand::Forward => ali_consensus_position += 1,
-                                    Strand::Reverse => ali_consensus_position -= 1,
-                                    Strand::Unset => {
-                                        panic!(
-                                            "Alignment.strand is unset in call to MatrixDef::new()"
-                                        )
-                                    }
+                    Strand::Reverse => {
+                        debug_assert!(ali.target_start < ali.target_end);
+                        debug_assert!(ali.query_start > ali.query_end);
+                    }
+                    Strand::Unset => {
+                        panic!("Alignment.strand is unset in call to MatrixDef::new()")
+                    }
+                }
+
+                for (&target_char, &query_char) in ali.target_seq.iter().zip(ali.query_seq.iter()) {
+                    match target_char {
+                        GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
+                            // if the target character is a gap, we advance the
+                            // consensus position and leave the column index alone
+                            match ali.strand {
+                                Strand::Forward => ali_consensus_position += 1,
+                                Strand::Reverse => ali_consensus_position -= 1,
+                                Strand::Unset => {
+                                    panic!("Alignment.strand is unset in call to MatrixDef::new()")
                                 }
                             }
                         }
+                        _ => {
+                            match query_char {
+                                GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
+                                    // if the query character is a gap, we use
+                                    // the previous query consensus position
+                                }
+                                _ => {
+                                    // if the query character isn't a gap,
+                                    // we advance the consensus position
+                                    match ali.strand {
+                                        Strand::Forward => ali_consensus_position += 1,
+                                        Strand::Reverse => ali_consensus_position -= 1,
+                                        Strand::Unset => {
+                                            panic!(
+                                            "Alignment.strand is unset in call to MatrixDef::new()"
+                                        )
+                                        }
+                                    }
+                                }
+                            }
 
-                        debug_assert!(ali_col_idx >= col_start && ali_col_idx <= col_end);
+                            debug_assert!(ali_col_idx >= col_start && ali_col_idx <= col_end);
 
-                        consensus_positions_by_col[ali_col_idx].push(ali_consensus_position);
-                        ali_col_idx += 1;
+                            consensus_positions_by_col[ali_col_idx].push(ali_consensus_position);
+                            ali_col_idx += 1;
+                        }
                     }
                 }
-            }
-        });
+            });
 
         Self {
-            target_name: target_name.to_string(),
-            query_names,
             num_rows,
             num_cols,
             target_start,
@@ -167,7 +161,7 @@ pub struct Matrix<'a, T>
 where
     T: Clone + Copy + Default + std::fmt::Display,
 {
-    pub def: &'a MatrixDef<'a>,
+    pub def: &'a MatrixDef,
     pub data: Vec<Vec<T>>,
 }
 
@@ -226,10 +220,6 @@ where
 
     pub fn target_start(&self) -> usize {
         self.def.target_start
-    }
-
-    pub fn num_ids(&self) -> usize {
-        self.def.query_names.len()
     }
 
     pub fn col_slice(&self, col: usize) -> &[T] {
