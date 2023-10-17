@@ -64,8 +64,8 @@ impl std::fmt::Display for Alignment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}: {}-{}",
-            self.query_id, self.target_start, self.target_end
+            "{}: {}-{} {}-{}",
+            self.query_id, self.target_start, self.target_end, self.query_start, self.query_end
         )
     }
 }
@@ -429,9 +429,13 @@ impl AlignmentData {
                 });
             });
 
-        target_groups
-            .iter_mut()
-            .for_each(|g| g.alignments.sort_by_key(|a| a.target_start));
+        target_groups.iter_mut().for_each(|g| {
+            g.alignments.sort_by(|a, b| {
+                a.target_start
+                    .cmp(&b.target_start)
+                    .then(a.query_id.cmp(&b.query_id))
+            })
+        });
 
         Ok(Self {
             target_groups,

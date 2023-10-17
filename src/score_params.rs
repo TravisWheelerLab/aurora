@@ -42,3 +42,16 @@ impl ScoreParams {
         }
     }
 }
+
+impl std::fmt::Debug for ScoreParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "{}\n{}\n{}\n{}",
+            self.query_jump_score,
+            self.query_to_skip_score,
+            self.query_loop_score,
+            self.skip_loop_score
+        )
+    }
+}
