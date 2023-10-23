@@ -1,6 +1,10 @@
-use crate::{matrix::Matrix, score_params::ScoreParams};
+use crate::{
+    alignment::{Alignment, AlignmentData},
+    matrix::Matrix,
+    score_params::ScoreParams,
+};
 
-use itertools::multizip;
+use itertools::{multizip, Itertools};
 
 pub fn viterbi(
     confidence_matrix: &Matrix<f64>,
@@ -229,6 +233,214 @@ pub fn viterbi(
                 sources_matrix.set_sparse(sparse_row_to_idx, col_to_idx, source)
             });
     }
+}
+
+#[derive(Copy, Clone)]
+pub struct SubTraceStep {
+    pub row: usize,
+    pub col: usize,
+}
+
+///
+///
+///
+///
+pub struct SubTrace {
+    spawn_row: usize,
+    spawn_col: usize,
+    start_row: usize,
+    start_col: usize,
+    end_row: usize,
+    end_col: usize,
+    steps: Vec<SubTraceStep>,
+}
+
+impl SubTrace {
+    fn new(start_row: usize, start_col: usize, spawn_row: usize, spawn_col: usize) -> Self {
+        Self {
+            spawn_row,
+            spawn_col,
+            start_row,
+            start_col,
+            end_row: start_row,
+            end_col: start_col,
+            steps: vec![SubTraceStep {
+                row: start_row,
+                col: start_col,
+            }],
+        }
+    }
+
+    fn add_step(&mut self, row: usize, col: usize) {
+        self.end_row = row;
+        self.end_col = col;
+        self.steps.push(SubTraceStep { row, col });
+    }
+
+    fn last_col(&self) -> usize {
+        self.steps.last().unwrap().col
+    }
+
+    fn last_row(&self) -> usize {
+        self.steps.last().unwrap().row
+    }
+
+    fn print(&self) {
+        (0..self.start_col).for_each(|_| print!(" "));
+        self.steps.iter().for_each(|s| print!("{}", s.row));
+        println!();
+    }
+}
+
+///
+///
+///
+///
+pub fn hyper_traceback(
+    sources: &Matrix<usize>,
+    alignments: &[Alignment],
+    alignment_data: &AlignmentData,
+) -> serde_json::Value {
+    let mut traces: Vec<SubTrace> = (0..sources.col_length(0))
+        .map(|row| sources.sparse_to_logical_row_idx(row, 0))
+        .map(|row| SubTrace::new(row, 0, row, 0))
+        .collect();
+
+    let mut source_counts = vec![0usize; sources.num_rows()];
+
+    (1..sources.num_cols()).for_each(|col| {
+        source_counts.iter_mut().for_each(|c| *c = 0);
+
+        (0..sources.col_length(col))
+            .map(|sparse_row| {
+                sources.sparse_to_logical_row_idx(sources.get_sparse(sparse_row, col), col - 1)
+            })
+            .for_each(|source_row| {
+                source_counts[source_row] += 1;
+            });
+
+        // for each current column
+        (0..sources.col_length(col))
+            .map(|sparse_row| {
+                (
+                    // get the logical row
+                    sources.sparse_to_logical_row_idx(sparse_row, col),
+                    // and the logical source row
+                    sources.sparse_to_logical_row_idx(sources.get_sparse(sparse_row, col), col - 1),
+                )
+            })
+            .for_each(|(row, source_row)| {
+                let source_count = source_counts[source_row];
+
+                if source_count == 0 {
+                    // kill
+                    // no-op for now
+                } else if source_count == 1 {
+                    // continue
+                    let trace = traces
+                        .iter_mut()
+                        .find(|t| t.last_row() == source_row && t.last_col() == col - 1)
+                        .expect("failed to continue");
+
+                    trace.steps.push(SubTraceStep { row, col })
+                } else {
+                    // split & continue
+                    if source_row == row {
+                        let trace = traces
+                            .iter_mut()
+                            .find(|t| t.last_row() == source_row && t.last_col() == col - 1)
+                            .expect("failed to continue");
+
+                        trace.add_step(row, col);
+                    } else {
+                        traces.push(SubTrace::new(row, col, source_row, col - 1))
+                    }
+                }
+            });
+    });
+
+    traces.iter_mut().for_each(|t| {
+        let mut breakpoints: Vec<usize> = vec![];
+        let mut prev_row = usize::MAX;
+
+        t.steps.iter_mut().enumerate().for_each(|(idx, s)| {
+            if s.row != prev_row {
+                breakpoints.push(idx);
+            }
+            prev_row = s.row;
+        });
+
+        if !breakpoints.contains(&(t.steps.len() - 1)) {
+            breakpoints.push(t.steps.len() - 1);
+        }
+
+        let new_steps: Vec<SubTraceStep> = t
+            .steps
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| breakpoints.contains(idx))
+            .map(|(_, s)| *s)
+            .collect();
+
+        t.steps = new_steps;
+    });
+
+    let lines: Vec<String> = traces
+        .iter()
+        .enumerate()
+        .flat_map(|(trace_idx, t)| {
+            t.steps
+                .iter()
+                .zip(t.steps.iter().skip(1))
+                .enumerate()
+                .map(|(step_idx, (a, b))| {
+                    format!("{}-{},{},{},{}", trace_idx, step_idx, a.col, b.col, a.row)
+                })
+                .collect::<Vec<String>>()
+        })
+        .collect();
+
+    let spawns: Vec<String> = traces
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.steps.len() > 1)
+        .map(|(trace_idx, t)| {
+            format!(
+                "{},{},{},{},{}",
+                trace_idx, t.spawn_row, t.spawn_col, t.steps[0].row, t.steps[0].col
+            )
+        })
+        .collect();
+
+    let row_count = traces
+        .iter()
+        .flat_map(|t| &t.steps)
+        .map(|s| s.row)
+        .max()
+        .unwrap();
+
+    let alignments = alignments
+        .iter()
+        .enumerate()
+        .map(|(idx, a)| {
+            format!(
+                "{},{},{},{}",
+                idx,
+                alignment_data.query_name_map.value(a.query_id),
+                a.target_start - sources.target_start(),
+                a.target_end - sources.target_start()
+            )
+        })
+        .collect_vec();
+
+    serde_json::json!({
+        "lines": lines,
+        "spawns": spawns,
+        "alignments": alignments,
+        "start": 0,
+        "end": sources.num_cols(),
+        "rowCount": row_count,
+    })
 }
 
 #[derive(Default, Clone, Debug)]

@@ -27,7 +27,7 @@ use pipeline::run_pipeline;
 use anyhow::Result;
 use clap::Parser;
 
-use crate::chunks::validate_groups;
+use crate::{chunks::validate_groups, pipeline::run_assembly_pipeline};
 
 #[derive(Debug, Parser)]
 #[command(name = "aurora")]
@@ -174,6 +174,9 @@ fn main() -> Result<()> {
         // .inspect(|g| println!("{g:?}"))
         .enumerate()
         .for_each(|(region_idx, group)| run_pipeline(group, &alignment_data, region_idx, &args));
+    // .for_each(|(region_idx, group)| {
+    //     run_assembly_pipeline(group, &alignment_data, region_idx, &args)
+    // });
 
     Ok(())
 }

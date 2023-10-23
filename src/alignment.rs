@@ -70,23 +70,22 @@ impl std::fmt::Display for Alignment {
     }
 }
 
-// TODO: I don't think we need this anymore
-// impl Serialize for Alignment {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: Serializer,
-//     {
-//         let mut state = serializer.serialize_struct("Alignment", 6)?;
-//         state.serialize_field("name", &self.query_name)?;
-//         state.serialize_field("start", &self.target_start)?;
-//         state.serialize_field("end", &self.target_end)?;
-//         state.serialize_field("row", &self.query_id)?;
-//         state.serialize_field("strand", &self.strand.to_string())?;
-//         state.serialize_field("targetSeq", &self.target_seq.to_utf8_string())?;
-//         state.serialize_field("sequence", &self.query_seq.to_utf8_string())?;
-//         state.end()
-//     }
-// }
+impl Serialize for Alignment {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("Alignment", 5)?;
+        state.serialize_field("query", &self.query_id)?;
+        state.serialize_field("queryStart", &self.query_start)?;
+        state.serialize_field("queryEnd", &self.query_end)?;
+        state.serialize_field("targetStart", &self.target_start)?;
+        state.serialize_field("targetEnd", &self.target_end)?;
+        state.serialize_field("row", &self.query_id)?;
+        state.serialize_field("strand", &self.strand.to_string())?;
+        state.end()
+    }
+}
 
 pub fn caf_str_to_digital_nucleotides(caf_str: &str) -> (Vec<u8>, Vec<u8>) {
     //  Robert's notes on the CAF format:

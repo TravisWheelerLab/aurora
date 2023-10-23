@@ -5,9 +5,11 @@ use crate::matrix::Matrix;
 ///
 ///
 ///
-pub fn windowed_confidence_slow(matrix: &mut Matrix<f64>) {
+pub fn windowed_confidence_slow(matrix: &mut Matrix<f64>) -> Vec<f64> {
     // TODO: parameterize this
     let half_window_size = 15usize;
+
+    let mut confidence_avg_by_row: Vec<f64> = vec![0.0; matrix.num_rows()];
 
     // we keep a buffer of the computed windowed confidences
     // so that we don't overwrite a cell that needs
@@ -18,10 +20,12 @@ pub fn windowed_confidence_slow(matrix: &mut Matrix<f64>) {
         let (row_start, row_end) = matrix.col_range_by_row(row_idx);
 
         (row_start..=row_end).for_each(|center_of_window_col_idx| {
-            // saturating subtract to prevent underflow
-            // .max(row_start) to prevent going past the beginning of an alignment
             let window_start_col_idx =
-                (center_of_window_col_idx.saturating_sub(half_window_size)).max(row_start);
+                // saturating subtract to prevent underflow
+                (center_of_window_col_idx.saturating_sub(half_window_size))
+                // max to prevent going past the beginning of an alignment
+                .max(row_start);
+
             // min(row_end) to prevent going past the end of an alignment
             let window_end_col_idx = (center_of_window_col_idx + half_window_size).min(row_end);
             // the window size won't always be uniform, so we need to compute it every time
@@ -37,9 +41,15 @@ pub fn windowed_confidence_slow(matrix: &mut Matrix<f64>) {
             buffer[center_of_window_col_idx] = window_avg;
         });
 
+        let mut confidence_sum = 0.0;
         // once we've completed the row, we can copy the buffer into the matrix
         (row_start..=row_end).for_each(|col_idx| {
             matrix.set(row_idx, col_idx, buffer[col_idx]);
+            confidence_sum += buffer[col_idx];
         });
+
+        confidence_avg_by_row[row_idx] = confidence_sum / (row_end - row_start + 1) as f64;
     });
+
+    confidence_avg_by_row
 }

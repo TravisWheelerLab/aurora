@@ -1,7 +1,9 @@
 use std::fs;
 
+use itertools::Itertools;
+
 use crate::{
-    alignment::AlignmentData,
+    alignment::{Alignment, AlignmentData, Strand},
     alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE,
     chunks::ProximityGroup,
     confidence::confidence,
@@ -10,11 +12,116 @@ use crate::{
     score_params::ScoreParams,
     segments::Segments,
     support::windowed_confidence_slow,
-    viterbi::{traceback, viterbi},
-    viz::AuroraSodaData,
+    viterbi::{hyper_traceback, traceback, viterbi},
+    viz::{write_soda_html, AuroraSodaData},
     windowed_scores::windowed_score,
     Args, BACKGROUND_WINDOW_SIZE, SCORE_WINDOW_SIZE,
 };
+
+pub fn run_assembly_pipeline(
+    group: &ProximityGroup,
+    alignment_data: &AlignmentData,
+    region_idx: usize,
+    args: &Args,
+) {
+    let matrix_def = MatrixDef::new(group);
+    let mut confidence_matrix = Matrix::<f64>::new(&matrix_def);
+
+    windowed_score(
+        &mut confidence_matrix,
+        group.alignments,
+        &alignment_data.substitution_matrices,
+        SCORE_WINDOW_SIZE,
+        BACKGROUND_WINDOW_SIZE,
+    );
+
+    confidence(&mut confidence_matrix);
+
+    let confidence_avg_by_row = windowed_confidence_slow(&mut confidence_matrix);
+
+    let mut query_ids: Vec<usize> = group
+        .alignments
+        .iter()
+        .map(|a| a.query_id)
+        .unique()
+        .collect();
+
+    query_ids.sort();
+
+    query_ids[14..15]
+        .iter()
+        .map(|&id| {
+            group
+                .alignments
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| a.query_id == id)
+                .collect::<Vec<(usize, &Alignment)>>()
+        })
+        .for_each(|alignments| {
+            let min_consensus = alignments
+                .iter()
+                .fold(usize::MAX, |min, a| min.min(a.1.query_end));
+
+            let max_consensus = alignments
+                .iter()
+                .fold(0usize, |max, a| max.max(a.1.query_start));
+
+            let min_target = alignments
+                .iter()
+                .fold(usize::MAX, |min, a| min.min(a.1.target_start));
+
+            let max_target = alignments
+                .iter()
+                .fold(0usize, |max, a| max.max(a.1.target_end));
+
+            let j_c_ali = alignments
+                .iter()
+                .enumerate()
+                .map(|(i, a)| {
+                    serde_json::json!({
+                        "id": i.to_string(),
+                        "start": a.1.query_end,
+                        "end": a.1.query_start,
+                        "strand": a.1.strand,
+                        "conf": confidence_avg_by_row[a.0],
+                    })
+                })
+                .collect::<serde_json::Value>();
+
+            let j_t_ali = alignments
+                .iter()
+                .enumerate()
+                .map(|(i, a)| {
+                    serde_json::json!({
+                        "id": i.to_string(),
+                        "start": a.1.target_start,
+                        "end": a.1.target_end,
+                        "strand": a.1.strand,
+                        "conf": confidence_avg_by_row[a.0],
+                    })
+                })
+                .collect::<serde_json::Value>();
+
+            let j_consensus = serde_json::json!({
+                "start": min_consensus,
+                "end": max_consensus,
+                "annotations": j_c_ali,
+            });
+
+            let j_target = serde_json::json!({
+                "start": min_target,
+                "end": max_target,
+                "annotations": j_t_ali,
+            });
+
+            println!(
+                "let targetParams = {};\n let consensusParams = {}",
+                serde_json::to_string(&j_target).unwrap(),
+                serde_json::to_string(&j_consensus).unwrap(),
+            );
+        });
+}
 
 pub fn run_pipeline(
     group: &ProximityGroup,
@@ -46,7 +153,10 @@ pub fn run_pipeline(
     windowed_confidence_slow(&mut confidence_matrix);
 
     // this removes any initial dead space between alignments
-    let mut active_cols = confidence_matrix.initial_active_cols();
+
+    // let mut active_cols = confidence_matrix.initial_active_cols();
+    let mut active_cols = (0..confidence_matrix.num_cols()).collect::<Vec<_>>();
+
     let mut last_num_cols = active_cols.len();
     let mut results: Vec<Annotation> = vec![];
 
@@ -66,6 +176,14 @@ pub fn run_pipeline(
             alignment_data.query_name_map.size(),
             args.consensus_join_distance,
         );
+
+        // let data = hyper_traceback(&sources_matrix, group.alignments, alignment_data);
+        // write_soda_html(
+        //     &data,
+        //     "./fixtures/soda/trace-template.html",
+        //     "./fixtures/soda/trace.js",
+        //     "./trace.html",
+        // );
 
         let trace = traceback(&viterbi_matrix, &sources_matrix, &active_cols, join_id_cnt);
         join_id_cnt = trace
@@ -123,29 +241,19 @@ pub fn run_pipeline(
             args,
         );
 
-        let html_template = fs::read_to_string("./fixtures/soda/template.html")
-            .expect("failed to read template.html");
-
-        let viz_js = fs::read_to_string("./fixtures/soda/viz.js").expect("failed to read viz.js");
-
-        let mut viz_html = html_template.replace(
-            "DATA_TARGET",
-            &serde_json::to_string(&data).expect("failed to serialize JSON data"),
-        );
-
-        viz_html = viz_html.replace("JS_TARGET", &viz_js);
-
-        let target_name = alignment_data.target_name_map.value(group.target_id);
-        let file_path = args.viz_output_path.join(format!(
+        let out_path = args.viz_output_path.join(format!(
             "{}-{}-{}.html",
-            target_name,
+            alignment_data.target_name_map.value(group.target_id),
             matrix_def.target_start,
             matrix_def.target_start + matrix_def.num_cols
         ));
 
-        let mut file = std::fs::File::create(file_path).expect("failed to create file");
-
-        std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
+        write_soda_html(
+            &data,
+            "./fixtures/soda/template.html",
+            "./fixtures/soda/viz.js",
+            out_path,
+        );
     }
 }
 
