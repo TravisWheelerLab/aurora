@@ -478,7 +478,7 @@ impl Segments {
                                 target_name: target_name.to_string(),
                                 target_start: fragment.start_col_idx + target_start,
                                 target_end: fragment.end_col_idx + target_start,
-                                query_name: query_names.value(fragment.query_id).clone(),
+                                query_name: query_names.get(fragment.query_id).clone(),
                                 query_start: fragment.consensus_start,
                                 query_end: fragment.consensus_end,
                                 strand: fragment.strand,

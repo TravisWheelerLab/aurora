@@ -121,7 +121,7 @@ impl Segments {
                     f.end_col_idx,
                     f.query_id,
                     f.row_idx,
-                    query_names.value(f.query_id)
+                    query_names.get(f.query_id)
                 )
             })
             .join("|")
@@ -138,7 +138,7 @@ impl Segments {
                     f.end_col_idx,
                     f.row_idx,
                     f.avg_confidence,
-                    query_names.value(f.query_id),
+                    query_names.get(f.query_id),
                     f.consensus_start,
                     f.consensus_end,
                     f.strand
@@ -243,7 +243,7 @@ impl AuroraSodaData {
             .alignments
             .iter()
             .enumerate()
-            .map(|(ali_idx, a)| a.soda_string(ali_idx + 1, query_names.value(a.query_id)))
+            .map(|(ali_idx, a)| a.soda_string(ali_idx + 1, query_names.get(a.query_id)))
             .collect();
 
         Self {

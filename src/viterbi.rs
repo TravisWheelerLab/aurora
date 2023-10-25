@@ -426,7 +426,7 @@ pub fn hyper_traceback(
             format!(
                 "{},{},{},{}",
                 idx,
-                alignment_data.query_name_map.value(a.query_id),
+                alignment_data.query_name_map.get(a.query_id),
                 a.target_start - sources.target_start(),
                 a.target_end - sources.target_start()
             )

@@ -60,6 +60,20 @@ pub struct Alignment {
     pub substitution_matrix_id: usize,
 }
 
+impl PartialEq for Alignment {
+    fn eq(&self, other: &Self) -> bool {
+        self.target_seq == other.target_seq
+            && self.query_seq == other.query_seq
+            && self.target_start == other.target_start
+            && self.target_end == other.target_end
+            && self.query_start == other.query_start
+            && self.query_end == other.query_end
+            && self.strand == other.strand
+            && self.query_id == other.query_id
+            && self.substitution_matrix_id == other.substitution_matrix_id
+    }
+}
+
 impl std::fmt::Display for Alignment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -263,9 +277,14 @@ impl<T: std::cmp::PartialEq> VecMap<T> {
         }
     }
 
-    pub fn value(&self, key: usize) -> &T {
+    pub fn get(&self, key: usize) -> &T {
         debug_assert!(key < self.values.len(), "invalid key: {key}");
         &self.values[key]
+    }
+
+    pub fn get_mut(&mut self, key: usize) -> &mut T {
+        debug_assert!(key < self.values.len(), "invalid key: {key}");
+        &mut self.values[key]
     }
 
     pub fn contains(&self, value: &T) -> bool {
@@ -285,6 +304,15 @@ impl<T: std::cmp::PartialEq> VecMap<T> {
             .find(|(k, n)| *n == value)
             .expect("key not found")
             .0
+    }
+}
+
+impl<T: std::cmp::PartialEq + std::fmt::Debug> fmt::Debug for VecMap<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (0..self.size()).for_each(|key| {
+            writeln!(f, "{key}: {:?}", self.values[key]).unwrap();
+        });
+        Ok(())
     }
 }
 

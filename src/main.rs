@@ -1,6 +1,7 @@
 mod alignment;
 mod alphabet;
 mod chunks;
+mod collapse;
 mod confidence;
 mod matrix;
 mod pipeline;
@@ -173,10 +174,10 @@ fn main() -> Result<()> {
         .iter()
         // .inspect(|g| println!("{g:?}"))
         .enumerate()
-        .for_each(|(region_idx, group)| run_pipeline(group, &alignment_data, region_idx, &args));
-    // .for_each(|(region_idx, group)| {
-    //     run_assembly_pipeline(group, &alignment_data, region_idx, &args)
-    // });
+        // .for_each(|(region_idx, group)| run_pipeline(group, &alignment_data, region_idx, &args));
+        .for_each(|(region_idx, group)| {
+            run_assembly_pipeline(group, &alignment_data, region_idx, &args)
+        });
 
     Ok(())
 }
