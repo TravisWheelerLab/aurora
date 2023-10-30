@@ -69,7 +69,7 @@ pub fn run_assembly_pipeline(
     //  - rebuild matrix
     //  - gotta take care of target overlapping assemblies (mini-viterbi)
     //  - run DP on reduced matrix
-    //    - try same-row consensus-based loop transitions
+    //    - try same-row-consensus-based loop transitions
     //  - remove all columns called by singles that are either clearly
     //    contained, or don't compete with an assembly
     //  - run again
