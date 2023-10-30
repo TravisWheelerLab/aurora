@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+  <body>
+    <button id="prev">prev</button>
+    <button id="next">next</button>
+    <div class="container"></div>
+  </body>
+
+  <script type="module">
+    JS_TARGET;
+
+    let data = DATA_TARGET;
+
+    document.getElementById("prev").addEventListener("click", () => {
+      window.location.href = `./${data.prev}-${data.suffix}.html`;
+    });
+
+    document.getElementById("next").addEventListener("click", () => {
+      window.location.href = `./${data.next}-${data.suffix}.html`;
+    });
+
+    run(data);
+  </script>
+</html>

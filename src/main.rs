@@ -30,7 +30,7 @@ use clap::Parser;
 
 use crate::{chunks::validate_groups, pipeline::run_assembly_pipeline};
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Clone)]
 #[command(name = "aurora")]
 #[command(about = "stuff")]
 pub struct Args {
@@ -174,9 +174,10 @@ fn main() -> Result<()> {
         .iter()
         // .inspect(|g| println!("{g:?}"))
         .enumerate()
-        // .for_each(|(region_idx, group)| run_pipeline(group, &alignment_data, region_idx, &args));
         .for_each(|(region_idx, group)| {
-            run_assembly_pipeline(group, &alignment_data, region_idx, &args)
+            run_assembly_pipeline(group, &alignment_data, region_idx, args.clone());
+            run_pipeline(group, &alignment_data, region_idx, &args);
+            panic!();
         });
 
     Ok(())

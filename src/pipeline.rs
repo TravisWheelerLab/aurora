@@ -1,11 +1,10 @@
 use std::{fs, path::PathBuf};
 
-use itertools::Itertools;
-
 use crate::{
-    alignment::{Alignment, AlignmentData, Strand},
+    alignment::AlignmentData,
     alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE,
     chunks::ProximityGroup,
+    collapse::collapse,
     confidence::confidence,
     matrix::{Matrix, MatrixDef},
     results::Annotation,
@@ -13,7 +12,7 @@ use crate::{
     segments::Segments,
     support::windowed_confidence_slow,
     viterbi::{traceback, viterbi},
-    viz::{write_soda_html, AuroraSodaData},
+    viz::{write_soda_html, AuroraAdjudicationSodaData},
     windowed_scores::windowed_score,
     Args, BACKGROUND_WINDOW_SIZE, SCORE_WINDOW_SIZE,
 };
@@ -22,15 +21,22 @@ pub fn run_assembly_pipeline(
     group: &ProximityGroup,
     alignment_data: &AlignmentData,
     region_idx: usize,
-    args: &Args,
+    mut args: Args,
 ) {
-    let mut viz_path = PathBuf::from(format!(
-        "./viz/{}-{}-{}-{}",
-        group.target_id, region_idx, group.target_start, group.target_end
-    ));
+    if args.viz {
+        args.viz_output_path.push(format!(
+            "{}-{}-{}-{}",
+            group.target_id, region_idx, group.target_start, group.target_end
+        ));
 
-    fs::create_dir_all(&viz_path).unwrap();
-    viz_path = viz_path.canonicalize().unwrap();
+        fs::create_dir_all(&args.viz_output_path).unwrap();
+    }
+
+    let score_params = ScoreParams::new(
+        group.alignments.len(),
+        args.query_jump_probability,
+        args.num_skip_loops_eq_to_jump,
+    );
 
     let matrix_def = MatrixDef::new(group);
     let mut confidence_matrix = Matrix::<f64>::new(&matrix_def);
@@ -43,9 +49,32 @@ pub fn run_assembly_pipeline(
         BACKGROUND_WINDOW_SIZE,
     );
 
-    confidence(&mut confidence_matrix);
+    let skip_confidence_by_col = confidence(&mut confidence_matrix);
 
     let confidence_avg_by_row = windowed_confidence_slow(&mut confidence_matrix);
+
+    let assemblies = collapse(group, &confidence_avg_by_row, &args);
+
+    let (assembled, single): (Vec<_>, Vec<_>) = assemblies.into_iter().partition(|a| a.len() > 1);
+
+    // thoughts:
+    //  - find out how often do assemblies overlap in the target
+    //  - should be able to filter reasonably well by comparing groups of rows that are
+    //    significantly long (50+?) and reasonably aligned (+/- 10 on either side?, maybe a
+    //    percentage of length))
+    //
+    // vague steps:
+    //  - probably don't filter grouped
+    //  - probably try to filter the singles
+    //  - rebuild matrix
+    //  - gotta take care of target overlapping assemblies (mini-viterbi)
+    //  - run DP on reduced matrix
+    //    - try same-row consensus-based loop transitions
+    //  - remove all columns called by singles that are either clearly
+    //    contained, or don't compete with an assembly
+    //  - run again
+    //  - remove resolved assemblies (all pieces had the chance to join)
+    //  - iterate
 }
 
 pub fn run_pipeline(
@@ -156,7 +185,7 @@ pub fn run_pipeline(
     Annotation::write(&results, &mut std::io::stdout());
 
     if args.viz {
-        let data = AuroraSodaData::new(
+        let data = AuroraAdjudicationSodaData::new(
             group,
             &alignment_data.query_name_map,
             &results,

@@ -14,12 +14,13 @@ use itertools::Itertools;
 use serde::Serialize;
 
 use crate::{
-    alignment::{Alignment, VecMap},
+    alignment::{Alignment, Strand, VecMap},
     alphabet::{
         NucleotideByteUtils, ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
         PAD_DIGITAL, SPACE_UTF8,
     },
     chunks::ProximityGroup,
+    collapse::AlignmentTuple,
     results::Annotation,
     segments::Segments,
     Args,
@@ -44,24 +45,6 @@ pub fn write_soda_html(
     let mut file = std::fs::File::create(out_path).expect("failed to create file");
 
     std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
-}
-
-///
-///
-///
-///
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuroraSodaData {
-    target_start: usize,
-    target_end: usize,
-    target_seq: String,
-    aurora_ann: Vec<BlockGroup>,
-    reference_ann: Vec<BlockGroup>,
-    alignment_strings: Vec<String>,
-    trace_strings: Vec<String>,
-    fragment_strings: Vec<String>,
-    segment_strings: Vec<String>,
 }
 
 impl Alignment {
@@ -160,7 +143,21 @@ impl Segments {
 ///
 ///
 ///
-impl AuroraSodaData {
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuroraAdjudicationSodaData {
+    target_start: usize,
+    target_end: usize,
+    target_seq: String,
+    aurora_ann: Vec<BlockGroup>,
+    reference_ann: Vec<BlockGroup>,
+    alignment_strings: Vec<String>,
+    trace_strings: Vec<String>,
+    fragment_strings: Vec<String>,
+    segment_strings: Vec<String>,
+}
+
+impl AuroraAdjudicationSodaData {
     // TODO: these parameters need a refactor
     pub fn new(
         group: &ProximityGroup,
@@ -256,6 +253,150 @@ impl AuroraSodaData {
             trace_strings,
             fragment_strings,
             segment_strings,
+        }
+    }
+}
+
+///
+///
+///
+///
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuroraAssemblySodaData {
+    target_start: usize,
+    target_end: usize,
+    consensus_start: usize,
+    consensus_end: usize,
+    consensus_ali_strings: Vec<String>,
+    target_ali_strings: Vec<String>,
+    consensus_assembly_strings: Vec<Vec<String>>,
+    target_assembly_strings: Vec<Vec<String>>,
+    links: Vec<String>,
+    prev: usize,
+    next: usize,
+    suffix: String,
+}
+
+impl AuroraAssemblySodaData {
+    pub fn new(
+        tuples: &[AlignmentTuple],
+        assemblies: &[Vec<usize>],
+        query_ids: &[usize],
+        links: Vec<String>,
+        strand: Strand,
+    ) -> Self {
+        let query_id = tuples[0].alignment.query_id;
+
+        let consensus_ali_strings = tuples
+            .iter()
+            .map(|t| {
+                format!(
+                    "{},{},{},{}",
+                    t.row_idx, t.alignment.query_start, t.alignment.query_end, t.confidence
+                )
+            })
+            .collect_vec();
+
+        let target_ali_strings = tuples
+            .iter()
+            .map(|t| {
+                format!(
+                    "{},{},{},{}",
+                    t.row_idx, t.alignment.target_start, t.alignment.target_end, t.confidence
+                )
+            })
+            .collect_vec();
+
+        let target_assembly_strings = assemblies
+            .iter()
+            .map(|a| {
+                a.iter()
+                    .map(|idx| {
+                        format!(
+                            "{},{},{},{}",
+                            tuples[*idx].row_idx,
+                            tuples[*idx].alignment.target_start,
+                            tuples[*idx].alignment.target_end,
+                            tuples[*idx].confidence,
+                        )
+                    })
+                    .collect_vec()
+            })
+            .collect_vec();
+
+        let consensus_assembly_strings = assemblies
+            .iter()
+            .map(|a| {
+                a.iter()
+                    .map(|idx| {
+                        format!(
+                            "{},{},{},{}",
+                            tuples[*idx].row_idx,
+                            tuples[*idx].alignment.query_start,
+                            tuples[*idx].alignment.query_end,
+                            tuples[*idx].confidence,
+                        )
+                    })
+                    .collect_vec()
+            })
+            .collect_vec();
+
+        let query_id_idx = query_ids
+            .iter()
+            .position(|id| *id == query_id)
+            .expect("failed to find query_id");
+
+        let next_idx = query_id_idx + 1;
+
+        let next = if next_idx < query_ids.len() {
+            query_ids[next_idx]
+        } else {
+            query_ids[0]
+        };
+
+        let prev_idx = query_id_idx as isize - 1;
+        let prev = if prev_idx > 0 {
+            query_ids[prev_idx as usize]
+        } else {
+            query_ids[query_ids.len() - 1]
+        };
+
+        let suffix = match strand {
+            Strand::Forward => "fwd".to_string(),
+            Strand::Reverse => "rev".to_string(),
+            _ => panic!(),
+        };
+
+        let target_start = tuples
+            .iter()
+            .map(|t| t.alignment.target_start)
+            .min()
+            .unwrap();
+
+        let target_end = tuples.iter().map(|t| t.alignment.target_end).max().unwrap();
+
+        let consensus_start = tuples
+            .iter()
+            .map(|t| t.alignment.query_start)
+            .min()
+            .unwrap();
+
+        let consensus_end = tuples.iter().map(|t| t.alignment.query_end).max().unwrap();
+
+        Self {
+            target_start,
+            target_end,
+            consensus_start,
+            consensus_end,
+            consensus_ali_strings,
+            target_ali_strings,
+            consensus_assembly_strings,
+            target_assembly_strings,
+            links,
+            prev,
+            next,
+            suffix,
         }
     }
 }

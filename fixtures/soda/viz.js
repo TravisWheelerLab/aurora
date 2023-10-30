@@ -404,6 +404,7 @@ function run(data) {
           text: (d) =>
             `${d.a.query}: ` +
             `${d.a.queryStart.toLocaleString()}..${d.a.queryEnd.toLocaleString()}` +
+            `<br>chrom: ${d.a.start.toLocaleString()}..${d.a.end.toLocaleString()}` +
             `<br>strand: ${d.a.strand}` +
             `<br>confidence: ${d.a.conf}`,
         });

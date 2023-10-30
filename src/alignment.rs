@@ -301,7 +301,7 @@ impl<T: std::cmp::PartialEq> VecMap<T> {
         self.values
             .iter()
             .enumerate()
-            .find(|(k, n)| *n == value)
+            .find(|(_, n)| *n == value)
             .expect("key not found")
             .0
     }
