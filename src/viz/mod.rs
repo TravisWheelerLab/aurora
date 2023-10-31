@@ -284,17 +284,22 @@ impl AuroraAssemblySodaData {
         assemblies: &[Vec<usize>],
         query_ids: &[usize],
         links: Vec<String>,
-        strand: Strand,
     ) -> Self {
         let query_id = tuples[0].alignment.query_id;
+        let strand = tuples[0].alignment.strand;
 
         let consensus_ali_strings = tuples
             .iter()
-            .map(|t| {
-                format!(
+            .map(|t| match strand {
+                Strand::Forward => format!(
                     "{},{},{},{}",
                     t.row_idx, t.alignment.query_start, t.alignment.query_end, t.confidence
-                )
+                ),
+                Strand::Reverse => format!(
+                    "{},{},{},{}",
+                    t.row_idx, t.alignment.query_end, t.alignment.query_start, t.confidence
+                ),
+                Strand::Unset => panic!(),
             })
             .collect_vec();
 
@@ -329,14 +334,24 @@ impl AuroraAssemblySodaData {
             .iter()
             .map(|a| {
                 a.iter()
-                    .map(|idx| {
-                        format!(
+                    .map(|idx| match strand {
+                        Strand::Forward => format!(
                             "{},{},{},{}",
                             tuples[*idx].row_idx,
                             tuples[*idx].alignment.query_start,
                             tuples[*idx].alignment.query_end,
                             tuples[*idx].confidence,
-                        )
+                        ),
+
+                        Strand::Reverse => format!(
+                            "{},{},{},{}",
+                            tuples[*idx].row_idx,
+                            tuples[*idx].alignment.query_end,
+                            tuples[*idx].alignment.query_start,
+                            tuples[*idx].confidence,
+                        ),
+
+                        Strand::Unset => panic!(),
                     })
                     .collect_vec()
             })
@@ -376,13 +391,26 @@ impl AuroraAssemblySodaData {
 
         let target_end = tuples.iter().map(|t| t.alignment.target_end).max().unwrap();
 
-        let consensus_start = tuples
-            .iter()
-            .map(|t| t.alignment.query_start)
-            .min()
-            .unwrap();
+        let (consensus_start, consensus_end) = match strand {
+            Strand::Forward => (
+                tuples
+                    .iter()
+                    .map(|t| t.alignment.query_start)
+                    .min()
+                    .unwrap(),
+                tuples.iter().map(|t| t.alignment.query_end).max().unwrap(),
+            ),
+            Strand::Reverse => (
+                tuples.iter().map(|t| t.alignment.query_end).min().unwrap(),
+                tuples
+                    .iter()
+                    .map(|t| t.alignment.query_start)
+                    .max()
+                    .unwrap(),
+            ),
 
-        let consensus_end = tuples.iter().map(|t| t.alignment.query_end).max().unwrap();
+            Strand::Unset => panic!(),
+        };
 
         Self {
             target_start,

@@ -38,7 +38,7 @@ pub struct Edge {
     pub direction: Direction,
 }
 
-pub fn assembly_graph_fwd(tuples: &[AlignmentTuple], args: &Args) -> Vec<Vec<Edge>> {
+pub fn assembly_graph(tuples: &[AlignmentTuple], args: &Args) -> Vec<Vec<Edge>> {
     // this relies on the alignments being sorted by target start
     tuples.iter().zip(tuples.iter().skip(1)).for_each(|(a, b)| {
         debug_assert!(a.alignment.target_start <= b.alignment.target_start);
@@ -60,49 +60,15 @@ pub fn assembly_graph_fwd(tuples: &[AlignmentTuple], args: &Args) -> Vec<Vec<Edg
                 .saturating_sub(a.alignment.target_end)
                 < args.target_join_distance;
 
-            let consensus_distance =
-                b.alignment.query_start as isize - a.alignment.query_end as isize;
-
-            // TODO: PARAMETERIZE THIS
-            let consensus_colinear = consensus_distance > -20;
-
-            if within_target_distance && consensus_colinear {
-                graph[a_idx].push(Edge {
-                    idx_to: b_idx,
-                    weight: consensus_distance.abs() as f64,
-                    direction: Direction::Right,
-                });
-                graph[b_idx].push(Edge {
-                    idx_to: a_idx,
-                    weight: consensus_distance.abs() as f64,
-                    direction: Direction::Left,
-                });
-            }
-        });
-    });
-
-    graph
-}
-
-pub fn assembly_graph_rev(tuples: &[AlignmentTuple], args: &Args) -> Vec<Vec<Edge>> {
-    let mut graph: Vec<Vec<Edge>> = vec![vec![]; tuples.len()];
-    (0..tuples.len()).for_each(|a_idx| {
-        (a_idx + 1..tuples.len()).for_each(|b_idx| {
-            let a = &tuples[a_idx];
-            let b = &tuples[b_idx];
-
-            if a.alignment == b.alignment {
-                return;
-            }
-
-            let within_target_distance = b
-                .alignment
-                .target_start
-                .saturating_sub(a.alignment.target_end)
-                < args.target_join_distance;
-
-            let consensus_distance =
-                b.alignment.query_start as isize - a.alignment.query_end as isize;
+            let consensus_distance = match a.alignment.strand {
+                Strand::Forward => {
+                    b.alignment.query_start as isize - a.alignment.query_end as isize
+                }
+                Strand::Reverse => {
+                    a.alignment.query_end as isize - b.alignment.query_start as isize
+                }
+                Strand::Unset => panic!(),
+            };
 
             // TODO: PARAMETERIZE THIS
             let consensus_colinear = consensus_distance > -20;
@@ -266,8 +232,8 @@ pub fn collapse(
                 .into_iter()
                 .partition(|a| a.alignment.strand == Strand::Forward);
 
-            let mut fwd_graph = assembly_graph_fwd(&fwd_tuples, args);
-            let mut rev_graph = assembly_graph_rev(&rev_tuples, args);
+            let mut fwd_graph = assembly_graph(&fwd_tuples, args);
+            let mut rev_graph = assembly_graph(&rev_tuples, args);
 
             // if we are going to generate soda output
             // for the assemblies, we need to store the
@@ -310,8 +276,8 @@ pub fn collapse(
                     .collect_vec();
             }
 
-            let mut fwd_assemblies = assembly(&mut fwd_graph, &fwd_tuples);
-            let mut rev_assemblies = assembly(&mut rev_graph, &rev_tuples);
+            let fwd_assemblies = assembly(&mut fwd_graph, &fwd_tuples);
+            let rev_assemblies = assembly(&mut rev_graph, &rev_tuples);
 
             // check that the sum of assembly lengths is equal
             // to the number of alignments we started with
@@ -332,7 +298,6 @@ pub fn collapse(
                         &fwd_assemblies,
                         &query_ids,
                         fwd_links,
-                        Strand::Forward,
                     );
 
                     let fwd_path = args.viz_output_path.join(format!("{}-fwd.html", query_id));
@@ -351,7 +316,6 @@ pub fn collapse(
                         &rev_assemblies,
                         &query_ids,
                         rev_links,
-                        Strand::Reverse,
                     );
 
                     let rev_path = args.viz_output_path.join(format!("{}-rev.html", query_id));

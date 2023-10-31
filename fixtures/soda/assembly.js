@@ -151,6 +151,8 @@ export function run(data) {
   };
 
   let consensusParams = {
+    start: data.consensusStart,
+    end: data.consensusEnd,
     annotations: data.consensusAliStrings.map((r) => {
       let tokens = r.split(",")
       return {
@@ -166,7 +168,6 @@ export function run(data) {
   let consensusAssemblyCharts = [];
   let numAssemblies = data.targetAssemblyStrings.length;
   
-  console.log(data);
   for (let i = 0; i < numAssemblies; i++) {
     let targetChart = new soda.Chart(assemblyTargetConf);
     targetChart.render({
