@@ -1,16 +1,16 @@
 use anyhow::Result;
-use std::fmt;
 use std::io::{BufRead, BufReader, Read};
+use std::{fmt, hash};
 
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::alphabet::{
-    NucleotideByteUtils, ALIGNMENT_ALPHABET_STR, DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL,
-    GAP_OPEN_DIGITAL, NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, UTF8_TO_DIGITAL_NUCLEOTIDE,
+    ALIGNMENT_ALPHABET_STR, DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
+    NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, UTF8_TO_DIGITAL_NUCLEOTIDE,
 };
 use crate::substitution_matrix::SubstitutionMatrix;
 
-#[derive(Default, Debug, Clone, Copy, PartialEq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Strand {
     Forward,
     Reverse,
@@ -47,7 +47,7 @@ impl fmt::Display for Strand {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Eq)]
 pub struct Alignment {
     pub target_seq: Vec<u8>,
     pub query_seq: Vec<u8>,
@@ -56,29 +56,28 @@ pub struct Alignment {
     pub query_start: usize,
     pub query_end: usize,
     pub strand: Strand,
+    pub id: usize,
     pub query_id: usize,
     pub substitution_matrix_id: usize,
 }
 
 impl PartialEq for Alignment {
     fn eq(&self, other: &Self) -> bool {
-        self.target_seq == other.target_seq
-            && self.query_seq == other.query_seq
-            && self.target_start == other.target_start
-            && self.target_end == other.target_end
-            && self.query_start == other.query_start
-            && self.query_end == other.query_end
-            && self.strand == other.strand
-            && self.query_id == other.query_id
-            && self.substitution_matrix_id == other.substitution_matrix_id
+        self.id == other.id
     }
 }
 
-impl std::fmt::Display for Alignment {
+impl hash::Hash for Alignment {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl fmt::Display for Alignment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}: {}-{} {}-{}",
+            "{}: T|{}-{} Q|{}-{}",
             self.query_id, self.target_start, self.target_end, self.query_start, self.query_end
         )
     }
@@ -307,7 +306,7 @@ impl<T: std::cmp::PartialEq> VecMap<T> {
     }
 }
 
-impl<T: std::cmp::PartialEq + std::fmt::Debug> fmt::Debug for VecMap<T> {
+impl<T: std::cmp::PartialEq + fmt::Debug> fmt::Debug for VecMap<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         (0..self.size()).for_each(|key| {
             writeln!(f, "{key}: {:?}", self.values[key]).unwrap();
@@ -390,7 +389,8 @@ impl AlignmentData {
         caf_lines
             .map(|l| l.expect("failed to read line"))
             .filter(|l| !l.is_empty())
-            .for_each(|line| {
+            .enumerate()
+            .for_each(|(line_num, line)| {
                 let tokens: Vec<&str> = line.split(',').collect();
 
                 let target_name = tokens[4].to_string();
@@ -446,12 +446,13 @@ impl AlignmentData {
                 target_group.alignments.push(Alignment {
                     target_seq,
                     query_seq,
-                    query_id,
                     target_start,
                     target_end,
                     query_start,
                     query_end,
                     strand,
+                    id: line_num + 1,
+                    query_id,
                     substitution_matrix_id,
                 });
             });

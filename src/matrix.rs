@@ -1,12 +1,16 @@
+use itertools::Itertools;
+
 use crate::{
     alignment::Strand,
     alphabet::{GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL},
     chunks::ProximityGroup,
+    collapse::AssemblyGroup,
 };
 
 /// This is an auxiliary data structure that
 /// describes the layout of a column major
 /// (in memory) sparse matrix.
+#[derive(Clone)]
 pub struct MatrixDef {
     /// The logical number of rows in the matrix (also the number of alignments)
     pub num_rows: usize,
@@ -22,6 +26,9 @@ pub struct MatrixDef {
     pub active_rows_by_col: Vec<Vec<usize>>,
     /// For each column, a list of the query model consensus positions
     pub consensus_positions_by_col: Vec<Vec<usize>>,
+    /// For each column, a list of the indices that map to the alignment
+    /// that corresponds to each active row
+    pub ali_idx_by_col: Vec<Vec<usize>>,
 
     // -- row data --
     /// For each row, the start and end column indices
@@ -33,6 +40,136 @@ pub struct MatrixDef {
 }
 
 impl MatrixDef {
+    pub fn from_assembly_group(group: &AssemblyGroup) -> Self {
+        let target_start = group.target_start;
+        let target_end = group.target_end;
+
+        let num_rows = group.assemblies.len() + 1;
+        let num_cols = target_end - target_start + 1;
+
+        let mut num_cells = num_cols;
+
+        let mut active_rows_by_col = vec![vec![0usize]; num_cols];
+        let mut consensus_positions_by_col = vec![vec![0usize]; num_cols];
+        let mut ali_idx_by_col = vec![vec![0usize]; num_cols];
+
+        let mut col_range_by_row = vec![(0usize, num_cols); num_rows];
+        let mut id_by_row = vec![0usize; num_rows];
+        let mut strand_by_row = vec![Strand::default(); num_rows];
+
+        //         assemblies
+        //             .iter()
+        //             .enumerate()
+        //             .for_each(|(assembly_idx, assembly)| {
+        //                 let mut alignments = assembly
+        //                     .iter()
+        //                     .map(|row_idx| &group.alignments[row_idx - 1])
+        //                     .collect_vec();
+
+        //                 alignments.sort_by_key(|a| a.target_start);
+
+        //                 let row_idx = assembly_idx + 1;
+
+        //                 let strand = alignments[0].strand;
+        //                 id_by_row[row_idx] = alignments[0].query_id;
+        //                 strand_by_row[row_idx] = strand;
+
+        //                 let min_target_start = alignments.iter().map(|a| a.target_start).min().unwrap();
+        //                 let max_target_end = alignments.iter().map(|a| a.target_end).max().unwrap();
+
+        //                 // the start/end of the alignment in terms of the columns of the matrix
+        //                 let col_start = min_target_start - target_start;
+        //                 let col_end = max_target_end - target_start;
+        //                 num_cells += col_end - col_start + 1;
+
+        //                 col_range_by_row[row_idx] = (col_start, col_end);
+        //                 (col_start..=col_end).for_each(|col_idx| {
+        //                     active_rows_by_col[col_idx].push(row_idx);
+        //                 });
+
+        //                 let mut col_idx = col_start;
+
+        //                 alignments.iter().for_each(|ali| {
+        //                     let mut consensus_position = ali.query_start;
+
+        //                     let new_col_idx = ali.target_start - target_start;
+
+        //                     // TODO: FIX THIS
+        //                     //       THIS IS A BANDAID
+        //                     col_idx = col_idx.min(new_col_idx);
+
+        //                     // place the last consensus position of the previous alignment
+        //                     // at every empty position leading up to this alignment
+        //                     let num_positions_from_last = new_col_idx - col_idx;
+        //                     (col_idx..(col_idx + num_positions_from_last)).for_each(|idx| {
+        //                         consensus_positions_by_col[idx].push(consensus_position);
+        //                         ali_idx_by_col[col_idx].push(0);
+        //                     });
+
+        //                     col_idx = new_col_idx;
+
+        //                     for (&target_char, &query_char) in
+        //                         ali.target_seq.iter().zip(ali.query_seq.iter())
+        //                     {
+        //                         match target_char {
+        //                             GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
+        //                                 // if the target character is a gap, we advance the
+        //                                 // consensus position and leave the column index alone
+        //                                 match strand {
+        //                                     Strand::Forward => consensus_position += 1,
+        //                                     Strand::Reverse => consensus_position -= 1,
+        //                                     Strand::Unset => {
+        //                                         panic!(
+        //                                             "Alignment.strand is unset in call to MatrixDef::new()"
+        //                                         )
+        //                                     }
+        //                                 }
+        //                             }
+        //                             _ => {
+        //                                 match query_char {
+        //                                     GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
+        //                                         // if the query character is a gap, we use
+        //                                         // the previous query consensus position
+        //                                     }
+        //                                     _ => {
+        //                                         // if the query character isn't a gap,
+        //                                         // we advance the consensus position
+        //                                         match strand {
+        //                                             Strand::Forward => consensus_position += 1,
+        //                                             Strand::Reverse => consensus_position -= 1,
+        //                                             Strand::Unset => {
+        //                                                 panic!(
+        //                                             "Alignment.strand is unset in call to MatrixDef::new()"
+        //                                         )
+        //                                             }
+        //                                         }
+        //                                     }
+        //                                 }
+
+        //                                 debug_assert!(col_idx >= col_start && col_idx <= col_end);
+
+        //                                 consensus_positions_by_col[col_idx].push(consensus_position);
+        //                                 ali_idx_by_col[col_idx].push(ali.id);
+        //                                 col_idx += 1;
+        //                             }
+        //                         }
+        //                     }
+        //                 });
+        //             });
+        Self {
+            num_rows,
+            num_cols,
+            target_start,
+            num_cells,
+            active_rows_by_col,
+            consensus_positions_by_col,
+            ali_idx_by_col,
+            col_range_by_row,
+            id_by_row,
+            strand_by_row,
+        }
+    }
+
     pub fn new(group: &ProximityGroup) -> Self {
         let target_start = group.target_start;
         let target_end = group.target_end;
@@ -49,7 +186,7 @@ impl MatrixDef {
         let mut consensus_positions_by_col = vec![vec![0usize]; num_cols];
 
         // NOTE: we are setting the first row (skip state) to span the entire matrix
-        let mut col_range_by_row = vec![(0, num_cols); num_rows];
+        let mut col_range_by_row = vec![(0usize, num_cols); num_rows];
         let mut id_by_row = vec![0usize; num_rows];
         let mut strand_by_row = vec![Strand::default(); num_rows];
         // we'll say the skip state is the forward strand for convenience
@@ -150,6 +287,7 @@ impl MatrixDef {
             num_cells,
             active_rows_by_col,
             consensus_positions_by_col,
+            ali_idx_by_col: vec![],
             col_range_by_row,
             id_by_row,
             strand_by_row,

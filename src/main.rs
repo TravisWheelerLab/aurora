@@ -179,6 +179,5 @@ fn main() -> Result<()> {
             run_pipeline(group, &alignment_data, region_idx, &args);
             panic!();
         });
-
     Ok(())
 }

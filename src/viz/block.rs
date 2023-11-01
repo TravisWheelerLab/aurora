@@ -94,7 +94,10 @@ impl BlockGroup {
         let align_end = last.target_end;
 
         // TODO: off by one?
-        let visual_start = first.target_start - first.query_start;
+        // the visual start is (<target start> - <num unaligned model positions to the left>)
+        // *note: saturating sub for the rare case in which the
+        //        alignment is at the start of the chromosome
+        let visual_start = first.target_start.saturating_sub(first.query_start);
         // TODO: need model length information to get this
         let visual_end = last.target_end + 0;
 

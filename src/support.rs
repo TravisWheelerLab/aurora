@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::matrix::Matrix;
 
 ///
@@ -5,11 +7,11 @@ use crate::matrix::Matrix;
 ///
 ///
 ///
-pub fn windowed_confidence_slow(matrix: &mut Matrix<f64>) -> Vec<f64> {
+pub fn windowed_confidence_slow(matrix: &mut Matrix<f64>) -> HashMap<usize, f64> {
     // TODO: parameterize this
     let half_window_size = 15usize;
 
-    let mut confidence_avg_by_row: Vec<f64> = vec![0.0; matrix.num_rows()];
+    let mut confidence_avg_by_id: HashMap<usize, f64> = HashMap::new();
 
     // we keep a buffer of the computed windowed confidences
     // so that we don't overwrite a cell that needs
@@ -48,8 +50,9 @@ pub fn windowed_confidence_slow(matrix: &mut Matrix<f64>) -> Vec<f64> {
             confidence_sum += buffer[col_idx];
         });
 
-        confidence_avg_by_row[row_idx] = confidence_sum / (row_end - row_start + 1) as f64;
+        // TODO: need to get ali idx
+        confidence_avg_by_id.insert(row_idx, confidence_sum / (row_end - row_start + 1) as f64);
     });
 
-    confidence_avg_by_row
+    confidence_avg_by_id
 }

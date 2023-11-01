@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use itertools::Itertools;
 
 use crate::{
@@ -11,177 +13,173 @@ use crate::{
 ///
 ///
 ///
-pub struct AlignmentTuple<'a> {
-    pub row_idx: usize,
-    pub alignment: &'a Alignment,
-    pub confidence: f64,
-}
-
-///
-///
-///
-///
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum Direction {
     Left,
     Right,
 }
 
-///
-///
-///
-///
 #[derive(PartialEq, Clone, Copy, Debug)]
-pub struct Edge {
-    pub idx_to: usize,
+pub struct Edge<'a> {
+    pub alignment_to: &'a Alignment,
     pub weight: f64,
     pub direction: Direction,
 }
 
-pub fn assembly_graph(tuples: &[AlignmentTuple], args: &Args) -> Vec<Vec<Edge>> {
+pub fn assembly_graph<'a>(
+    alignments: &[&'a Alignment],
+    args: &Args,
+) -> HashMap<&'a Alignment, Vec<Edge<'a>>> {
     // this relies on the alignments being sorted by target start
-    tuples.iter().zip(tuples.iter().skip(1)).for_each(|(a, b)| {
-        debug_assert!(a.alignment.target_start <= b.alignment.target_start);
-    });
+    alignments
+        .iter()
+        .zip(alignments.iter().skip(1))
+        .for_each(|(a, b)| {
+            debug_assert!(a.target_start <= b.target_start);
+        });
 
-    let mut graph: Vec<Vec<Edge>> = vec![vec![]; tuples.len()];
-    (0..tuples.len()).for_each(|a_idx| {
-        (a_idx + 1..tuples.len()).for_each(|b_idx| {
-            let a = &tuples[a_idx];
-            let b = &tuples[b_idx];
+    let mut hash_graph: HashMap<&Alignment, Vec<Edge>> = HashMap::new();
 
-            if a.alignment == b.alignment {
+    alignments.iter().enumerate().for_each(|(a_idx, &a)| {
+        alignments[a_idx + 1..].iter().for_each(|&b| {
+            if a == b {
                 return;
             }
 
-            let within_target_distance = b
-                .alignment
-                .target_start
-                .saturating_sub(a.alignment.target_end)
-                < args.target_join_distance;
+            let within_target_distance =
+                b.target_start.saturating_sub(a.target_end) < args.target_join_distance;
 
-            let consensus_distance = match a.alignment.strand {
-                Strand::Forward => {
-                    b.alignment.query_start as isize - a.alignment.query_end as isize
-                }
-                Strand::Reverse => {
-                    a.alignment.query_end as isize - b.alignment.query_start as isize
-                }
+            let consensus_distance = match a.strand {
+                Strand::Forward => b.query_start as isize - a.query_end as isize,
+                Strand::Reverse => a.query_end as isize - b.query_start as isize,
                 Strand::Unset => panic!(),
             };
 
             // TODO: PARAMETERIZE THIS
             let consensus_colinear = consensus_distance > -20;
 
+            let weight = consensus_distance.abs() as f64;
+
             if within_target_distance && consensus_colinear {
-                graph[a_idx].push(Edge {
-                    idx_to: b_idx,
-                    weight: consensus_distance.abs() as f64,
+                let a_edges = hash_graph.entry(a).or_default();
+                a_edges.push(Edge {
+                    alignment_to: b,
+                    weight,
                     direction: Direction::Right,
                 });
-                graph[b_idx].push(Edge {
-                    idx_to: a_idx,
-                    weight: consensus_distance.abs() as f64,
-                    direction: Direction::Left,
-                });
+
+                let b_edges = hash_graph.entry(b).or_default();
+                b_edges.push(Edge {
+                    alignment_to: a,
+                    weight,
+                    direction: Direction::Right,
+                })
             }
         });
     });
 
-    graph
+    hash_graph
 }
 
-pub fn assembly(graph: &mut [Vec<Edge>], tuples: &[AlignmentTuple]) -> Vec<Vec<usize>> {
+pub fn assembly<'a>(
+    graph: &mut HashMap<&'a Alignment, Vec<Edge<'a>>>,
+    confidence_avg_by_id: &HashMap<usize, f64>,
+) -> Vec<Assembly<'a>> {
     // take all indices of the remaining alignment tuples
-    let mut remaining_indices = (0..tuples.len()).collect_vec();
+    let mut remaining: Vec<&Alignment> = graph.keys().copied().collect_vec();
 
     // sort them by their respective confidence values
-    remaining_indices.sort_by(|a, b| {
-        tuples[*a]
-            .confidence
-            .partial_cmp(&tuples[*b].confidence)
-            .expect("failed to compare confidence values")
+    remaining.sort_by(|a, b| {
+        confidence_avg_by_id
+            .get(&a.id)
+            .unwrap()
+            .partial_cmp(confidence_avg_by_id.get(&b.id).unwrap())
+            .expect("failed to compare confidences")
     });
 
-    // we'll keep track of the assembled
-    // alignments as vectors of those indices
-    let mut assemblies: Vec<Vec<usize>> = vec![];
+    let mut assemblies: Vec<Assembly> = vec![];
 
     // while we have alignments left to place, start an
     // assembly with the highest remaining confidence
-    while let Some(assembly_root) = remaining_indices.pop() {
+    while let Some(assembly_root) = remaining.pop() {
         // remove the assembly root from all outgoing edges
-        graph.iter_mut().for_each(|edge_list| {
-            edge_list.retain(|e| e.idx_to != assembly_root);
+        graph.values_mut().for_each(|edge_list| {
+            edge_list.retain(|e| e.alignment_to != assembly_root);
         });
 
-        let mut assembly = vec![assembly_root];
+        let mut assembly_alignments = vec![assembly_root];
 
         loop {
             // the alignment we started with is the
             // one that's going to maintain edges
-            let root_idx = assembly[0];
+            let root_ali = assembly_alignments[0];
 
             // find the edge with the minimum weight
-            let join_idx = match graph[root_idx].iter().min_by(|a, b| {
-                a.weight
-                    .partial_cmp(&b.weight)
+            let join_ali = match graph[root_ali].iter().min_by(|edge_a, edge_b| {
+                edge_a
+                    .weight
+                    .partial_cmp(&edge_b.weight)
                     .expect("failed to compare edge weights")
             }) {
-                Some(edge) => edge.idx_to,
+                Some(edge) => edge.alignment_to,
                 // if we don't have an edge,
                 // we're done with this assembly
                 None => break,
             };
 
             // add the joined alignment to the assembly
-            assembly.push(join_idx);
+            assembly_alignments.push(join_ali);
 
             // remove the joined alignment from further consideration
-            match remaining_indices.iter().position(|&idx| idx == join_idx) {
-                Some(pos) => remaining_indices.remove(pos),
+            match remaining.iter().position(|&ali| ali == join_ali) {
+                Some(pos) => remaining.remove(pos),
                 None => panic!("failed to remove index from remaining"),
             };
 
             // remove the joined alignment from all outgoing edges
-            graph.iter_mut().for_each(|edge_list| {
-                edge_list.retain(|e| e.idx_to != join_idx);
+            graph.values_mut().for_each(|edge_list| {
+                edge_list.retain(|e| e.alignment_to != join_ali);
             });
 
-            let root_is_on_left = root_idx < join_idx;
+            let root_is_on_left = root_ali.target_start < join_ali.target_start;
 
             if root_is_on_left {
                 // if the root is on the left, we need to
                 // keep all of it's left-pointing edges
-                graph[root_idx].retain(|e| e.direction == Direction::Left);
+                graph
+                    .get_mut(root_ali)
+                    .unwrap()
+                    .retain(|e| e.direction == Direction::Left);
 
                 // and keep all of the right-pointing joined edges
-                let mut new_edges: Vec<Edge> = graph[join_idx]
+                let mut new_edges: Vec<Edge> = graph[join_ali]
                     .iter()
                     .filter(|e| e.direction == Direction::Right)
                     .copied()
                     .collect_vec();
 
-                graph[root_idx].append(&mut new_edges);
+                graph.get_mut(root_ali).unwrap().append(&mut new_edges);
             } else {
                 // if the root is on the right, we need to
                 // keep all of it's right-pointing edges
-                graph[root_idx].retain(|e| e.direction == Direction::Right);
+                graph
+                    .get_mut(root_ali)
+                    .unwrap()
+                    .retain(|e| e.direction == Direction::Right);
 
                 // and keep all of the left-pointing joined edges
-                let mut new_edges: Vec<Edge> = graph[join_idx]
+                let mut new_edges: Vec<Edge> = graph[join_ali]
                     .iter()
                     .filter(|e| e.direction == Direction::Left)
                     .copied()
                     .collect_vec();
 
-                graph[root_idx].append(&mut new_edges);
+                graph.get_mut(root_ali).unwrap().append(&mut new_edges);
             };
-
             // we remove ALL edges from the joined alignment
-            graph[join_idx] = vec![];
+            graph.insert(join_ali, vec![]);
         }
-        assemblies.push(assembly);
+        assemblies.push(Assembly::new(assembly_alignments));
     }
 
     assemblies
@@ -191,169 +189,189 @@ pub fn assembly(graph: &mut [Vec<Edge>], tuples: &[AlignmentTuple]) -> Vec<Vec<u
 ///
 ///
 ///
-pub fn collapse(
-    group: &ProximityGroup,
-    confidence_avg_by_row: &[f64],
-    args: &Args,
-) -> Vec<Vec<usize>> {
-    let mut assemblies = vec![];
+pub struct Assembly<'a> {
+    pub alignments: Vec<&'a Alignment>,
+    pub alignment_ranges: Vec<[usize; 2]>,
+}
 
-    let mut query_ids: Vec<usize> = group
-        .alignments
-        .iter()
-        .map(|a| a.query_id)
-        .unique()
-        .collect();
+impl<'a> Assembly<'a> {
+    fn new(alignments: Vec<&'a Alignment>) -> Self {
+        Self {
+            alignments,
+            alignment_ranges: vec![],
+        }
+    }
+}
 
-    query_ids.sort();
+///
+///
+///
+///
+pub struct AssemblyGroup<'a> {
+    pub target_id: usize,
+    pub target_start: usize,
+    pub target_end: usize,
+    pub assemblies: Vec<Assembly<'a>>,
+}
 
-    query_ids
-        .iter()
-        // grab the alignments for this ID
-        .map(|id| {
-            (
-                id,
-                group
-                    .alignments
-                    .iter()
-                    // enumerate to get the row
-                    .enumerate()
-                    .map(|(idx, ali)| AlignmentTuple {
-                        row_idx: idx + 1,
-                        alignment: ali,
-                        confidence: confidence_avg_by_row[idx + 1],
-                    })
-                    .filter(|t| t.alignment.query_id == *id),
-            )
-        })
-        .for_each(|(query_id, alignment_tuples)| {
-            // split the forward and reverse stranded alignments
-            let (fwd_tuples, rev_tuples): (Vec<_>, Vec<_>) = alignment_tuples
-                .into_iter()
-                .partition(|a| a.alignment.strand == Strand::Forward);
+impl<'a> AssemblyGroup<'a> {
+    pub fn new(
+        group: &ProximityGroup,
+        confidence_avg_by_id: &HashMap<usize, f64>,
+        args: &Args,
+    ) -> Self {
+        let mut assemblies: Vec<Assembly> = vec![];
 
-            let mut fwd_graph = assembly_graph(&fwd_tuples, args);
-            let mut rev_graph = assembly_graph(&rev_tuples, args);
+        let mut query_ids: Vec<usize> = group
+            .alignments
+            .iter()
+            .map(|a| a.query_id)
+            .unique()
+            .collect();
 
-            // if we are going to generate soda output
-            // for the assemblies, we need to store the
-            // links before we start messing with the graph
-            let mut fwd_links = vec![];
-            let mut rev_links = vec![];
-            if args.viz {
-                fwd_links = fwd_tuples
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(a_idx, a_t)| {
-                        fwd_graph[a_idx]
-                            .iter()
-                            .map(|edge| &fwd_tuples[edge.idx_to])
-                            .map(|b_t| {
-                                let start =
-                                    (a_t.alignment.target_start + a_t.alignment.target_end) / 2;
-                                let end =
-                                    (b_t.alignment.target_start + b_t.alignment.target_end) / 2;
-                                format!("{}-{},{},{}", a_t.row_idx, b_t.row_idx, start, end)
-                            })
-                    })
-                    .collect_vec();
+        query_ids.sort();
 
-                rev_links = rev_tuples
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(a_idx, a_t)| {
-                        rev_graph[a_idx]
-                            .iter()
-                            .map(|edge| &rev_tuples[edge.idx_to])
-                            .map(|b_t| {
-                                let start =
-                                    (a_t.alignment.target_start + a_t.alignment.target_end) / 2;
-                                let end =
-                                    (b_t.alignment.target_start + b_t.alignment.target_end) / 2;
-                                format!("{}-{},{},{}", a_t.row_idx, b_t.row_idx, start, end)
-                            })
-                    })
-                    .collect_vec();
-            }
+        query_ids
+            .iter()
+            // grab the alignments for this ID
+            .map(|id| (id, group.alignments.iter().filter(|a| a.query_id == *id)))
+            .for_each(|(query_id, alignments)| {
+                // split the forward and reverse stranded alignments
+                let (fwd_ali, rev_ali): (Vec<&Alignment>, Vec<&Alignment>) = alignments
+                    .into_iter()
+                    .partition(|a| a.strand == Strand::Forward);
 
-            let fwd_assemblies = assembly(&mut fwd_graph, &fwd_tuples);
-            let rev_assemblies = assembly(&mut rev_graph, &rev_tuples);
+                let mut fwd_graph = assembly_graph(&fwd_ali, args);
+                let mut rev_graph = assembly_graph(&rev_ali, args);
 
-            // check that the sum of assembly lengths is equal
-            // to the number of alignments we started with
-            debug_assert!({
-                let cnt = fwd_assemblies.iter().map(|a| a.len()).sum::<usize>();
-                fwd_tuples.len() == cnt
+                // if we are going to generate soda output
+                // for the assemblies, we need to store the
+                // links before we start messing with the graph
+                // let mut fwd_links = vec![];
+                // let mut rev_links = vec![];
+                // if args.viz {
+                //     fwd_links = fwd_ali
+                //         .iter()
+                //         .enumerate()
+                //         .flat_map(|(a_idx, a_t)| {
+                //             fwd_graph[a_idx]
+                //                 .iter()
+                //                 .map(|edge| &fwd_ali[edge.idx_to])
+                //                 .map(|b_t| {
+                //                     let start = (a_t.target_start + a_t.target_end) / 2;
+                //                     let end = (b_t.target_start + b_t.target_end) / 2;
+                //                     format!("{}-{},{},{}", a_t.id, b_t.id, start, end)
+                //                 })
+                //         })
+                //         .collect_vec();
+
+                //     rev_links = rev_ali
+                //         .iter()
+                //         .enumerate()
+                //         .flat_map(|(a_idx, a_t)| {
+                //             rev_graph[a_idx]
+                //                 .iter()
+                //                 .map(|edge| &rev_ali[edge.idx_to])
+                //                 .map(|b_t| {
+                //                     let start = (a_t.target_start + a_t.target_end) / 2;
+                //                     let end = (b_t.target_start + b_t.target_end) / 2;
+                //                     format!("{}-{},{},{}", a_t.id, b_t.id, start, end)
+                //                 })
+                //         })
+                //         .collect_vec();
+                // }
+
+                let fwd_assemblies = assembly(&mut fwd_graph, confidence_avg_by_id);
+                let rev_assemblies = assembly(&mut rev_graph, confidence_avg_by_id);
+
+                // check that the sum of assembly lengths is equal
+                // to the number of alignments we started with
+                debug_assert!({
+                    let cnt = fwd_assemblies
+                        .iter()
+                        .map(|a| a.alignments.len())
+                        .sum::<usize>();
+                    fwd_ali.len() == cnt
+                });
+
+                debug_assert!({
+                    let cnt = rev_assemblies
+                        .iter()
+                        .map(|a| a.alignments.len())
+                        .sum::<usize>();
+                    rev_ali.len() == cnt
+                });
+
+                // if args.viz {
+                //     if !fwd_ali.is_empty() {
+                //         let fwd_data = AuroraAssemblySodaData::new(
+                //             &fwd_ali,
+                //             &fwd_assemblies,
+                //             &query_ids,
+                //             fwd_links,
+                //         );
+
+                //         let fwd_path = args.viz_output_path.join(format!("{}-fwd.html", query_id));
+
+                //         write_soda_html(
+                //             &fwd_data,
+                //             "./fixtures/soda/assembly-template.html",
+                //             "./fixtures/soda/assembly.js",
+                //             fwd_path,
+                //         );
+                //     }
+
+                //     if !rev_ali.is_empty() {
+                //         let rev_data = AuroraAssemblySodaData::new(
+                //             &rev_ali,
+                //             &rev_assemblies,
+                //             &query_ids,
+                //             rev_links,
+                //         );
+
+                //         let rev_path = args.viz_output_path.join(format!("{}-rev.html", query_id));
+
+                //         write_soda_html(
+                //             &rev_data,
+                //             "./fixtures/soda/assembly-template.html",
+                //             "./fixtures/soda/assembly.js",
+                //             rev_path,
+                //         );
+                //     }
+                // }
+
+                // // map the tuple-index-based assemblies
+                // // to row-index-based assemblies
+                // assemblies.append(
+                //     &mut fwd_assemblies
+                //         .iter()
+                //         .map(|a| {
+                //             a.iter()
+                //                 .map(|&tuple_idx| &fwd_ali[tuple_idx])
+                //                 .map(|t| t.row_idx)
+                //                 .collect_vec()
+                //         })
+                //         .collect_vec(),
+                // );
+
+                // assemblies.append(
+                //     &mut rev_assemblies
+                //         .iter()
+                //         .map(|a| {
+                //             a.iter()
+                //                 .map(|&tuple_idx| &rev_ali[tuple_idx])
+                //                 .map(|t| t.row_idx)
+                //                 .collect_vec()
+                //         })
+                //         .collect_vec(),
+                // );
             });
 
-            debug_assert!({
-                let cnt = rev_assemblies.iter().map(|a| a.len()).sum::<usize>();
-                rev_tuples.len() == cnt
-            });
-
-            if args.viz {
-                if !fwd_tuples.is_empty() {
-                    let fwd_data = AuroraAssemblySodaData::new(
-                        &fwd_tuples,
-                        &fwd_assemblies,
-                        &query_ids,
-                        fwd_links,
-                    );
-
-                    let fwd_path = args.viz_output_path.join(format!("{}-fwd.html", query_id));
-
-                    write_soda_html(
-                        &fwd_data,
-                        "./fixtures/soda/assembly-template.html",
-                        "./fixtures/soda/assembly.js",
-                        fwd_path,
-                    );
-                }
-
-                if !rev_tuples.is_empty() {
-                    let rev_data = AuroraAssemblySodaData::new(
-                        &rev_tuples,
-                        &rev_assemblies,
-                        &query_ids,
-                        rev_links,
-                    );
-
-                    let rev_path = args.viz_output_path.join(format!("{}-rev.html", query_id));
-
-                    write_soda_html(
-                        &rev_data,
-                        "./fixtures/soda/assembly-template.html",
-                        "./fixtures/soda/assembly.js",
-                        rev_path,
-                    );
-                }
-            }
-
-            // map the tuple-index-based assemblies
-            // to row-index-based assemblies
-            assemblies.append(
-                &mut fwd_assemblies
-                    .iter()
-                    .map(|a| {
-                        a.iter()
-                            .map(|&tuple_idx| &fwd_tuples[tuple_idx])
-                            .map(|t| t.row_idx)
-                            .collect_vec()
-                    })
-                    .collect_vec(),
-            );
-            assemblies.append(
-                &mut rev_assemblies
-                    .iter()
-                    .map(|a| {
-                        a.iter()
-                            .map(|&tuple_idx| &rev_tuples[tuple_idx])
-                            .map(|t| t.row_idx)
-                            .collect_vec()
-                    })
-                    .collect_vec(),
-            );
-        });
-
-    assemblies
+        Self {
+            target_id: group.target_id,
+            target_start: group.target_start,
+            target_end: group.target_end,
+            assemblies,
+        }
+    }
 }

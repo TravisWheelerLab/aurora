@@ -1,10 +1,10 @@
-use std::{fs, path::PathBuf};
+use std::fs;
 
 use crate::{
     alignment::AlignmentData,
     alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE,
     chunks::ProximityGroup,
-    collapse::collapse,
+    collapse::AssemblyGroup,
     confidence::confidence,
     matrix::{Matrix, MatrixDef},
     results::Annotation,
@@ -51,11 +51,18 @@ pub fn run_assembly_pipeline(
 
     let skip_confidence_by_col = confidence(&mut confidence_matrix);
 
-    let confidence_avg_by_row = windowed_confidence_slow(&mut confidence_matrix);
+    let confidence_avg_by_id = windowed_confidence_slow(&mut confidence_matrix);
 
-    let assemblies = collapse(group, &confidence_avg_by_row, &args);
+    let assembly_group = AssemblyGroup::new(group, &confidence_avg_by_id, &args);
 
-    let (assembled, single): (Vec<_>, Vec<_>) = assemblies.into_iter().partition(|a| a.len() > 1);
+    // TODO:
+    //   - Alignments have idx & conf fields
+    //   - AssemblyGroup struct
+    //   - compete target-overlapping-assemblies
+    //   - map alignment index to row, col
+    let collapsed_matrix_def = MatrixDef::from_assembly_group(&assembly_group);
+
+    // let (assembled, single): (Vec<_>, Vec<_>) = assemblies.into_iter().partition(|a| a.len() > 1);
 
     // thoughts:
     //  - find out how often do assemblies overlap in the target

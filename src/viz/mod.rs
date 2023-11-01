@@ -20,7 +20,7 @@ use crate::{
         PAD_DIGITAL, SPACE_UTF8,
     },
     chunks::ProximityGroup,
-    collapse::AlignmentTuple,
+    collapse::AssemblyGroup,
     results::Annotation,
     segments::Segments,
     Args,
@@ -279,152 +279,148 @@ pub struct AuroraAssemblySodaData {
 }
 
 impl AuroraAssemblySodaData {
-    pub fn new(
-        tuples: &[AlignmentTuple],
-        assemblies: &[Vec<usize>],
-        query_ids: &[usize],
-        links: Vec<String>,
-    ) -> Self {
-        let query_id = tuples[0].alignment.query_id;
-        let strand = tuples[0].alignment.strand;
+    pub fn new(group: &AssemblyGroup, query_ids: &[usize], links: Vec<String>) -> Self {
+        todo!();
+        // let query_id = tuples[0].alignment.query_id;
+        // let strand = tuples[0].alignment.strand;
 
-        let consensus_ali_strings = tuples
-            .iter()
-            .map(|t| match strand {
-                Strand::Forward => format!(
-                    "{},{},{},{}",
-                    t.row_idx, t.alignment.query_start, t.alignment.query_end, t.confidence
-                ),
-                Strand::Reverse => format!(
-                    "{},{},{},{}",
-                    t.row_idx, t.alignment.query_end, t.alignment.query_start, t.confidence
-                ),
-                Strand::Unset => panic!(),
-            })
-            .collect_vec();
+        // let consensus_ali_strings = tuples
+        //     .iter()
+        //     .map(|t| match strand {
+        //         Strand::Forward => format!(
+        //             "{},{},{},{}",
+        //             t.row_idx, t.alignment.query_start, t.alignment.query_end, t.confidence
+        //         ),
+        //         Strand::Reverse => format!(
+        //             "{},{},{},{}",
+        //             t.row_idx, t.alignment.query_end, t.alignment.query_start, t.confidence
+        //         ),
+        //         Strand::Unset => panic!(),
+        //     })
+        //     .collect_vec();
 
-        let target_ali_strings = tuples
-            .iter()
-            .map(|t| {
-                format!(
-                    "{},{},{},{}",
-                    t.row_idx, t.alignment.target_start, t.alignment.target_end, t.confidence
-                )
-            })
-            .collect_vec();
+        // let target_ali_strings = tuples
+        //     .iter()
+        //     .map(|t| {
+        //         format!(
+        //             "{},{},{},{}",
+        //             t.row_idx, t.alignment.target_start, t.alignment.target_end, t.confidence
+        //         )
+        //     })
+        //     .collect_vec();
 
-        let target_assembly_strings = assemblies
-            .iter()
-            .map(|a| {
-                a.iter()
-                    .map(|idx| {
-                        format!(
-                            "{},{},{},{}",
-                            tuples[*idx].row_idx,
-                            tuples[*idx].alignment.target_start,
-                            tuples[*idx].alignment.target_end,
-                            tuples[*idx].confidence,
-                        )
-                    })
-                    .collect_vec()
-            })
-            .collect_vec();
+        // let target_assembly_strings = assemblies
+        //     .iter()
+        //     .map(|a| {
+        //         a.iter()
+        //             .map(|idx| {
+        //                 format!(
+        //                     "{},{},{},{}",
+        //                     tuples[*idx].row_idx,
+        //                     tuples[*idx].alignment.target_start,
+        //                     tuples[*idx].alignment.target_end,
+        //                     tuples[*idx].confidence,
+        //                 )
+        //             })
+        //             .collect_vec()
+        //     })
+        //     .collect_vec();
 
-        let consensus_assembly_strings = assemblies
-            .iter()
-            .map(|a| {
-                a.iter()
-                    .map(|idx| match strand {
-                        Strand::Forward => format!(
-                            "{},{},{},{}",
-                            tuples[*idx].row_idx,
-                            tuples[*idx].alignment.query_start,
-                            tuples[*idx].alignment.query_end,
-                            tuples[*idx].confidence,
-                        ),
+        // let consensus_assembly_strings = assemblies
+        //     .iter()
+        //     .map(|a| {
+        //         a.iter()
+        //             .map(|idx| match strand {
+        //                 Strand::Forward => format!(
+        //                     "{},{},{},{}",
+        //                     tuples[*idx].row_idx,
+        //                     tuples[*idx].alignment.query_start,
+        //                     tuples[*idx].alignment.query_end,
+        //                     tuples[*idx].confidence,
+        //                 ),
 
-                        Strand::Reverse => format!(
-                            "{},{},{},{}",
-                            tuples[*idx].row_idx,
-                            tuples[*idx].alignment.query_end,
-                            tuples[*idx].alignment.query_start,
-                            tuples[*idx].confidence,
-                        ),
+        //                 Strand::Reverse => format!(
+        //                     "{},{},{},{}",
+        //                     tuples[*idx].row_idx,
+        //                     tuples[*idx].alignment.query_end,
+        //                     tuples[*idx].alignment.query_start,
+        //                     tuples[*idx].confidence,
+        //                 ),
 
-                        Strand::Unset => panic!(),
-                    })
-                    .collect_vec()
-            })
-            .collect_vec();
+        //                 Strand::Unset => panic!(),
+        //             })
+        //             .collect_vec()
+        //     })
+        //     .collect_vec();
 
-        let query_id_idx = query_ids
-            .iter()
-            .position(|id| *id == query_id)
-            .expect("failed to find query_id");
+        // let query_id_idx = query_ids
+        //     .iter()
+        //     .position(|id| *id == query_id)
+        //     .expect("failed to find query_id");
 
-        let next_idx = query_id_idx + 1;
+        // let next_idx = query_id_idx + 1;
 
-        let next = if next_idx < query_ids.len() {
-            query_ids[next_idx]
-        } else {
-            query_ids[0]
-        };
+        // let next = if next_idx < query_ids.len() {
+        //     query_ids[next_idx]
+        // } else {
+        //     query_ids[0]
+        // };
 
-        let prev_idx = query_id_idx as isize - 1;
-        let prev = if prev_idx > 0 {
-            query_ids[prev_idx as usize]
-        } else {
-            query_ids[query_ids.len() - 1]
-        };
+        // let prev_idx = query_id_idx as isize - 1;
+        // let prev = if prev_idx > 0 {
+        //     query_ids[prev_idx as usize]
+        // } else {
+        //     query_ids[query_ids.len() - 1]
+        // };
 
-        let suffix = match strand {
-            Strand::Forward => "fwd".to_string(),
-            Strand::Reverse => "rev".to_string(),
-            _ => panic!(),
-        };
+        // let suffix = match strand {
+        //     Strand::Forward => "fwd".to_string(),
+        //     Strand::Reverse => "rev".to_string(),
+        //     _ => panic!(),
+        // };
 
-        let target_start = tuples
-            .iter()
-            .map(|t| t.alignment.target_start)
-            .min()
-            .unwrap();
+        // let target_start = tuples
+        //     .iter()
+        //     .map(|t| t.alignment.target_start)
+        //     .min()
+        //     .unwrap();
 
-        let target_end = tuples.iter().map(|t| t.alignment.target_end).max().unwrap();
+        // let target_end = tuples.iter().map(|t| t.alignment.target_end).max().unwrap();
 
-        let (consensus_start, consensus_end) = match strand {
-            Strand::Forward => (
-                tuples
-                    .iter()
-                    .map(|t| t.alignment.query_start)
-                    .min()
-                    .unwrap(),
-                tuples.iter().map(|t| t.alignment.query_end).max().unwrap(),
-            ),
-            Strand::Reverse => (
-                tuples.iter().map(|t| t.alignment.query_end).min().unwrap(),
-                tuples
-                    .iter()
-                    .map(|t| t.alignment.query_start)
-                    .max()
-                    .unwrap(),
-            ),
+        // let (consensus_start, consensus_end) = match strand {
+        //     Strand::Forward => (
+        //         tuples
+        //             .iter()
+        //             .map(|t| t.alignment.query_start)
+        //             .min()
+        //             .unwrap(),
+        //         tuples.iter().map(|t| t.alignment.query_end).max().unwrap(),
+        //     ),
+        //     Strand::Reverse => (
+        //         tuples.iter().map(|t| t.alignment.query_end).min().unwrap(),
+        //         tuples
+        //             .iter()
+        //             .map(|t| t.alignment.query_start)
+        //             .max()
+        //             .unwrap(),
+        //     ),
 
-            Strand::Unset => panic!(),
-        };
+        //     Strand::Unset => panic!(),
+        // };
 
-        Self {
-            target_start,
-            target_end,
-            consensus_start,
-            consensus_end,
-            consensus_ali_strings,
-            target_ali_strings,
-            consensus_assembly_strings,
-            target_assembly_strings,
-            links,
-            prev,
-            next,
-            suffix,
-        }
+        // Self {
+        //     target_start,
+        //     target_end,
+        //     consensus_start,
+        //     consensus_end,
+        //     consensus_ali_strings,
+        //     target_ali_strings,
+        //     consensus_assembly_strings,
+        //     target_assembly_strings,
+        //     links,
+        //     prev,
+        //     next,
+        //     suffix,
+        // }
     }
 }
