@@ -78,12 +78,12 @@ pub fn viterbi(
         let mut sparse_rows_to_by_id: Vec<Vec<usize>> = vec![vec![]; num_queries];
 
         (0..col_from_length).for_each(|sparse_row_idx| {
-            let id = viterbi_matrix.id_of_cell_sparse(sparse_row_idx, col_from_idx);
+            let id = viterbi_matrix.query_id_of_cell_sparse(sparse_row_idx, col_from_idx);
             sparse_rows_from_by_id[id].push(sparse_row_idx);
         });
 
         (0..col_to_length).for_each(|sparse_row_idx| {
-            let id = viterbi_matrix.id_of_cell_sparse(sparse_row_idx, col_to_idx);
+            let id = viterbi_matrix.query_id_of_cell_sparse(sparse_row_idx, col_to_idx);
             sparse_rows_to_by_id[id].push(sparse_row_idx);
         });
 
@@ -91,7 +91,7 @@ pub fn viterbi(
         // we are going to over-allocate to make indexing trivial
         let mut join_probs = vec![vec![0.0; col_to_length]; col_from_length];
         (0..col_from_length).for_each(|sparse_row_from_idx| {
-            let id = viterbi_matrix.id_of_cell_sparse(sparse_row_from_idx, col_from_idx);
+            let id = viterbi_matrix.query_id_of_cell_sparse(sparse_row_from_idx, col_from_idx);
             let consensus_pos_from =
                 viterbi_matrix.consensus_position_sparse(sparse_row_from_idx, col_from_idx);
 
@@ -100,7 +100,7 @@ pub fn viterbi(
             debug_assert!({
                 let mut others = vec![];
                 (0..col_to_length).for_each(|sparse_row_to_idx| {
-                    if viterbi_matrix.id_of_cell_sparse(sparse_row_to_idx, col_to_idx) == id {
+                    if viterbi_matrix.query_id_of_cell_sparse(sparse_row_to_idx, col_to_idx) == id {
                         others.push(sparse_row_to_idx);
                     }
                 });
@@ -119,8 +119,8 @@ pub fn viterbi(
                 })
                 .for_each(|&sparse_row_to_idx| {
                     debug_assert_eq!(
-                        viterbi_matrix.id_of_cell_sparse(sparse_row_from_idx, col_from_idx),
-                        viterbi_matrix.id_of_cell_sparse(sparse_row_to_idx, col_to_idx),
+                        viterbi_matrix.query_id_of_cell_sparse(sparse_row_from_idx, col_from_idx),
+                        viterbi_matrix.query_id_of_cell_sparse(sparse_row_to_idx, col_to_idx),
                     );
                     debug_assert_eq!(
                         viterbi_matrix.strand_of_cell_sparse(sparse_row_from_idx, col_from_idx),
@@ -172,7 +172,7 @@ pub fn viterbi(
                 let logical_row_to_idx =
                     viterbi_matrix.sparse_to_logical_row_idx(sparse_row_to_idx, col_to_idx);
 
-                let id = viterbi_matrix.id_of_row(logical_row_to_idx);
+                let id = viterbi_matrix.query_id_of_row(logical_row_to_idx);
                 let sparse_rows_from = &sparse_rows_from_by_id[id];
 
                 let loop_or_join_tuple = sparse_rows_from.iter().fold(
@@ -534,7 +534,8 @@ pub fn traceback(
     let first_col_idx = active_cols[0];
     let first_col_length = viterbi_matrix.col_length(first_col_idx);
     let first_sparse_row_idx = simple_trace[first_col_idx] % first_col_length;
-    let first_col_query_id = viterbi_matrix.id_of_cell_sparse(first_sparse_row_idx, first_col_idx);
+    let first_col_query_id =
+        viterbi_matrix.query_id_of_cell_sparse(first_sparse_row_idx, first_col_idx);
 
     let join_id = if first_col_query_id == 0 {
         0
@@ -561,7 +562,7 @@ pub fn traceback(
             let col_length = viterbi_matrix.col_length(col_idx);
             let sparse_row_idx = simple_trace[col_idx] % col_length;
             let logical_row_idx = viterbi_matrix.sparse_to_logical_row_idx(sparse_row_idx, col_idx);
-            let query_id = viterbi_matrix.id_of_cell_sparse(sparse_row_idx, col_idx);
+            let query_id = viterbi_matrix.query_id_of_cell_sparse(sparse_row_idx, col_idx);
 
             let prev_was_different = prev_logical_row_idx != logical_row_idx;
             let prev_was_join = prev_sparse_row_idx >= prev_col_length;

@@ -20,6 +20,7 @@ pub fn windowed_confidence_slow(matrix: &mut Matrix<f64>) -> HashMap<usize, f64>
 
     (0..matrix.num_rows()).skip(1).for_each(|row_idx| {
         let (row_start, row_end) = matrix.col_range_by_row(row_idx);
+        let ali_id = matrix.ali_id(row_idx, row_start);
 
         (row_start..=row_end).for_each(|center_of_window_col_idx| {
             let window_start_col_idx =
@@ -51,7 +52,7 @@ pub fn windowed_confidence_slow(matrix: &mut Matrix<f64>) -> HashMap<usize, f64>
         });
 
         // TODO: need to get ali idx
-        confidence_avg_by_id.insert(row_idx, confidence_sum / (row_end - row_start + 1) as f64);
+        confidence_avg_by_id.insert(ali_id, confidence_sum / (row_end - row_start + 1) as f64);
     });
 
     confidence_avg_by_id

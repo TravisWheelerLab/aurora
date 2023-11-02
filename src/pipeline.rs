@@ -55,33 +55,11 @@ pub fn run_assembly_pipeline(
 
     let assembly_group = AssemblyGroup::new(group, &confidence_avg_by_id, &args);
 
-    // TODO:
-    //   - Alignments have idx & conf fields
-    //   - AssemblyGroup struct
-    //   - compete target-overlapping-assemblies
-    //   - map alignment index to row, col
     let collapsed_matrix_def = MatrixDef::from_assembly_group(&assembly_group);
 
-    // let (assembled, single): (Vec<_>, Vec<_>) = assemblies.into_iter().partition(|a| a.len() > 1);
+    let mut collapsed_matrix = Matrix::<f64>::new(&collapsed_matrix_def);
 
-    // thoughts:
-    //  - find out how often do assemblies overlap in the target
-    //  - should be able to filter reasonably well by comparing groups of rows that are
-    //    significantly long (50+?) and reasonably aligned (+/- 10 on either side?, maybe a
-    //    percentage of length))
-    //
-    // vague steps:
-    //  - probably don't filter grouped
-    //  - probably try to filter the singles
-    //  - rebuild matrix
-    //  - gotta take care of target overlapping assemblies (mini-viterbi)
-    //  - run DP on reduced matrix
-    //    - try same-row-consensus-based loop transitions
-    //  - remove all columns called by singles that are either clearly
-    //    contained, or don't compete with an assembly
-    //  - run again
-    //  - remove resolved assemblies (all pieces had the chance to join)
-    //  - iterate
+    collapsed_matrix.copy_fill(&confidence_matrix);
 }
 
 pub fn run_pipeline(

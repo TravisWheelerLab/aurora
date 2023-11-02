@@ -183,7 +183,7 @@ impl Segments {
         let mut position_cnts: Vec<usize> = vec![0; num_rows];
         let mut consensus_starts: Vec<usize> = confidence_matrix
             .def
-            .strand_by_row
+            .strand_by_logical_row
             .iter()
             .map(|s| match s {
                 Strand::Forward => usize::MAX,
@@ -193,7 +193,7 @@ impl Segments {
             .collect();
         let mut consensus_ends: Vec<usize> = confidence_matrix
             .def
-            .strand_by_row
+            .strand_by_logical_row
             .iter()
             .map(|s| match s {
                 Strand::Forward => 0usize,
@@ -263,7 +263,7 @@ impl Segments {
                     let start_col_idx = row_start.max(segment.start_col_idx);
                     let end_col_idx = row_end.min(segment.end_col_idx);
 
-                    let query_id = confidence_matrix.id_of_row(row_idx);
+                    let query_id = confidence_matrix.query_id_of_row(row_idx);
 
                     debug_assert!(confidence[row_idx].is_finite());
                     let strand = confidence_matrix.strand_of_row(row_idx);
