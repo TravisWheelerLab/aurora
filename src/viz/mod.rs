@@ -15,13 +15,14 @@ use itertools::Itertools;
 use serde::Serialize;
 
 use crate::{
-    alignment::{self, Alignment, Strand, VecMap},
+    alignment::{Alignment, Strand, VecMap},
     alphabet::{
         NucleotideByteUtils, ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
         PAD_DIGITAL, SPACE_UTF8,
     },
     chunks::ProximityGroup,
     collapse::{Assembly, AssemblyGroup},
+    matrix::MatrixDef,
     results::Annotation,
     segments::Segments,
     Args,
@@ -46,6 +47,50 @@ pub fn write_soda_html(
     let mut file = std::fs::File::create(out_path).expect("failed to create file");
 
     std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
+}
+
+impl MatrixDef {
+    pub fn soda_data(&self) -> serde_json::Value {
+        let mut ali_map: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+        (0..self.num_cols).for_each(|col| {
+            self.ali_ids_by_col[col]
+                .iter()
+                .enumerate()
+                .for_each(|(sparse_row, &id)| {
+                    let row = self.active_rows_by_col[col][sparse_row];
+                    let vec = ali_map.entry(id).or_default();
+                    vec.push((row, col));
+                });
+        });
+
+        let mut ali_strings: Vec<String> = vec![];
+        ali_map.iter().for_each(|(&id, list)| {
+            if id == 0 {
+                return;
+            }
+
+            let (row, mut start_col) = list[0];
+            let mut col = start_col;
+            list[1..].iter().for_each(|&(r, c)| {
+                if r != row {
+                    panic!("{id}");
+                }
+                if (c - 1) != col {
+                    ali_strings.push(format!("{},{},{},{}", id, start_col, col, row));
+                    start_col = c;
+                }
+                col = c;
+            });
+            ali_strings.push(format!("{},{},{},{}", id, start_col, col, row));
+        });
+
+        serde_json::json!({
+            "start": 0,
+            "end": self.num_cols,
+            "rowCount": self.num_rows,
+            "alignments": ali_strings,
+        })
+    }
 }
 
 impl Alignment {
@@ -100,7 +145,7 @@ impl Segments {
             .flat_map(|idx| &self.trace_fragments[idx])
             .map(|f| {
                 format!(
-                    "{},{},{},{}, {}",
+                    "{},{},{},{},{}",
                     f.start_col_idx,
                     f.end_col_idx,
                     f.query_id,
@@ -146,7 +191,124 @@ impl Segments {
 ///
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AuroraAdjudicationSodaData {
+pub struct AdjudicationSodaData2 {
+    target_start: usize,
+    target_end: usize,
+    target_seq: String,
+    aurora_ann: Vec<BlockGroup>,
+    reference_ann: Vec<BlockGroup>,
+    alignment_strings: Vec<String>,
+    trace_strings: Vec<String>,
+}
+
+impl AdjudicationSodaData2 {
+    pub fn new(
+        group: &AssemblyGroup,
+        query_names: &VecMap<String>,
+        annotations: &[Annotation],
+        args: &Args,
+    ) -> Self {
+        let target_start = group.target_start;
+        let target_end = group.target_end;
+        let target_length = target_end - target_start + 1;
+
+        let mut target_seq_digital_bytes = vec![PAD_DIGITAL; target_length];
+
+        group
+            .assemblies
+            .iter()
+            .flat_map(|assembly| &assembly.alignments)
+            .flat_map(|a| {
+                a.target_seq
+                    .iter()
+                    .filter(|&&c| c != GAP_OPEN_DIGITAL && c != GAP_EXTEND_DIGITAL)
+                    .enumerate()
+                    .map(|(idx, c)| (idx + a.target_start - target_start, c))
+            })
+            .for_each(|(col_idx, &char)| target_seq_digital_bytes[col_idx] = char);
+
+        let target_seq = target_seq_digital_bytes.into_utf8_string();
+
+        let unique_join_ids: Vec<usize> = annotations.iter().map(|a| a.join_id).unique().collect();
+
+        let aurora_ann: Vec<BlockGroup> = unique_join_ids
+            .iter()
+            .map(|&id| {
+                BlockGroup::from_joined_annotations(
+                    &mut annotations
+                        .iter()
+                        .filter(|&a| a.join_id == id)
+                        .collect::<Vec<&Annotation>>(),
+                )
+            })
+            .collect();
+
+        let mut overlapping_bed = vec![];
+
+        let target_name = "";
+        if let (Some(path), Some(&offset)) = (
+            &args.viz_reference_bed_path,
+            args.viz_reference_bed_index.get(target_name),
+        ) {
+            let file = File::open(path).expect("failed to open reference bed");
+            let reader = BufReader::new(file);
+
+            reader
+                .lines()
+                .skip(offset)
+                .map(|l| l.expect("failed to read line"))
+                .for_each(|line| {
+                    let tokens: Vec<&str> = line.split_whitespace().collect();
+
+                    let target = tokens[0];
+                    if target != target_name {
+                        return;
+                    }
+
+                    let thick_start = tokens[6].parse::<usize>().expect("failed to parse usize");
+                    let thick_end = tokens[7].parse::<usize>().expect("failed to parse usize");
+                    if thick_start < target_end && thick_end > target_start {
+                        overlapping_bed.push(BedRecord::from_tokens(&tokens));
+                    }
+                });
+        }
+
+        let reference_ann = overlapping_bed
+            .iter()
+            .map(BlockGroup::from_bed_record)
+            .collect_vec();
+
+        let alignment_strings = group
+            .assemblies
+            .iter()
+            .enumerate()
+            .flat_map(|(idx, assembly)| {
+                assembly
+                    .alignments
+                    .iter()
+                    .map(move |a| a.soda_string(idx, query_names.get(a.query_id)))
+            })
+            .collect_vec();
+
+        Self {
+            target_start,
+            target_end,
+            target_seq,
+            aurora_ann,
+            reference_ann,
+            alignment_strings,
+            trace_strings: vec![],
+        }
+    }
+}
+
+///
+///
+///
+///
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdjudicationSodaData {
     target_start: usize,
     target_end: usize,
     target_seq: String,
@@ -158,7 +320,7 @@ pub struct AuroraAdjudicationSodaData {
     segment_strings: Vec<String>,
 }
 
-impl AuroraAdjudicationSodaData {
+impl AdjudicationSodaData {
     // TODO: these parameters need a refactor
     pub fn new(
         group: &ProximityGroup,
@@ -264,7 +426,7 @@ impl AuroraAdjudicationSodaData {
 ///
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AuroraAssemblySodaData {
+pub struct AssemblySodaData {
     target_start: usize,
     target_end: usize,
     consensus_start: usize,
@@ -279,7 +441,7 @@ pub struct AuroraAssemblySodaData {
     suffix: String,
 }
 
-impl AuroraAssemblySodaData {
+impl AssemblySodaData {
     pub fn new(
         assemblies: &[Assembly],
         query_ids: &[usize],

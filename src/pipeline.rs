@@ -1,7 +1,9 @@
 use std::fs;
 
+use itertools::Itertools;
+
 use crate::{
-    alignment::AlignmentData,
+    alignment::{AlignmentData, Strand},
     alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE,
     chunks::ProximityGroup,
     collapse::AssemblyGroup,
@@ -11,8 +13,8 @@ use crate::{
     score_params::ScoreParams,
     segments::Segments,
     support::windowed_confidence_slow,
-    viterbi::{traceback, viterbi},
-    viz::{write_soda_html, AuroraAdjudicationSodaData},
+    viterbi::{hyper_traceback, traceback, traceback2, viterbi, viterbi_collapsed},
+    viz::{write_soda_html, AdjudicationSodaData, AdjudicationSodaData2},
     windowed_scores::windowed_score,
     Args, BACKGROUND_WINDOW_SIZE, SCORE_WINDOW_SIZE,
 };
@@ -49,6 +51,7 @@ pub fn run_assembly_pipeline(
         BACKGROUND_WINDOW_SIZE,
     );
 
+    // TODO: probably remove this skip confidence_by_col thingy
     let skip_confidence_by_col = confidence(&mut confidence_matrix);
 
     let confidence_avg_by_id = windowed_confidence_slow(&mut confidence_matrix);
@@ -57,9 +60,147 @@ pub fn run_assembly_pipeline(
 
     let collapsed_matrix_def = MatrixDef::from_assembly_group(&assembly_group);
 
-    let mut collapsed_matrix = Matrix::<f64>::new(&collapsed_matrix_def);
+    let mut collapsed_confidence_matrix = Matrix::<f64>::new(&collapsed_matrix_def);
+    collapsed_confidence_matrix.copy_fill(&confidence_matrix);
 
-    collapsed_matrix.copy_fill(&confidence_matrix);
+    let mut viterbi_matrix = Matrix::<f64>::new(&collapsed_matrix_def);
+    let mut sources_matrix = Matrix::<usize>::new(&collapsed_matrix_def);
+
+    let mut active_cols = collapsed_confidence_matrix.initial_active_cols();
+
+    let mut join_id_cnt = 0usize;
+
+    viterbi_collapsed(
+        &collapsed_confidence_matrix,
+        &mut viterbi_matrix,
+        &mut sources_matrix,
+        &active_cols,
+        &score_params,
+    );
+
+    let trace = traceback2(
+        &viterbi_matrix,
+        &collapsed_confidence_matrix,
+        &sources_matrix,
+        &active_cols,
+        join_id_cnt,
+    );
+
+    join_id_cnt = trace
+        .iter()
+        .map(|t| t.join_id)
+        .max()
+        .expect("trace is empty");
+
+    // - add penalty to assembly skip states
+    // - prevent jumps into assembly skips
+    //
+    //
+    // - assemblies -> define segments
+    // - trace -> define segments
+    // - remove all columns defined by non-assembled alignments
+    //   that do not compete with assembled alignments
+
+    pub struct Seg {
+        pub query_id: usize,
+        pub col_start: usize,
+        pub col_end: usize,
+    }
+
+    let mut segments: Vec<Seg> = vec![];
+
+    let mut query_id = trace[0].query_id;
+    let mut col_start = trace[0].col_idx;
+
+    let mut last_col_idx = col_start;
+    let mut last_join_id = trace[0].join_id;
+
+    trace.iter().skip(1).for_each(|s| {
+        if s.join_id != last_join_id {
+            segments.push(Seg {
+                query_id,
+                col_start,
+                col_end: last_col_idx,
+            });
+            query_id = s.query_id;
+            col_start = s.col_idx;
+        }
+
+        last_col_idx = s.col_idx;
+        last_join_id = s.join_id;
+    });
+
+    segments.push(Seg {
+        query_id,
+        col_start,
+        col_end: last_col_idx,
+    });
+
+    // segments.iter().for_each(|s| {
+    //     println!("{}: {}-{}", s.query_id, s.col_start, s.col_end);
+    // })
+
+    let target_name = alignment_data.target_name_map.get(group.target_id);
+
+    let mut annotations = vec![];
+    let mut start_step = &trace[0];
+    let mut confidence_sum = trace[0].confidence;
+    trace
+        .iter()
+        .zip(trace.iter().skip(1))
+        .for_each(|(step, next_step)| {
+            if step.ali_id != next_step.ali_id {
+                annotations.push(Annotation::new(
+                    start_step,
+                    step,
+                    target_name,
+                    alignment_data.query_name_map.get(step.query_id),
+                    confidence_sum,
+                    group.target_start,
+                    region_idx,
+                ));
+                start_step = &next_step;
+                confidence_sum = next_step.confidence;
+                return;
+            }
+            confidence_sum += next_step.confidence;
+        });
+
+    let last_step = trace.last().unwrap();
+    annotations.push(Annotation::new(
+        start_step,
+        last_step,
+        target_name,
+        alignment_data.query_name_map.get(last_step.query_id),
+        confidence_sum,
+        group.target_start,
+        region_idx,
+    ));
+
+    Annotation::write(&annotations, &mut std::io::stdout());
+
+    if args.viz {
+        let data = AdjudicationSodaData2::new(
+            &assembly_group,
+            &alignment_data.query_name_map,
+            &annotations,
+            &args,
+        );
+
+        let out_path = args.viz_output_path.join(format!(
+            "{}-{}-{}.html",
+            alignment_data.target_name_map.get(group.target_id),
+            matrix_def.target_start,
+            matrix_def.target_start + matrix_def.num_cols
+        ));
+
+        write_soda_html(
+            &data,
+            "./fixtures/soda/annotations.html",
+            "./fixtures/soda/annotations.js",
+            out_path,
+        );
+    }
 }
 
 pub fn run_pipeline(
@@ -122,7 +263,7 @@ pub fn run_pipeline(
         //     "./fixtures/soda/trace-template.html",
         //     "./fixtures/soda/trace.js",
         //     "./trace.html",
-        // );
+        // )n;
 
         let trace = traceback(&viterbi_matrix, &sources_matrix, &active_cols, join_id_cnt);
         join_id_cnt = trace
@@ -170,7 +311,7 @@ pub fn run_pipeline(
     Annotation::write(&results, &mut std::io::stdout());
 
     if args.viz {
-        let data = AuroraAdjudicationSodaData::new(
+        let data = AdjudicationSodaData::new(
             group,
             &alignment_data.query_name_map,
             &results,

@@ -5,7 +5,7 @@ use itertools::Itertools;
 use crate::{
     alignment::{Alignment, Strand},
     chunks::ProximityGroup,
-    viz::{write_soda_html, AuroraAssemblySodaData},
+    viz::{write_soda_html, AssemblySodaData},
     Args,
 };
 
@@ -340,7 +340,7 @@ impl<'a> AssemblyGroup<'a> {
 
                 if args.viz {
                     if !fwd_ali.is_empty() {
-                        let fwd_data = AuroraAssemblySodaData::new(
+                        let fwd_data = AssemblySodaData::new(
                             &fwd_assemblies,
                             &query_ids,
                             fwd_links,
@@ -358,7 +358,7 @@ impl<'a> AssemblyGroup<'a> {
                     }
 
                     if !rev_ali.is_empty() {
-                        let rev_data = AuroraAssemblySodaData::new(
+                        let rev_data = AssemblySodaData::new(
                             &rev_assemblies,
                             &query_ids,
                             rev_links,
@@ -379,6 +379,8 @@ impl<'a> AssemblyGroup<'a> {
                 assemblies.append(&mut fwd_assemblies);
                 assemblies.append(&mut rev_assemblies);
             });
+
+        assemblies.sort_by_key(|a| a.target_start);
 
         Self {
             target_id: group.target_id,

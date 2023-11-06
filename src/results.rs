@@ -1,4 +1,7 @@
-use crate::alignment::Strand;
+use crate::{
+    alignment::{self, AlignmentData, Strand},
+    viterbi::TraceStep2,
+};
 
 pub struct Annotation {
     pub target_name: String,
@@ -25,6 +28,33 @@ pub struct LineWidths {
 }
 
 impl Annotation {
+    pub fn new(
+        start_step: &TraceStep2,
+        end_step: &TraceStep2,
+        target_name: &str,
+        query_name: &str,
+        confidence_sum: f64,
+        target_start: usize,
+        region_id: usize,
+    ) -> Self {
+        let target_start = start_step.col_idx + target_start;
+        let target_end = end_step.col_idx + target_start;
+        let target_length = (target_end - target_start + 1) as f64;
+
+        Self {
+            target_name: target_name.to_string(),
+            target_start: start_step.col_idx + target_start,
+            target_end: end_step.col_idx + target_start,
+            query_name: query_name.to_string(),
+            query_start: start_step.consensus_pos,
+            query_end: end_step.consensus_pos,
+            strand: start_step.strand,
+            confidence: confidence_sum / target_length,
+            join_id: end_step.join_id,
+            region_id,
+        }
+    }
+
     pub fn line(&self, widths: &LineWidths) -> String {
         format!(
             "{:w0$} {:w1$} {:w2$} {:w3$} {:w4$} {:w5$} {} {:4.3} {:w6$} {}",
@@ -34,7 +64,7 @@ impl Annotation {
             self.query_name,
             self.query_start,
             self.query_end,
-            self.strand.to_string(),
+            self.strand,
             self.confidence,
             self.join_id,
             self.region_id,
