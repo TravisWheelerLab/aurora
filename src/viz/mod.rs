@@ -198,6 +198,7 @@ pub struct AdjudicationSodaData2 {
     aurora_ann: Vec<BlockGroup>,
     reference_ann: Vec<BlockGroup>,
     alignment_strings: Vec<String>,
+    assembly_strings: Vec<String>,
     trace_strings: Vec<String>,
 }
 
@@ -206,6 +207,7 @@ impl AdjudicationSodaData2 {
         group: &AssemblyGroup,
         query_names: &VecMap<String>,
         annotations: &[Annotation],
+        trace_strings: Vec<String>,
         args: &Args,
     ) -> Self {
         let target_start = group.target_start;
@@ -286,7 +288,18 @@ impl AdjudicationSodaData2 {
                 assembly
                     .alignments
                     .iter()
-                    .map(move |a| a.soda_string(idx, query_names.get(a.query_id)))
+                    .map(move |a| a.soda_string(idx + 1, query_names.get(a.query_id)))
+            })
+            .collect_vec();
+
+        let assembly_strings = group
+            .assemblies
+            .iter()
+            .map(|assembly| {
+                format!(
+                    "{},{},{}",
+                    assembly.target_start, assembly.target_end, assembly.query_id
+                )
             })
             .collect_vec();
 
@@ -297,7 +310,8 @@ impl AdjudicationSodaData2 {
             aurora_ann,
             reference_ann,
             alignment_strings,
-            trace_strings: vec![],
+            assembly_strings,
+            trace_strings,
         }
     }
 }

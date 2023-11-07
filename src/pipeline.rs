@@ -92,53 +92,47 @@ pub fn run_assembly_pipeline(
         .max()
         .expect("trace is empty");
 
-    // - add penalty to assembly skip states
-    // - prevent jumps into assembly skips
-    //
-    //
-    // - assemblies -> define segments
-    // - trace -> define segments
-    // - remove all columns defined by non-assembled alignments
-    //   that do not compete with assembled alignments
+    // --------------
+    // trace segments
+    // --------------
+    let mut trace_segments: Vec<Seg> = vec![];
 
     pub struct Seg {
         pub query_id: usize,
+        pub row_idx: usize,
         pub col_start: usize,
         pub col_end: usize,
     }
 
-    let mut segments: Vec<Seg> = vec![];
+    let mut start_step = &trace[0];
+    trace
+        .iter()
+        .zip(trace.iter().skip(1))
+        .for_each(|(step, next_step)| {
+            if step.join_id != next_step.join_id {
+                debug_assert_eq!(start_step.join_id, step.join_id);
+                debug_assert_eq!(start_step.row_idx, step.row_idx);
+                trace_segments.push(Seg {
+                    query_id: step.query_id,
+                    row_idx: step.row_idx,
+                    col_start: start_step.col_idx,
+                    col_end: step.col_idx,
+                });
+                start_step = &next_step;
+            }
+        });
 
-    let mut query_id = trace[0].query_id;
-    let mut col_start = trace[0].col_idx;
-
-    let mut last_col_idx = col_start;
-    let mut last_join_id = trace[0].join_id;
-
-    trace.iter().skip(1).for_each(|s| {
-        if s.join_id != last_join_id {
-            segments.push(Seg {
-                query_id,
-                col_start,
-                col_end: last_col_idx,
-            });
-            query_id = s.query_id;
-            col_start = s.col_idx;
-        }
-
-        last_col_idx = s.col_idx;
-        last_join_id = s.join_id;
+    let last_step = trace.last().unwrap();
+    trace_segments.push(Seg {
+        query_id: last_step.query_id,
+        row_idx: last_step.row_idx,
+        col_start: start_step.col_idx,
+        col_end: last_step.col_idx,
     });
 
-    segments.push(Seg {
-        query_id,
-        col_start,
-        col_end: last_col_idx,
-    });
-
-    // segments.iter().for_each(|s| {
-    //     println!("{}: {}-{}", s.query_id, s.col_start, s.col_end);
-    // })
+    // -----------
+    // annotations
+    // -----------
 
     let target_name = alignment_data.target_name_map.get(group.target_id);
 
@@ -177,13 +171,26 @@ pub fn run_assembly_pipeline(
         region_idx,
     ));
 
+    annotations.retain(|a| a.join_id != 0);
+
     Annotation::write(&annotations, &mut std::io::stdout());
 
     if args.viz {
+        let trace_strings = trace_segments
+            .iter()
+            .map(|seg| {
+                format!(
+                    "{},{},{},{}",
+                    seg.col_start, seg.col_end, seg.query_id, seg.row_idx
+                )
+            })
+            .join("|");
+
         let data = AdjudicationSodaData2::new(
             &assembly_group,
             &alignment_data.query_name_map,
             &annotations,
+            vec![trace_strings],
             &args,
         );
 

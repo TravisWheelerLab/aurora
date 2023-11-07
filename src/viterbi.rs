@@ -651,7 +651,7 @@ pub fn traceback2(
 
             let join_id = if query_id == 0 {
                 0
-            } else if prev_step.query_id == query_id {
+            } else if prev_step.row_idx == row_idx {
                 join_id_cnt
             } else {
                 join_id_cnt += 1;

@@ -250,7 +250,7 @@ function run(data) {
 
         let layoutFn = (id) => {
           // get the annotations with this id
-          let rowAnn = params.proxy.filter((a) => a.queryId == id);
+          let rowAnn = params.assemblies.filter((a) => a.queryId == id);
 
           // sub-group them by overlap
           let groups = soda.aggregateIntransitive({
@@ -284,6 +284,11 @@ function run(data) {
           row: (d) => dpRowToChartRow.get(d.a.row),
           rowCount,
         };
+       
+       // this.layout = {
+       //   row: (d) => d.a.row,
+       //   rowCount: Math.max(...params.proxy.map((a) => a.row)),
+       // };
       },
       draw(params) {
         this.clear();
@@ -296,37 +301,37 @@ function run(data) {
         let x = (d) => this.xScale(d.a.start - 0.25);
         let width = (d) => this.xScale(d.a.end) - this.xScale(d.a.start - 0.5);
 
-        if (options.segments) {
-          // segments
-          soda.rectangle({
-            chart: this,
-            selector: "segments",
-            annotations: params.segments,
-            row: 0,
-            x,
-            width,
-            height: this.viewportHeightPx,
-            fillColor: (d) => traceColors[d.a.traceIter],
-            strokeColor: (d) => traceColors[d.a.traceIter],
-            fillOpacity: 0.05,
-            strokeWidth: 1,
-          });
-        } else {
-          // note: this is a hack to place the segments
-          //       <g> tag at the top until I can fix the
-          //       bug in soda that doesn't clear <g> tags
-          soda.rectangle({
-            chart: this,
-            selector: "segments",
-            annotations: [],
-          });
-        }
+        // if (options.segments) {
+        //   // segments
+        //   soda.rectangle({
+        //     chart: this,
+        //     selector: "segments",
+        //     annotations: params.segments,
+        //     row: 0,
+        //     x,
+        //     width,
+        //     height: this.viewportHeightPx,
+        //     fillColor: (d) => traceColors[d.a.traceIter],
+        //     strokeColor: (d) => traceColors[d.a.traceIter],
+        //     fillOpacity: 0.05,
+        //     strokeWidth: 1,
+        //   });
+        // } else {
+        //   // note: this is a hack to place the segments
+        //   //       <g> tag at the top until I can fix the
+        //   //       bug in soda that doesn't clear <g> tags
+        //   soda.rectangle({
+        //     chart: this,
+        //     selector: "segments",
+        //     annotations: [],
+        //   });
+        // }
 
-        // proxy
+        // assemblies
         soda.rectangle({
           chart: this,
-          selector: "proxy",
-          annotations: params.proxy,
+          selector: "assembly",
+          annotations: params.assemblies,
           y,
           width: (d) => this.xScale(d.a.end) - this.xScale(d.a.start + 1),
           height: 2,
@@ -336,12 +341,12 @@ function run(data) {
         soda.rectangle({
           chart: this,
           selector: "fragments",
-          annotations: params.fragments,
+          annotations: params.sequences,
           x,
           y,
           width,
           height: 12,
-          fillColor: (d) => options.colorScale(d.a.conf),
+          fillColor: "none",
           strokeColor: "black",
         });
 
@@ -393,7 +398,7 @@ function run(data) {
           x,
           y,
           width,
-          height: 12,
+          height: 3,
           fillColor: "none",
           strokeColor: (d) => traceColors[d.a.traceIter],
           strokeWidth: 3,
@@ -461,6 +466,7 @@ function run(data) {
       let filteredParams = {
         start: params.start,
         end: params.end,
+        assemblies: params.assemblies.filter(queryFilter),
         segments: params.segments,
         fragments: params.fragments.filter(queryFilter),
         proxy: params.proxy.filter(queryFilter),
@@ -610,7 +616,6 @@ function run(data) {
         let end = parseInt(tokens[1]) + targetStart;
         let queryId = parseInt(tokens[2]);
         let row = parseInt(tokens[3]);
-        let query = tokens[4];
         trace.push({
           id: `trace-${iter}-${idx}`,
           traceIter: iter,
@@ -618,7 +623,6 @@ function run(data) {
           end,
           queryId,
           row,
-          query,
         });
       }
     }
@@ -678,12 +682,30 @@ function run(data) {
     return { segments };
   }
 
+  function prepareAssemblies(assemblyStrings) {
+    let assemblies = [];
+      for (const [idx, seg] of assemblyStrings.entries()) {
+        let tokens = seg.split(",");
+        let start = parseInt(tokens[0]);
+        let end = parseInt(tokens[1]);
+        let queryId = parseInt(tokens[2]);
+        assemblies.push({
+          id: `assembly-${idx + 1}`,
+          queryId,
+          start,
+          end,
+          row: idx + 1,
+        });
+      }
+    return { assemblies };
+  }
+
   function prepareData() {
     let coords = {
       start: data.targetStart - LABEL_WIDTH,
       end: data.targetEnd,
     };
-
+  
     let aurora = {
       ...coords,
       ...prepareAnn(data.auroraAnn),
@@ -710,21 +732,21 @@ function run(data) {
     let alignments = {
       ...coords,
       ...prepareAli(data.alignmentStrings),
-      trace: [],
-      fragments: [],
-      segments: [],
-      // ...prepareTrace(data.traceStrings, data.targetStart),
+      ...prepareAssemblies(data.assemblyStrings),
+      ...prepareTrace(data.traceStrings, data.targetStart),
       // ...prepareFragments(data.fragmentStrings, data.targetStart),
+      fragments: [],
       // ...prepareSegments(data.segmentStrings, data.targetStart),
+      segments: [],
     };
-
+    
     rowToLength[0] = data.targetEnd - data.targetStart + 1;
     alignments.proxy.forEach((a) => {
       rowToQuery[a.row] = a.query;
       rowToLength[a.row] = a.end - a.start + 1;
       rowToStrand[a.row] = a.strand;
     });
-
+    
     for (let row = 0; row < rowToQuery.length; row++) {
       let fragments = alignments.fragments.filter((f) => f.row == row);
       let confTotal = fragments.reduce(
@@ -762,12 +784,12 @@ function run(data) {
     if (brushDomain == undefined) {
       return;
     }
-
+    
     let coords = {
       start: brushDomain[0],
       end: brushDomain[1],
     };
-
+    
     charts.genome.render({
       ...params.genome,
       ...coords,
@@ -783,6 +805,7 @@ function run(data) {
       ...params.alignments,
       ...coords,
     });
+
   }
 
   function render() {
