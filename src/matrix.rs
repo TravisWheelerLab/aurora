@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 
-use itertools::Itertools;
-
 use crate::{
     alignment::{self, Strand},
     alphabet::{GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL},
     chunks::ProximityGroup,
     collapse::AssemblyGroup,
+    Args,
 };
 
 /// This is an auxiliary data structure that
@@ -324,9 +323,8 @@ where
     /// Copy the data from other into self.
     /// This will panic if the MatrixDefs of self and other are incompatible.
     pub fn copy_fill(&mut self, other: &Self) {
+        let mut value_map: HashMap<usize, T> = HashMap::new();
         (0..self.num_cols()).for_each(|col| {
-            let mut value_map: HashMap<usize, T> = HashMap::new();
-
             other
                 .col_slice(col)
                 .iter()
@@ -337,6 +335,7 @@ where
                 });
             (0..self.col_length(col)).for_each(|sparse_row| {
                 let ali_id = self.ali_id_sparse(sparse_row, col);
+
                 let value = value_map.get(&ali_id).expect("failed to find target value");
                 self.set_sparse(sparse_row, col, *value)
             })

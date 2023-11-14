@@ -7,11 +7,14 @@ use crate::matrix::Matrix;
 ///
 ///
 ///
-pub fn windowed_confidence_slow(matrix: &mut Matrix<f64>) -> HashMap<usize, f64> {
+pub fn windowed_confidence_slow(
+    matrix: &mut Matrix<f64>,
+) -> (HashMap<usize, f64>, HashMap<usize, Vec<f64>>) {
     // TODO: parameterize this
     let half_window_size = 15usize;
 
     let mut confidence_avg_by_id: HashMap<usize, f64> = HashMap::new();
+    let mut confidence_by_id: HashMap<usize, Vec<f64>> = HashMap::new();
 
     // we keep a buffer of the computed windowed confidences
     // so that we don't overwrite a cell that needs
@@ -45,9 +48,15 @@ pub fn windowed_confidence_slow(matrix: &mut Matrix<f64>) -> HashMap<usize, f64>
         });
 
         let mut confidence_sum = 0.0;
+
+        let confidence_vec = confidence_by_id
+            .entry(ali_id)
+            .or_insert(Vec::with_capacity(row_end - row_start + 1));
+
         // once we've completed the row, we can copy the buffer into the matrix
         (row_start..=row_end).for_each(|col_idx| {
             matrix.set(row_idx, col_idx, buffer[col_idx]);
+            confidence_vec.push(buffer[col_idx]);
             confidence_sum += buffer[col_idx];
         });
 
@@ -55,5 +64,5 @@ pub fn windowed_confidence_slow(matrix: &mut Matrix<f64>) -> HashMap<usize, f64>
         confidence_avg_by_id.insert(ali_id, confidence_sum / (row_end - row_start + 1) as f64);
     });
 
-    confidence_avg_by_id
+    (confidence_avg_by_id, confidence_by_id)
 }

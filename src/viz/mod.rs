@@ -200,6 +200,7 @@ pub struct AdjudicationSodaData2 {
     alignment_strings: Vec<String>,
     assembly_strings: Vec<String>,
     trace_strings: Vec<String>,
+    assembly_hit_string: String,
 }
 
 impl AdjudicationSodaData2 {
@@ -207,6 +208,7 @@ impl AdjudicationSodaData2 {
         group: &AssemblyGroup,
         query_names: &VecMap<String>,
         annotations: &[Annotation],
+        assembly_hits: &[bool],
         trace_strings: Vec<String>,
         args: &Args,
     ) -> Self {
@@ -215,7 +217,6 @@ impl AdjudicationSodaData2 {
         let target_length = target_end - target_start + 1;
 
         let mut target_seq_digital_bytes = vec![PAD_DIGITAL; target_length];
-
         group
             .assemblies
             .iter()
@@ -297,11 +298,16 @@ impl AdjudicationSodaData2 {
             .iter()
             .map(|assembly| {
                 format!(
-                    "{},{},{}",
-                    assembly.target_start, assembly.target_end, assembly.query_id
+                    "{},{},{},{}",
+                    assembly.target_start,
+                    assembly.target_end,
+                    assembly.query_id,
+                    assembly.alignments.len()
                 )
             })
             .collect_vec();
+
+        let assembly_hit_string = assembly_hits.iter().map(|&b| b as usize).join("");
 
         Self {
             target_start,
@@ -312,6 +318,7 @@ impl AdjudicationSodaData2 {
             alignment_strings,
             assembly_strings,
             trace_strings,
+            assembly_hit_string,
         }
     }
 }

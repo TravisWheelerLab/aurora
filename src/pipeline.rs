@@ -1,9 +1,9 @@
-use std::fs;
+use std::{collections::HashMap, fs};
 
 use itertools::Itertools;
 
 use crate::{
-    alignment::{AlignmentData, Strand},
+    alignment::AlignmentData,
     alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE,
     chunks::ProximityGroup,
     collapse::AssemblyGroup,
@@ -13,7 +13,7 @@ use crate::{
     score_params::ScoreParams,
     segments::Segments,
     support::windowed_confidence_slow,
-    viterbi::{hyper_traceback, traceback, traceback2, viterbi, viterbi_collapsed},
+    viterbi::{trace_segments, traceback, traceback2, viterbi, viterbi_collapsed, TraceSegment},
     viz::{write_soda_html, AdjudicationSodaData, AdjudicationSodaData2},
     windowed_scores::windowed_score,
     Args, BACKGROUND_WINDOW_SIZE, SCORE_WINDOW_SIZE,
@@ -52,145 +52,147 @@ pub fn run_assembly_pipeline(
     );
 
     // TODO: probably remove this skip confidence_by_col thingy
-    let skip_confidence_by_col = confidence(&mut confidence_matrix);
+    let _ = confidence(&mut confidence_matrix);
 
-    let confidence_avg_by_id = windowed_confidence_slow(&mut confidence_matrix);
+    let (confidence_avg_by_id, confidence_by_id) = windowed_confidence_slow(&mut confidence_matrix);
 
-    let assembly_group = AssemblyGroup::new(group, &confidence_avg_by_id, &args);
+    // adjust the skip state to include skip-loop penalty
+    let skip_adjust = args
+        .query_jump_probability
+        .powf(1.0 / args.num_skip_loops_eq_to_jump as f64);
+
+    (0..confidence_matrix.num_cols()).for_each(|col_idx| {
+        confidence_matrix.set_skip(col_idx, confidence_matrix.get_skip(col_idx) * skip_adjust);
+    });
+
+    let assembly_group = AssemblyGroup::new(group, &confidence_avg_by_id, &confidence_by_id, &args);
 
     let collapsed_matrix_def = MatrixDef::from_assembly_group(&assembly_group);
 
     let mut collapsed_confidence_matrix = Matrix::<f64>::new(&collapsed_matrix_def);
-    collapsed_confidence_matrix.copy_fill(&confidence_matrix);
-
     let mut viterbi_matrix = Matrix::<f64>::new(&collapsed_matrix_def);
     let mut sources_matrix = Matrix::<usize>::new(&collapsed_matrix_def);
 
+    collapsed_confidence_matrix.copy_fill(&confidence_matrix);
+
     let mut active_cols = collapsed_confidence_matrix.initial_active_cols();
-
     let mut join_id_cnt = 0usize;
+    let mut relevant_rows: Vec<Vec<usize>> = vec![];
+    let mut trace_conclusive: Vec<Vec<TraceSegment>> = vec![];
+    let mut trace_ambiguous: Vec<Vec<TraceSegment>> = vec![];
 
-    viterbi_collapsed(
-        &collapsed_confidence_matrix,
-        &mut viterbi_matrix,
-        &mut sources_matrix,
-        &active_cols,
-        &score_params,
-    );
+    while !active_cols.is_empty() {
+        viterbi_collapsed(
+            &collapsed_confidence_matrix,
+            &mut viterbi_matrix,
+            &mut sources_matrix,
+            &active_cols,
+            &score_params,
+        );
 
-    let trace = traceback2(
-        &viterbi_matrix,
-        &collapsed_confidence_matrix,
-        &sources_matrix,
-        &active_cols,
-        join_id_cnt,
-    );
+        let trace = traceback2(
+            &viterbi_matrix,
+            &collapsed_confidence_matrix,
+            &sources_matrix,
+            &active_cols,
+            join_id_cnt,
+        );
 
-    join_id_cnt = trace
-        .iter()
-        .map(|t| t.join_id)
-        .max()
-        .expect("trace is empty");
+        let trace_segments = trace_segments(&trace);
 
-    // --------------
-    // trace segments
-    // --------------
-    let mut trace_segments: Vec<Seg> = vec![];
-
-    pub struct Seg {
-        pub query_id: usize,
-        pub row_idx: usize,
-        pub col_start: usize,
-        pub col_end: usize,
-    }
-
-    let mut start_step = &trace[0];
-    trace
-        .iter()
-        .zip(trace.iter().skip(1))
-        .for_each(|(step, next_step)| {
-            if step.join_id != next_step.join_id {
-                debug_assert_eq!(start_step.join_id, step.join_id);
-                debug_assert_eq!(start_step.row_idx, step.row_idx);
-                trace_segments.push(Seg {
-                    query_id: step.query_id,
-                    row_idx: step.row_idx,
-                    col_start: start_step.col_idx,
-                    col_end: step.col_idx,
-                });
-                start_step = &next_step;
-            }
-        });
-
-    let last_step = trace.last().unwrap();
-    trace_segments.push(Seg {
-        query_id: last_step.query_id,
-        row_idx: last_step.row_idx,
-        col_start: start_step.col_idx,
-        col_end: last_step.col_idx,
-    });
-
-    // -----------
-    // annotations
-    // -----------
-
-    let target_name = alignment_data.target_name_map.get(group.target_id);
-
-    let mut annotations = vec![];
-    let mut start_step = &trace[0];
-    let mut confidence_sum = trace[0].confidence;
-    trace
-        .iter()
-        .zip(trace.iter().skip(1))
-        .for_each(|(step, next_step)| {
-            if step.ali_id != next_step.ali_id {
-                annotations.push(Annotation::new(
-                    start_step,
-                    step,
-                    target_name,
-                    alignment_data.query_name_map.get(step.query_id),
-                    confidence_sum,
-                    group.target_start,
-                    region_idx,
-                ));
-                start_step = &next_step;
-                confidence_sum = next_step.confidence;
-                return;
-            }
-            confidence_sum += next_step.confidence;
-        });
-
-    let last_step = trace.last().unwrap();
-    annotations.push(Annotation::new(
-        start_step,
-        last_step,
-        target_name,
-        alignment_data.query_name_map.get(last_step.query_id),
-        confidence_sum,
-        group.target_start,
-        region_idx,
-    ));
-
-    annotations.retain(|a| a.join_id != 0);
-
-    Annotation::write(&annotations, &mut std::io::stdout());
-
-    if args.viz {
-        let trace_strings = trace_segments
+        join_id_cnt = trace
             .iter()
-            .map(|seg| {
-                format!(
-                    "{},{},{},{}",
-                    seg.col_start, seg.col_end, seg.query_id, seg.row_idx
+            .map(|t| t.join_id)
+            .max()
+            .expect("trace is empty");
+
+        // -----------
+        // row culling
+        // -----------
+
+        let mut relevant = vec![];
+
+        assembly_group
+            .assemblies
+            .iter()
+            .enumerate()
+            // assemblies with more than one alignment stay relevant
+            // **TODO: need to filter for assemblies that have been resolved
+            // **TODO: maybe filter based on trace continuity
+            .filter(|(_, a)| a.alignments.len() > 1)
+            .for_each(|(idx, _)| relevant.push(idx + 1));
+
+        trace_segments.iter().for_each(|s| relevant.push(s.row_idx));
+
+        relevant = relevant.into_iter().unique().collect();
+
+        relevant_rows.push(relevant);
+
+        // ---------------
+        // trace splitting
+        // ---------------
+
+        let assembly_fragment_ranges = assembly_group
+            .assemblies
+            .iter()
+            .filter(|g| g.alignments.len() > 1)
+            .flat_map(|a| &a.alignments)
+            .map(|a| {
+                (
+                    a.target_start - group.target_start,
+                    a.target_end - group.target_start,
                 )
             })
-            .join("|");
+            .collect_vec();
+
+        let (ambiguous, conclusive): (Vec<TraceSegment>, Vec<TraceSegment>) =
+            trace_segments.into_iter().partition(|s| {
+                let seg_start = s.col_start + 10;
+                let seg_end = s.col_end - 10;
+
+                for &(s, e) in assembly_fragment_ranges.iter() {
+                    if seg_start < e && seg_end > s {
+                        return true;
+                    }
+                }
+                false
+            });
+
+        // ------------------
+        // update active cols
+        // ------------------
+
+        active_cols = ambiguous
+            .iter()
+            .flat_map(|s| s.col_start..=s.col_end)
+            .collect();
+
+        trace_conclusive.push(conclusive);
+        trace_ambiguous.push(ambiguous);
+    }
+
+    let annotations: Vec<Annotation> = trace_conclusive
+        .iter()
+        .flat_map(|iter_segments| iter_segments.iter().map(Annotation::new))
+        .collect();
+
+    if args.viz {
+        // let trace_strings = trace_clear
+        //     .iter()
+        //     .map(|seg| {
+        //         format!(
+        //             "{},{},{},{}",
+        //             seg.col_start, seg.col_end, seg.query_id, seg.row_idx
+        //         )
+        //     })
+        //     .join("|");
 
         let data = AdjudicationSodaData2::new(
             &assembly_group,
             &alignment_data.query_name_map,
             &annotations,
-            vec![trace_strings],
+            &vec![],
+            vec![],
             &args,
         );
 

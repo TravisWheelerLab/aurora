@@ -38,10 +38,10 @@ pub fn assembly_graph<'a>(
             debug_assert!(a.target_start <= b.target_start);
         });
 
-    let mut graph: HashMap<&Alignment, Vec<Edge>> = HashMap::new();
+    let mut graph: HashMap<&Alignment, Vec<Edge>> =
+        alignments.iter().map(|&a| (a, vec![])).collect();
 
     alignments.iter().enumerate().for_each(|(a_idx, &a)| {
-        graph.insert(a, vec![]);
         alignments[a_idx + 1..].iter().for_each(|&b| {
             if a == b {
                 return;
@@ -73,8 +73,8 @@ pub fn assembly_graph<'a>(
                 b_edges.push(Edge {
                     ali_to: a,
                     weight,
-                    direction: Direction::Right,
-                })
+                    direction: Direction::Left,
+                });
             }
         });
     });
@@ -85,6 +85,7 @@ pub fn assembly_graph<'a>(
 pub fn assembly<'a>(
     graph: &mut HashMap<&'a Alignment, Vec<Edge<'a>>>,
     confidence_avg_by_id: &HashMap<usize, f64>,
+    confidence_by_id: &HashMap<usize, Vec<f64>>,
 ) -> Vec<Assembly<'a>> {
     // take all indices of the remaining alignment tuples
     let mut remaining: Vec<&Alignment> = graph.keys().copied().collect_vec();
@@ -180,7 +181,10 @@ pub fn assembly<'a>(
             // we remove ALL edges from the joined alignment
             graph.insert(join_ali, vec![]);
         }
-        assemblies.push(Assembly::new(assembly_alignments));
+
+        assembly_alignments.sort_by_key(|a| a.target_start);
+
+        assemblies.push(Assembly::new(assembly_alignments, confidence_by_id));
     }
 
     assemblies
@@ -198,11 +202,11 @@ pub struct Assembly<'a> {
     pub query_start: usize,
     pub query_end: usize,
     pub alignments: Vec<&'a Alignment>,
-    pub alignment_ranges: Vec<[usize; 2]>,
+    pub alignment_ranges_by_id: HashMap<usize, Vec<[usize; 2]>>,
 }
 
 impl<'a> Assembly<'a> {
-    fn new(alignments: Vec<&'a Alignment>) -> Self {
+    fn new(alignments: Vec<&'a Alignment>, confidence_by_id: &HashMap<usize, Vec<f64>>) -> Self {
         let strand = alignments[0].strand;
 
         let target_start = alignments.iter().map(|a| a.target_start).min().unwrap();
@@ -221,16 +225,132 @@ impl<'a> Assembly<'a> {
             Strand::Unset => panic!(),
         };
 
-        alignments.iter().for_each(|a| {
-            alignments.iter().for_each(|b| {
-                if a == b {
-                    return;
+        let mut alignment_ranges_by_id = HashMap::new();
+        if alignments.len() == 1 {
+            alignment_ranges_by_id.insert(
+                alignments[0].id,
+                vec![[alignments[0].target_start, alignments[0].target_end]],
+            );
+        } else {
+            let min_target_start = alignments
+                .iter()
+                .map(|a| a.target_start)
+                .min()
+                .expect("empty alignments");
+
+            let max_target_end = alignments
+                .iter()
+                .map(|a| a.target_end)
+                .max()
+                .expect("empty alignments");
+
+            let target_len = max_target_end - min_target_start + 1;
+
+            let mut matrix = vec![vec![0.0; alignments.len() + 1]; target_len];
+            let mut sources = vec![vec![0usize; alignments.len() + 1]; target_len];
+
+            sources[0].iter_mut().enumerate().for_each(|(i, s)| *s = i);
+
+            (0..target_len).for_each(|col_idx| matrix[col_idx][0] = 1.0);
+
+            alignments
+                .iter()
+                .enumerate()
+                // +1 to get the right row idx (skip state offset)
+                .map(|(idx, a)| (idx + 1, a))
+                .for_each(|(row_idx, a)| {
+                    let conf_vec = confidence_by_id.get(&a.id).expect("alignment ID not found");
+
+                    debug_assert_eq!(a.target_end - a.target_start + 1, conf_vec.len());
+
+                    (a.target_start..=a.target_end)
+                        .map(|target_idx| target_idx - min_target_start)
+                        .zip(conf_vec)
+                        .for_each(|(col_idx, conf)| {
+                            matrix[col_idx][row_idx] = *conf;
+                            matrix[col_idx][0] = 0.0;
+                        });
+                });
+
+            matrix.iter_mut().flatten().for_each(|v| *v = v.ln());
+
+            (1..target_len).for_each(|col_idx| {
+                let (row_of_max_in_prev_col, &max_score_in_prev_col) = matrix[col_idx - 1]
+                    .iter()
+                    .enumerate()
+                    // skip the skip
+                    .skip(1)
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                    .expect("mini dp matrix has an empty column");
+
+                let skip_loop_score = matrix[col_idx - 1][0] + (1e55f64).ln() / 30.0;
+                let query_to_skip_score = max_score_in_prev_col + (1e55f64).ln() / 2.0;
+
+                if skip_loop_score > query_to_skip_score {
+                    matrix[col_idx][0] += skip_loop_score;
+                    sources[col_idx][0] = 0;
+                } else {
+                    matrix[col_idx][0] += query_to_skip_score;
+                    sources[col_idx][0] = row_of_max_in_prev_col;
                 }
-                if a.target_start <= b.target_end && a.target_end >= b.target_start {
-                    panic!("overlap");
-                }
+
+                (1..=alignments.len()).for_each(|row_idx| {
+                    let skip_to_query_tuple =
+                        (matrix[col_idx - 1][0] + (1e-55f64).ln() / 2.0, 0usize);
+                    let loop_tuple = (matrix[col_idx - 1][row_idx], row_idx);
+                    let jump_tuple = (
+                        max_score_in_prev_col + (1e-55f64).ln(),
+                        row_of_max_in_prev_col,
+                    );
+
+                    let score_tuples = [skip_to_query_tuple, loop_tuple, jump_tuple];
+
+                    let max_tuple = score_tuples
+                        .iter()
+                        .max_by(|a, b| a.0.partial_cmp(&b.0).expect("failed to compare floats"))
+                        .expect("failed to find max score tuple");
+
+                    matrix[col_idx][row_idx] += max_tuple.0;
+                    sources[col_idx][row_idx] = max_tuple.1;
+                });
             });
-        });
+
+            let last_col = matrix.last().expect("mini dp matrix is empty");
+
+            let (max_row_in_last_col, _) = last_col
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .unwrap();
+
+            let mut start = matrix.len() - 1;
+            let mut prev = max_row_in_last_col;
+
+            let mut trace = vec![];
+            (0..target_len - 1).rev().for_each(|col| {
+                let source = sources[col + 1][prev];
+
+                if source != prev {
+                    trace.push((prev, [col + 1, start]));
+                    start = col;
+                }
+                prev = source;
+            });
+
+            trace.push((prev, [0, start]));
+            trace.reverse();
+
+            trace
+                .iter()
+                // filter the skip traces
+                .filter(|(i, _)| *i != 0)
+                .for_each(|(i, range)| {
+                    let ranges = alignment_ranges_by_id
+                        .entry(alignments[i - 1].id)
+                        .or_default();
+                    ranges.push(*range);
+                });
+        };
 
         Self {
             query_id: alignments[0].query_id,
@@ -240,7 +360,7 @@ impl<'a> Assembly<'a> {
             query_start,
             query_end,
             alignments,
-            alignment_ranges: vec![],
+            alignment_ranges_by_id,
         }
     }
 }
@@ -260,6 +380,7 @@ impl<'a> AssemblyGroup<'a> {
     pub fn new(
         group: &ProximityGroup<'a>,
         confidence_avg_by_id: &HashMap<usize, f64>,
+        confidence_by_id: &HashMap<usize, Vec<f64>>,
         args: &Args,
     ) -> Self {
         let mut assemblies: Vec<Assembly> = vec![];
@@ -317,8 +438,11 @@ impl<'a> AssemblyGroup<'a> {
                         .collect_vec();
                 }
 
-                let mut fwd_assemblies = assembly(&mut fwd_graph, confidence_avg_by_id);
-                let mut rev_assemblies = assembly(&mut rev_graph, confidence_avg_by_id);
+                let mut fwd_assemblies =
+                    assembly(&mut fwd_graph, confidence_avg_by_id, confidence_by_id);
+
+                let mut rev_assemblies =
+                    assembly(&mut rev_graph, confidence_avg_by_id, confidence_by_id);
 
                 // check that the sum of assembly lengths is equal
                 // to the number of alignments we started with

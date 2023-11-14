@@ -28,27 +28,36 @@ pub fn viterbi_collapsed(
         *source_value = sparse_row_idx;
     }
 
+    //  TODO:
+    //  - ghost skip states are causing bogus annotations (not being interpreted as skip)
+
     for (&col_from_idx, &col_to_idx) in active_cols.iter().zip(active_cols.iter().skip(1)) {
         // TODO: we could keep track of this as they are
         //       being set in the previous loop iteration
-        let (sparse_row_idx_of_max_score_in_col_from, max_score_in_col_from) = viterbi_matrix
+        let (sparse_row_idx_of_max_score_in_col_from, &max_score_in_col_from) = viterbi_matrix
             .col_slice(col_from_idx)
             .iter()
             .enumerate()
             // skip the skip state
             .skip(1)
-            .fold((0usize, -f64::INFINITY), |acc, (sparse_row_idx, &score)| {
-                if score > acc.1 {
-                    (sparse_row_idx, score)
-                } else {
-                    acc
-                }
-            });
+            // filter ghost skip states to prevent
+            // paths from jumping to another row
+            .filter(|(sparse_row_idx, _)| {
+                viterbi_matrix.ali_id_sparse(*sparse_row_idx, col_from_idx) != 0usize
+            })
+            // find the (sparse_row_idx, score) tuple with the highest score)
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            // if the column is empty, we'll return -inf, which will be ignored
+            .unwrap_or((0usize, &-f64::INFINITY));
 
         // to get the skip state score, we only have to
         // compare the cost of looping vs the cost of
         // jumping from the best score in the previous col
-        let skip_loop_score = viterbi_matrix.get_skip(col_from_idx) + score_params.skip_loop_score;
+        //
+        // *NOTE: the skip loop score is not used in this version
+        //        of viterbi because the penalty has already been
+        //        added to the confidence values
+        let skip_loop_score = viterbi_matrix.get_skip(col_from_idx) + score_params.query_loop_score;
         let query_to_skip_score = max_score_in_col_from + score_params.query_to_skip_score;
 
         if skip_loop_score > query_to_skip_score {
@@ -74,10 +83,21 @@ pub fn viterbi_collapsed(
             // we already did it
             .skip(1)
             .for_each(|sparse_row_to_idx| {
-                // first figure out what score we'd
+                // if the row is a ghost skip state, it will have ali_id of 0
+                let row_is_ghost =
+                    viterbi_matrix.ali_id_sparse(sparse_row_to_idx, col_to_idx) == 0usize;
+
+                // if the row is a ghost, we add massive negative
+                // score to all transitions except the loop
+                // otherwise, we add 0.0
+                let jump_modifier = (row_is_ghost as usize as f64) * -1_000_000.0;
+
+                // now figure out what score we'd
                 // get if we came from the skip state
                 let skip_to_query_tuple = (
-                    viterbi_matrix.get_skip(col_from_idx) + score_params.query_to_skip_score,
+                    viterbi_matrix.get_skip(col_from_idx)
+                        + score_params.query_to_skip_score
+                        + jump_modifier,
                     0,
                 );
 
@@ -101,7 +121,7 @@ pub fn viterbi_collapsed(
                     };
 
                 let query_jump_tuple = (
-                    max_score_in_col_from + score_params.query_jump_score,
+                    max_score_in_col_from + score_params.query_jump_score + jump_modifier,
                     sparse_row_idx_of_max_score_in_col_from,
                 );
 
@@ -570,6 +590,10 @@ pub fn hyper_traceback(
     })
 }
 
+///
+///
+///
+///
 #[derive(Default, Clone, Debug)]
 pub struct TraceStep2 {
     pub sparse_row_idx: usize,
@@ -583,7 +607,65 @@ pub struct TraceStep2 {
     pub join_id: usize,
 }
 
+///
+///
+///
+///
 pub type Trace2 = Vec<TraceStep2>;
+
+///
+///
+///
+///
+pub struct TraceSegment {
+    pub query_id: usize,
+    pub row_idx: usize,
+    pub col_start: usize,
+    pub col_end: usize,
+    pub confidence: f64,
+}
+
+///
+///
+///
+///
+pub fn trace_segments(trace: &Trace2) -> Vec<TraceSegment> {
+    let mut trace_segments: Vec<TraceSegment> = vec![];
+
+    let mut start_step = &trace[0];
+    let mut confidence_sum = trace[0].confidence;
+    trace
+        .iter()
+        .zip(trace.iter().skip(1))
+        .for_each(|(step, next_step)| {
+            if step.join_id != next_step.join_id {
+                debug_assert_eq!(start_step.join_id, step.join_id);
+                debug_assert_eq!(start_step.row_idx, step.row_idx);
+                trace_segments.push(TraceSegment {
+                    query_id: step.query_id,
+                    row_idx: step.row_idx,
+                    col_start: start_step.col_idx,
+                    col_end: step.col_idx,
+                    confidence: confidence_sum / (step.col_idx - start_step.col_idx + 1) as f64,
+                });
+                start_step = &next_step;
+                confidence_sum = 0.0;
+            }
+            confidence_sum += next_step.confidence;
+        });
+
+    let last_step = trace.last().unwrap();
+    confidence_sum += last_step.confidence;
+    trace_segments.push(TraceSegment {
+        query_id: last_step.query_id,
+        row_idx: last_step.row_idx,
+        col_start: start_step.col_idx,
+        col_end: last_step.col_idx,
+        confidence: confidence_sum / (last_step.col_idx - start_step.col_idx + 1) as f64,
+    });
+
+    trace_segments
+}
 
 pub fn traceback2(
     viterbi_matrix: &Matrix<f64>,

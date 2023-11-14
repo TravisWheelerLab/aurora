@@ -38,6 +38,7 @@ function run(data) {
     confThresh: 0.0,
     aliThresh: 300,
     traceAtTop: true,
+    assemblyAtTop: false,
     filters: [],
     sidebarExpanded: false,
     sidebarMinWidth: 30,
@@ -240,55 +241,44 @@ function run(data) {
         if (options.traceAtTop) {
           traceQueryIds = [...new Set(params.trace.map((a) => a.queryId))];
         }
+        
+        let assemblyQueryIds = [];
+        if (options.assemblyAtTop) {
+          assemblyQueryIds = [...new Set(params.assemblies.filter((a) => a.size > 1).map((a) => a.queryId))];
+          assemblyQueryIds = assemblyQueryIds.filter(
+            (id) => traceQueryIds.indexOf(id) === -1,
+          );
+        }
 
         let remainingQueryIds = queryIds.filter(
           (id) => traceQueryIds.indexOf(id) === -1,
+        ).filter(
+          (id) => assemblyQueryIds.indexOf(id) === -1,
         );
 
         let rowCount = 1;
         let dpRowToChartRow = new Map([[0, 0]]);
 
         let layoutFn = (id) => {
-          // get the annotations with this id
-          let rowAnn = params.assemblies.filter((a) => a.queryId == id);
-
-          // sub-group them by overlap
-          let groups = soda.aggregateIntransitive({
-            annotations: rowAnn,
-            criterion: (a, b) => a.start < b.end && a.end > b.start,
+          let queryAssemblies = params.assemblies.filter((a) => a.queryId == id);
+          let subLayout = soda.intervalGraphLayout(queryAssemblies);
+          
+          queryAssemblies.forEach((a) => {
+            let subRow = subLayout.row({ a });
+            dpRowToChartRow.set(a.row, rowCount + subRow)
           });
 
-          // for each sub-group of overlapping annotations in the row
-          let maxSubLayoutRowCount = 0;
-          groups.forEach((g) => {
-            let ann = g.annotations;
-            let subLayout = soda.intervalGraphLayout(ann);
-            maxSubLayoutRowCount = Math.max(
-              maxSubLayoutRowCount,
-              subLayout.rowCount,
-            );
-            // for each annotation in the sub-group
-            ann.forEach((a) => {
-              let subRow = subLayout.row({ a });
-              dpRowToChartRow.set(a.row, rowCount + subRow);
-            });
-          });
-
-          rowCount += maxSubLayoutRowCount;
+          rowCount += subLayout.rowCount;
         };
 
         traceQueryIds.forEach(layoutFn);
+        assemblyQueryIds.forEach(layoutFn);
         remainingQueryIds.forEach(layoutFn);
 
         this.layout = {
           row: (d) => dpRowToChartRow.get(d.a.row),
           rowCount,
         };
-       
-       // this.layout = {
-       //   row: (d) => d.a.row,
-       //   rowCount: Math.max(...params.proxy.map((a) => a.row)),
-       // };
       },
       draw(params) {
         this.clear();
@@ -301,52 +291,27 @@ function run(data) {
         let x = (d) => this.xScale(d.a.start - 0.25);
         let width = (d) => this.xScale(d.a.end) - this.xScale(d.a.start - 0.5);
 
-        // if (options.segments) {
-        //   // segments
-        //   soda.rectangle({
-        //     chart: this,
-        //     selector: "segments",
-        //     annotations: params.segments,
-        //     row: 0,
-        //     x,
-        //     width,
-        //     height: this.viewportHeightPx,
-        //     fillColor: (d) => traceColors[d.a.traceIter],
-        //     strokeColor: (d) => traceColors[d.a.traceIter],
-        //     fillOpacity: 0.05,
-        //     strokeWidth: 1,
-        //   });
-        // } else {
-        //   // note: this is a hack to place the segments
-        //   //       <g> tag at the top until I can fix the
-        //   //       bug in soda that doesn't clear <g> tags
-        //   soda.rectangle({
-        //     chart: this,
-        //     selector: "segments",
-        //     annotations: [],
-        //   });
-        // }
-
         // assemblies
         soda.rectangle({
           chart: this,
           selector: "assembly",
-          annotations: params.assemblies,
+          annotations: params.assemblies.filter((a) => a.size > 1),
           y,
           width: (d) => this.xScale(d.a.end) - this.xScale(d.a.start + 1),
           height: 2,
         });
 
-        // fragments
+        // alignments
         soda.rectangle({
           chart: this,
-          selector: "fragments",
+          selector: "alignments",
           annotations: params.sequences,
           x,
           y,
           width,
           height: 12,
-          fillColor: "none",
+          fillColor: (d) => params.assemblyHits[d.a.row] ? "green" : "red",
+          fillOpacity: 0.05,
           strokeColor: "black",
         });
 
@@ -404,15 +369,15 @@ function run(data) {
           strokeWidth: 3,
         });
 
-        soda.tooltip({
-          annotations: params.fragments,
-          text: (d) =>
-            `${d.a.query}: ` +
-            `${d.a.queryStart.toLocaleString()}..${d.a.queryEnd.toLocaleString()}` +
-            `<br>chrom: ${d.a.start.toLocaleString()}..${d.a.end.toLocaleString()}` +
-            `<br>strand: ${d.a.strand}` +
-            `<br>confidence: ${d.a.conf}`,
-        });
+        // soda.tooltip({
+        //   annotations: params.sequences,
+        //   text: (d) =>
+        //     `${d.a.query}: ` +
+        //     `${d.a.queryStart.toLocaleString()}..${d.a.queryEnd.toLocaleString()}` +
+        //     `<br>chrom: ${d.a.start.toLocaleString()}..${d.a.end.toLocaleString()}` +
+        //     `<br>strand: ${d.a.strand}` +
+        //     `<br>confidence: ${d.a.conf}`,
+        // });
       },
 
       postZoom() {
@@ -464,10 +429,8 @@ function run(data) {
       };
 
       let filteredParams = {
-        start: params.start,
-        end: params.end,
+        ...params,
         assemblies: params.assemblies.filter(queryFilter),
-        segments: params.segments,
         fragments: params.fragments.filter(queryFilter),
         proxy: params.proxy.filter(queryFilter),
         sequences: params.sequences.filter(queryFilter),
@@ -689,11 +652,13 @@ function run(data) {
         let start = parseInt(tokens[0]);
         let end = parseInt(tokens[1]);
         let queryId = parseInt(tokens[2]);
+        let size = parseInt(tokens[3]);
         assemblies.push({
           id: `assembly-${idx + 1}`,
           queryId,
           start,
           end,
+          size,
           row: idx + 1,
         });
       }
@@ -728,12 +693,15 @@ function run(data) {
         },
       ],
     };
+  
+    let assemblyHits = data.assemblyHitString.split("").map((t) => parseInt(t));
 
     let alignments = {
       ...coords,
       ...prepareAli(data.alignmentStrings),
       ...prepareAssemblies(data.assemblyStrings),
       ...prepareTrace(data.traceStrings, data.targetStart),
+      assemblyHits,
       // ...prepareFragments(data.fragmentStrings, data.targetStart),
       fragments: [],
       // ...prepareSegments(data.segmentStrings, data.targetStart),
