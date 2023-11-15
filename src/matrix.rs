@@ -42,11 +42,8 @@ pub struct MatrixDef {
 
 impl MatrixDef {
     pub fn from_assembly_group(group: &AssemblyGroup) -> Self {
-        let target_start = group.target_start;
-        let target_end = group.target_end;
-
         let num_rows = group.assemblies.len() + 1;
-        let num_cols = target_end - target_start + 1;
+        let num_cols = group.target_end - group.target_start + 1;
 
         let mut num_cells = num_cols;
 
@@ -76,55 +73,71 @@ impl MatrixDef {
                 query_id_by_logical_row[row_idx] = assembly.query_id;
                 strand_by_logical_row[row_idx] = assembly.strand;
 
-                // the start/end of the alignment in terms of the columns of the matrix
-                let col_start = assembly.target_start - target_start;
-                let col_end = assembly.target_end - target_start;
-                num_cells += col_end - col_start + 1;
+                // find the start/end of the assembly
+                // relative to the start of the group
+                //
+                // we have something like:
+                //
+                //     (         [    -------------     ]           )
+                //     ^         ^         ^            ^           ^
+                //  chrom      group    assembly      group       chrom
+                //  start      start                   end         end
+                //
+                let assembly_col_start_in_matrix = assembly.target_start - group.target_start;
+                let assembly_col_end_in_matrix = assembly.target_end - group.target_start;
+                let assembly_len = assembly_col_end_in_matrix - assembly_col_start_in_matrix + 1;
 
-                col_range_by_logical_row[row_idx] = (col_start, col_end);
-                (col_start..=col_end).for_each(|col_idx| {
+                num_cells += assembly_col_end_in_matrix - assembly_col_start_in_matrix + 1;
+
+                // set the entire logical row defined
+                // by the assembly to be active
+                //
+                // we have something like:
+                //
+                //  --------------************-------------***********---------
+                //        ^            ^           ^           ^          ^
+                //    alignment      skip      alignment      skip    alignment
+                //
+                col_range_by_logical_row[row_idx] =
+                    (assembly_col_start_in_matrix, assembly_col_end_in_matrix);
+                (assembly_col_start_in_matrix..=assembly_col_end_in_matrix).for_each(|col_idx| {
                     active_rows_by_col[col_idx].push(row_idx);
                 });
 
-                let mut col_idx = col_start;
-
+                // for each alignment, figure out the consensus positions that
+                // map to each target position/column index in the group
+                let mut assembly_consensus_map: HashMap<usize, Vec<usize>> = HashMap::new();
                 assembly.alignments.iter().for_each(|ali| {
-                    let mut consensus_position = ali.query_start;
+                    let mut consensus_positions = vec![0usize; assembly_len];
 
-                    let new_col_idx = ali.target_start - target_start;
+                    let mut consensus_position = ali.query_start as i32;
 
-                    // TODO: FIX THIS
-                    //       THIS IS A BANDAID
-                    col_idx = col_idx.min(new_col_idx);
+                    // the column index relative to the assembly
+                    let mut assembly_col_idx = ali.target_start - assembly.target_start;
 
-                    // place the last consensus position of the previous alignment
-                    // at every empty position leading up to this alignment
-                    let num_positions_from_last = new_col_idx - col_idx;
-                    (col_idx..(col_idx + num_positions_from_last)).for_each(|idx| {
-                        consensus_positions_by_col[idx].push(consensus_position);
-                        ali_ids_by_col[idx].push(0);
-                    });
-
-                    col_idx = new_col_idx;
-
+                    let addend = match assembly.strand {
+                        Strand::Forward => 1,
+                        Strand::Reverse => -1,
+                        Strand::Unset => {
+                            panic!("Alignment.strand is unset in call to MatrixDef::new()")
+                        }
+                    };
                     for (&target_char, &query_char) in
                         ali.target_seq.iter().zip(ali.query_seq.iter())
                     {
+                        consensus_positions[assembly_col_idx] = consensus_position as usize;
                         match target_char {
                             GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
-                                // if the target character is a gap, we advance the
-                                // consensus position and leave the column index alone
-                                match assembly.strand {
-                                    Strand::Forward => consensus_position += 1,
-                                    Strand::Reverse => consensus_position -= 1,
-                                    Strand::Unset => {
-                                        panic!(
-                                            "Alignment.strand is unset in call to MatrixDef::new()"
-                                        )
-                                    }
-                                }
+                                // if the target character is a gap,
+                                // we advance the consensus position
+                                // and leave the column index alone
+                                consensus_position += addend;
                             }
                             _ => {
+                                // if the target character is not a gap,
+                                // we advance the column index regardless
+                                // of what the query character is
+                                assembly_col_idx += 1;
                                 match query_char {
                                     GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
                                         // if the query character is a gap, we use
@@ -133,33 +146,74 @@ impl MatrixDef {
                                     _ => {
                                         // if the query character isn't a gap,
                                         // we advance the consensus position
-                                        match assembly.strand {
-                                            Strand::Forward => consensus_position += 1,
-                                            Strand::Reverse => consensus_position -= 1,
-                                            Strand::Unset => {
-                                                panic!(
-                                            "Alignment.strand is unset in call to MatrixDef::new()"
-                                        )
-                                            }
-                                        }
+                                        consensus_position += addend;
                                     }
                                 }
-
-                                debug_assert!(col_idx >= col_start && col_idx <= col_end);
-
-                                consensus_positions_by_col[col_idx].push(consensus_position);
-                                ali_ids_by_col[col_idx].push(ali.id);
-                                col_idx += 1;
                             }
                         }
                     }
+                    debug_assert_eq!(
+                        consensus_positions[ali.target_start - assembly.target_start],
+                        ali.query_start
+                    );
+
+                    debug_assert_eq!(
+                        consensus_positions[ali.target_end - assembly.target_start],
+                        ali.query_end
+                    );
+
+                    assembly_consensus_map.insert(ali.id, consensus_positions);
+                });
+
+                let mut last_matrix_col_idx = assembly_col_start_in_matrix;
+                let mut last_consensus_position = 0usize;
+
+                assembly.alignment_ranges.iter().for_each(|range| {
+                    let ali = assembly
+                        .alignments
+                        .iter()
+                        .find(|a| a.id == range.ali_id)
+                        .expect("failed to match alignment with range");
+
+                    let consensus_positions = assembly_consensus_map
+                        .get(&ali.id)
+                        .expect("failed to find consensus positions");
+
+                    let new_matrix_col_idx = range.col_start + assembly_col_start_in_matrix;
+
+                    // place the last consensus position of the previous alignment
+                    // at every empty position leading up to this alignment
+                    let spaces = new_matrix_col_idx - last_matrix_col_idx;
+                    ((last_matrix_col_idx + 1)..(last_matrix_col_idx + spaces)).for_each(
+                        |matrix_col_idx| {
+                            consensus_positions_by_col[matrix_col_idx]
+                                .push(last_consensus_position);
+                            ali_ids_by_col[matrix_col_idx].push(0);
+                        },
+                    );
+
+                    (range.col_start..=range.col_end)
+                        .map(|assembly_col_idx| {
+                            (
+                                assembly_col_idx,
+                                assembly_col_idx + assembly_col_start_in_matrix,
+                            )
+                        })
+                        .for_each(|(assembly_col_idx, matrix_col_idx)| {
+                            let consensus_position = consensus_positions[assembly_col_idx];
+                            consensus_positions_by_col[matrix_col_idx].push(consensus_position);
+                            ali_ids_by_col[matrix_col_idx].push(ali.id);
+                        });
+
+                    last_matrix_col_idx = range.col_end + assembly_col_start_in_matrix;
+                    last_consensus_position = consensus_positions[range.col_end];
                 });
             });
 
         Self {
             num_rows,
             num_cols,
-            target_start,
+            target_start: group.target_start,
             num_cells,
             active_rows_by_col,
             consensus_positions_by_col,

@@ -190,6 +190,12 @@ pub fn assembly<'a>(
     assemblies
 }
 
+pub struct AlignmentRange {
+    pub ali_id: usize,
+    pub col_start: usize,
+    pub col_end: usize,
+}
+
 ///
 ///
 ///
@@ -202,15 +208,15 @@ pub struct Assembly<'a> {
     pub query_start: usize,
     pub query_end: usize,
     pub alignments: Vec<&'a Alignment>,
-    pub alignment_ranges_by_id: HashMap<usize, Vec<[usize; 2]>>,
+    pub alignment_ranges: Vec<AlignmentRange>,
 }
 
 impl<'a> Assembly<'a> {
     fn new(alignments: Vec<&'a Alignment>, confidence_by_id: &HashMap<usize, Vec<f64>>) -> Self {
         let strand = alignments[0].strand;
 
-        let target_start = alignments.iter().map(|a| a.target_start).min().unwrap();
-        let target_end = alignments.iter().map(|a| a.target_end).max().unwrap();
+        let assembly_target_start = alignments.iter().map(|a| a.target_start).min().unwrap();
+        let assembly_target_end = alignments.iter().map(|a| a.target_end).max().unwrap();
 
         let (query_start, query_end) = match strand {
             Strand::Forward => (
@@ -225,12 +231,14 @@ impl<'a> Assembly<'a> {
             Strand::Unset => panic!(),
         };
 
-        let mut alignment_ranges_by_id = HashMap::new();
+        let mut alignment_ranges = vec![];
+
         if alignments.len() == 1 {
-            alignment_ranges_by_id.insert(
-                alignments[0].id,
-                vec![[alignments[0].target_start, alignments[0].target_end]],
-            );
+            alignment_ranges.push(AlignmentRange {
+                ali_id: alignments[0].id,
+                col_start: alignments[0].target_start - assembly_target_start,
+                col_end: alignments[0].target_end - assembly_target_start,
+            });
         } else {
             let min_target_start = alignments
                 .iter()
@@ -345,22 +353,23 @@ impl<'a> Assembly<'a> {
                 // filter the skip traces
                 .filter(|(i, _)| *i != 0)
                 .for_each(|(i, range)| {
-                    let ranges = alignment_ranges_by_id
-                        .entry(alignments[i - 1].id)
-                        .or_default();
-                    ranges.push(*range);
+                    alignment_ranges.push(AlignmentRange {
+                        ali_id: alignments[i - 1].id,
+                        col_start: range[0],
+                        col_end: range[1],
+                    });
                 });
         };
 
         Self {
             query_id: alignments[0].query_id,
             strand,
-            target_start,
-            target_end,
+            target_start: assembly_target_start,
+            target_end: assembly_target_end,
             query_start,
             query_end,
             alignments,
-            alignment_ranges_by_id,
+            alignment_ranges,
         }
     }
 }
