@@ -29,34 +29,17 @@ pub struct LineWidths {
 
 impl Annotation {
     pub fn new(segment: &TraceSegment) -> Self {
-        // let target_start = start_step.col_idx + group_target_start;
-        // let target_end = end_step.col_idx + group_target_start;
-        // let target_length = (target_end - target_start + 1) as f64;
-
-        // Self {
-        //     target_name: target_name.to_string(),
-        //     target_start,
-        //     target_end,
-        //     query_name: query_name.to_string(),
-        //     query_start: start_step.consensus_pos,
-        //     query_end: end_step.consensus_pos,
-        //     strand: start_step.strand,
-        //     confidence: confidence_sum / target_length,
-        //     join_id: end_step.join_id,
-        //     region_id,
-        // }
-
         Self {
-            target_name: todo!(),
-            target_start: todo!(),
-            target_end: todo!(),
-            query_name: todo!(),
-            query_start: todo!(),
-            query_end: todo!(),
-            strand: todo!(),
-            confidence: todo!(),
-            join_id: todo!(),
-            region_id: todo!(),
+            target_name: "temp".to_string(),
+            target_start: segment.col_start,
+            target_end: segment.col_end,
+            query_name: "temp".to_string(),
+            query_start: 0,
+            query_end: 0,
+            strand: Strand::Forward,
+            confidence: segment.confidence,
+            join_id: 0,
+            region_id: 0,
         }
     }
 

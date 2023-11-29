@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 
 use crate::{
-    alignment::{self, Strand},
+    alignment::Strand,
     alphabet::{GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL},
     chunks::ProximityGroup,
     collapse::AssemblyGroup,
-    Args,
 };
 
 /// This is an auxiliary data structure that
@@ -179,7 +178,8 @@ impl MatrixDef {
                         .get(&ali.id)
                         .expect("failed to find consensus positions");
 
-                    let new_matrix_col_idx = range.col_start + assembly_col_start_in_matrix;
+                    let new_matrix_col_idx =
+                        range.assembly_col_start + assembly_col_start_in_matrix;
 
                     // place the last consensus position of the previous alignment
                     // at every empty position leading up to this alignment
@@ -192,7 +192,7 @@ impl MatrixDef {
                         },
                     );
 
-                    (range.col_start..=range.col_end)
+                    (range.assembly_col_start..=range.assembly_col_end)
                         .map(|assembly_col_idx| {
                             (
                                 assembly_col_idx,
@@ -205,8 +205,8 @@ impl MatrixDef {
                             ali_ids_by_col[matrix_col_idx].push(ali.id);
                         });
 
-                    last_matrix_col_idx = range.col_end + assembly_col_start_in_matrix;
-                    last_consensus_position = consensus_positions[range.col_end];
+                    last_matrix_col_idx = range.assembly_col_end + assembly_col_start_in_matrix;
+                    last_consensus_position = consensus_positions[range.assembly_col_end];
                 });
             });
 
@@ -460,7 +460,7 @@ where
 
     pub fn initial_active_cols(&self) -> Vec<usize> {
         (0..self.num_cols())
-            .filter(|&col_idx| self.def.active_rows_by_col[col_idx].len() > 1)
+            .filter(|&col_idx| self.def.ali_ids_by_col[col_idx].iter().any(|&id| id != 0))
             .collect()
     }
 

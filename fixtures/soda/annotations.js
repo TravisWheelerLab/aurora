@@ -218,7 +218,10 @@ function run(data) {
 
     let genome = new soda.Chart({
       ...chartConf,
+      upperPadSize: 25,
       draw(params) {
+        this.addAxis();
+
         soda.sequence({
           chart: this,
           selector: "genome",
@@ -427,7 +430,7 @@ function run(data) {
 
         return pass;
       };
-
+      
       let filteredParams = {
         ...params,
         assemblies: params.assemblies.filter(queryFilter),
@@ -574,6 +577,9 @@ function run(data) {
     for (const [iter, line] of traceStrings.entries()) {
       let iterStrings = line.split("|");
       for (const [idx, seg] of iterStrings.entries()) {
+        if (seg == "") {
+          continue;
+        }
         let tokens = seg.split(",");
         let start = parseInt(tokens[0]) + targetStart;
         let end = parseInt(tokens[1]) + targetStart;
@@ -589,7 +595,6 @@ function run(data) {
         });
       }
     }
-
     return { trace };
   }
 

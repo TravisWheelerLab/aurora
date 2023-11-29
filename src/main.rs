@@ -93,6 +93,15 @@ pub struct Args {
     )]
     pub min_fragment_length: usize,
 
+    ///
+    #[arg(
+        short = 'F',
+        long = "fudge-distance",
+        default_value = "10",
+        value_name = "n"
+    )]
+    pub fudge_distance: usize,
+
     /// Produce visualization output
     #[arg(long = "viz")]
     pub viz: bool,
@@ -172,12 +181,10 @@ fn main() -> Result<()> {
 
     proximity_groups
         .iter()
-        // .inspect(|g| println!("{g:?}"))
+        .inspect(|g| println!("{g:?}"))
         .enumerate()
         .for_each(|(region_idx, group)| {
             run_assembly_pipeline(group, &alignment_data, region_idx, args.clone());
-            // run_pipeline(group, &alignment_data, region_idx, &args);
-            panic!();
         });
     Ok(())
 }

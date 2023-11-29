@@ -638,7 +638,7 @@ pub fn trace_segments(trace: &Trace2) -> Vec<TraceSegment> {
         .iter()
         .zip(trace.iter().skip(1))
         .for_each(|(step, next_step)| {
-            if step.join_id != next_step.join_id {
+            if step.ali_id != next_step.ali_id || step.col_idx + 1 != next_step.col_idx {
                 debug_assert_eq!(start_step.join_id, step.join_id);
                 debug_assert_eq!(start_step.row_idx, step.row_idx);
                 trace_segments.push(TraceSegment {

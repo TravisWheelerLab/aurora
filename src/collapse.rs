@@ -47,8 +47,10 @@ pub fn assembly_graph<'a>(
                 return;
             }
 
-            let within_target_distance =
-                b.target_start.saturating_sub(a.target_end) < args.target_join_distance;
+            let target_distance = b.target_start as isize - a.target_end as isize;
+
+            let within_target_distance_threshold =
+                target_distance < args.target_join_distance as isize;
 
             let consensus_distance = match a.strand {
                 Strand::Forward => b.query_start as isize - a.query_end as isize,
@@ -57,11 +59,12 @@ pub fn assembly_graph<'a>(
             };
 
             // TODO: PARAMETERIZE THIS
-            let consensus_colinear = consensus_distance > -20;
+            let consensus_is_colinear = consensus_distance > -20;
 
-            let weight = consensus_distance.abs() as f64;
+            // let weight = consensus_distance.abs() as f64;
+            let weight = target_distance.abs() as f64;
 
-            if within_target_distance && consensus_colinear {
+            if within_target_distance_threshold && consensus_is_colinear {
                 let a_edges = graph.entry(a).or_default();
                 a_edges.push(Edge {
                     ali_to: b,
@@ -192,8 +195,10 @@ pub fn assembly<'a>(
 
 pub struct AlignmentRange {
     pub ali_id: usize,
-    pub col_start: usize,
-    pub col_end: usize,
+    /// The start column of the usage of the alignment relative to the assembly
+    pub assembly_col_start: usize,
+    /// The end column of the usage of the alignment relative to the assembly
+    pub assembly_col_end: usize,
 }
 
 ///
@@ -236,8 +241,8 @@ impl<'a> Assembly<'a> {
         if alignments.len() == 1 {
             alignment_ranges.push(AlignmentRange {
                 ali_id: alignments[0].id,
-                col_start: alignments[0].target_start - assembly_target_start,
-                col_end: alignments[0].target_end - assembly_target_start,
+                assembly_col_start: alignments[0].target_start - assembly_target_start,
+                assembly_col_end: alignments[0].target_end - assembly_target_start,
             });
         } else {
             let min_target_start = alignments
@@ -355,8 +360,8 @@ impl<'a> Assembly<'a> {
                 .for_each(|(i, range)| {
                     alignment_ranges.push(AlignmentRange {
                         ali_id: alignments[i - 1].id,
-                        col_start: range[0],
-                        col_end: range[1],
+                        assembly_col_start: range[0],
+                        assembly_col_end: range[1],
                     });
                 });
         };
