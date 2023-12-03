@@ -37,7 +37,7 @@ impl Annotation {
             query_start: 0,
             query_end: 0,
             strand: Strand::Forward,
-            confidence: segment.confidence,
+            confidence: 0.0,
             join_id: 0,
             region_id: 0,
         }

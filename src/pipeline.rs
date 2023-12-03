@@ -138,10 +138,32 @@ pub fn run_assembly_pipeline(
         active_cols = new_active_cols;
     }
 
-    let annotations: Vec<Annotation> = trace_conclusive
+    let mut annotations: Vec<Annotation> = trace_conclusive
         .iter()
-        .flat_map(|iter_segments| iter_segments.iter().map(Annotation::new))
-        .collect();
+        .flat_map(|iter_segments| {
+            iter_segments.iter().map(|s| Annotation {
+                target_name: alignment_data.target_name_map.get(group.target_id).clone(),
+                target_start: s.col_start + group.target_start,
+                target_end: s.col_end + group.target_start,
+                query_name: alignment_data.query_name_map.get(s.query_id).clone(),
+                query_start: viterbi_matrix.consensus_position(s.row_idx, s.col_start),
+                query_end: viterbi_matrix.consensus_position(s.row_idx, s.col_end),
+                strand: viterbi_matrix.strand_of_row(s.row_idx),
+                confidence: (s.col_start..=s.col_end)
+                    .map(|col_idx| collapsed_confidence_matrix.get(s.row_idx, col_idx))
+                    .sum::<f64>()
+                    / (s.col_end - s.col_start + 1) as f64,
+                join_id: s.row_idx,
+                region_id: region_idx,
+            })
+        })
+        .collect_vec();
+
+    annotations.sort_by_key(|r| (r.join_id, r.target_start));
+    annotations.sort_by_key(|r| r.target_start);
+    annotations.retain(|r| r.query_name != "skip");
+
+    Annotation::write(&annotations, &mut std::io::stdout());
 
     if args.viz {
         let data = AdjudicationSodaData2::new(

@@ -26,7 +26,7 @@ struct AssemblyStuff<'a> {
 pub fn split_trace(
     trace_segments: Vec<TraceSegment>,
     assembly_group: &AssemblyGroup,
-    active_cols: &Vec<usize>,
+    active_cols: &[usize],
     confidence_avg_by_id: &HashMap<usize, f64>,
     args: &Args,
 ) -> (
@@ -36,7 +36,7 @@ pub fn split_trace(
     Vec<usize>,
     Vec<usize>,
 ) {
-    let mut rows_in_trace = trace_segments
+    let rows_in_trace = trace_segments
         .iter()
         .map(|s| s.row_idx)
         // we don't want to include
@@ -265,29 +265,29 @@ pub fn split_trace(
                 if slice_start > segment.col_start {
                     conclusive.push(TraceSegment {
                         query_id: segment.query_id,
+                        ali_id: segment.ali_id,
                         row_idx: segment.row_idx,
                         col_start: segment.col_start,
                         col_end: slice_start - 1,
-                        confidence: segment.confidence,
                     })
                 }
 
                 if slice_end < segment.col_end {
                     conclusive.push(TraceSegment {
                         query_id: segment.query_id,
+                        ali_id: segment.ali_id,
                         row_idx: segment.row_idx,
                         col_start: slice_end + 1,
                         col_end: segment.col_end,
-                        confidence: segment.confidence,
                     })
                 }
 
                 ambiguous.push(TraceSegment {
                     query_id: segment.query_id,
+                    ali_id: segment.ali_id,
                     row_idx: segment.row_idx,
                     col_start: slice_start,
                     col_end: slice_end,
-                    confidence: segment.confidence,
                 });
             }
         });

@@ -473,8 +473,8 @@ where
     }
 
     pub fn ali_id(&self, row: usize, col: usize) -> usize {
-        let sparse_row_index = self.logical_to_sparse_row_idx(row, col);
-        self.def.ali_ids_by_col[col][sparse_row_index]
+        let sparse_row_idx = self.logical_to_sparse_row_idx(row, col);
+        self.def.ali_ids_by_col[col][sparse_row_idx]
     }
 
     pub fn ali_id_sparse(&self, sparse_row: usize, col: usize) -> usize {
@@ -487,6 +487,11 @@ where
 
     pub fn strand_of_cell_sparse(&self, sparse_row: usize, col: usize) -> Strand {
         self.def.strand_by_logical_row[self.sparse_to_logical_row_idx(sparse_row, col)]
+    }
+
+    pub fn consensus_position(&self, row: usize, col: usize) -> usize {
+        let sparse_row_idx = self.logical_to_sparse_row_idx(row, col);
+        self.def.consensus_positions_by_col[col][sparse_row_idx]
     }
 
     pub fn consensus_position_sparse(&self, sparse_row: usize, col: usize) -> usize {

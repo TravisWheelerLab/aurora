@@ -618,10 +618,10 @@ pub type Trace2 = Vec<TraceStep2>;
 ///
 pub struct TraceSegment {
     pub query_id: usize,
+    pub ali_id: usize,
     pub row_idx: usize,
     pub col_start: usize,
     pub col_end: usize,
-    pub confidence: f64,
 }
 
 ///
@@ -632,34 +632,31 @@ pub fn trace_segments(trace: &Trace2) -> Vec<TraceSegment> {
     let mut trace_segments: Vec<TraceSegment> = vec![];
 
     let mut start_step = &trace[0];
-    let mut confidence_sum = trace[0].confidence;
     trace
         .iter()
         .zip(trace.iter().skip(1))
         .for_each(|(step, next_step)| {
             if step.ali_id != next_step.ali_id || step.col_idx + 1 != next_step.col_idx {
                 debug_assert_eq!(start_step.row_idx, step.row_idx);
+                debug_assert_eq!(start_step.ali_id, step.ali_id);
                 trace_segments.push(TraceSegment {
                     query_id: step.query_id,
+                    ali_id: step.ali_id,
                     row_idx: step.row_idx,
                     col_start: start_step.col_idx,
                     col_end: step.col_idx,
-                    confidence: confidence_sum / (step.col_idx - start_step.col_idx + 1) as f64,
                 });
                 start_step = &next_step;
-                confidence_sum = 0.0;
             }
-            confidence_sum += next_step.confidence;
         });
 
     let last_step = trace.last().unwrap();
-    confidence_sum += last_step.confidence;
     trace_segments.push(TraceSegment {
         query_id: last_step.query_id,
+        ali_id: last_step.ali_id,
         row_idx: last_step.row_idx,
         col_start: start_step.col_idx,
         col_end: last_step.col_idx,
-        confidence: confidence_sum / (last_step.col_idx - start_step.col_idx + 1) as f64,
     });
 
     trace_segments
