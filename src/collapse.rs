@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashMap};
+use std::collections::HashMap;
 
 use itertools::Itertools;
 
@@ -87,7 +87,6 @@ pub fn assembly_graph<'a>(
 
 pub fn assembly<'a>(
     graph: &mut HashMap<&'a Alignment, Vec<Edge<'a>>>,
-    confidence_avg_by_id: &HashMap<usize, f64>,
     confidence_by_id: &HashMap<usize, Vec<f64>>,
 ) -> Vec<Assembly<'a>> {
     // take all indices of the remaining alignment tuples
@@ -439,7 +438,7 @@ impl<'a> AssemblyGroup<'a> {
                 // links before we start messing with the graph
                 let mut fwd_links = vec![];
                 let mut rev_links = vec![];
-                if args.viz {
+                if args.assembly_viz {
                     fwd_links = fwd_graph
                         .iter()
                         .flat_map(|(ali_from, edges)| {
@@ -465,11 +464,9 @@ impl<'a> AssemblyGroup<'a> {
                         .collect_vec();
                 }
 
-                let mut fwd_assemblies =
-                    assembly(&mut fwd_graph, confidence_avg_by_id, confidence_by_id);
+                let mut fwd_assemblies = assembly(&mut fwd_graph, confidence_by_id);
 
-                let mut rev_assemblies =
-                    assembly(&mut rev_graph, confidence_avg_by_id, confidence_by_id);
+                let mut rev_assemblies = assembly(&mut rev_graph, confidence_by_id);
 
                 // check that the sum of assembly lengths is equal
                 // to the number of alignments we started with
@@ -489,7 +486,7 @@ impl<'a> AssemblyGroup<'a> {
                     rev_ali.len() == cnt
                 });
 
-                if args.viz {
+                if args.assembly_viz {
                     if !fwd_ali.is_empty() {
                         let fwd_data = AssemblySodaData::new(
                             &fwd_assemblies,

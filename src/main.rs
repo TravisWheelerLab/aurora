@@ -11,6 +11,7 @@ mod segments;
 mod split;
 mod substitution_matrix;
 mod support;
+mod tandem_repeats;
 mod viterbi;
 mod viz;
 mod windowed_scores;
@@ -28,7 +29,9 @@ use chunks::ProximityGroup;
 use anyhow::Result;
 use clap::Parser;
 
-use crate::{chunks::validate_groups, pipeline::run_assembly_pipeline};
+use crate::{
+    chunks::validate_groups, pipeline::run_assembly_pipeline, tandem_repeats::TandemRepeat,
+};
 
 #[derive(Debug, Parser, Clone)]
 #[command(name = "aurora")]
@@ -102,9 +105,17 @@ pub struct Args {
     )]
     pub fudge_distance: usize,
 
+    /// The path to ULTRA output
+    #[arg(short = 'U', long = "ultra-file", value_name = "path")]
+    pub ultra_file_path: Option<PathBuf>,
+
     /// Produce visualization output
     #[arg(long = "viz")]
     pub viz: bool,
+
+    /// Produce visualization output
+    #[arg(long = "assembly-viz")]
+    pub assembly_viz: bool,
 
     /// The path to the directory to which
     /// vizualization output will be written
@@ -173,6 +184,16 @@ fn main() -> Result<()> {
 
     let proximity_groups =
         ProximityGroup::from_alignment_data(&alignment_data, args.target_join_distance);
+
+    let ultra_data = match args.ultra_file_path {
+        Some(ref path) => Some(TandemRepeat::from_ultra_json(
+            File::open(path)?,
+            &alignment_data.target_name_map,
+        )),
+        None => None,
+    };
+
+    panic!();
 
     debug_assert!(validate_groups(
         &proximity_groups,
