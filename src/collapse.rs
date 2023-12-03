@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{cmp::Ordering, collections::HashMap};
 
 use itertools::Itertools;
 
@@ -93,14 +93,27 @@ pub fn assembly<'a>(
     // take all indices of the remaining alignment tuples
     let mut remaining: Vec<&Alignment> = graph.keys().copied().collect_vec();
 
-    // sort them by their respective confidence values
+    // sort the edge lists by edge weight
+    graph
+        .values_mut()
+        .for_each(|edge_list| edge_list.sort_by(|a, b| a.weight.partial_cmp(&b.weight).unwrap()));
+
+    // sort the remaining alignments by their minimum edge weights
     remaining.sort_by(|a, b| {
-        confidence_avg_by_id
-            .get(&a.id)
-            .unwrap()
-            .partial_cmp(confidence_avg_by_id.get(&b.id).unwrap())
-            .expect("failed to compare confidences")
+        let x = match graph.get(a).unwrap().first() {
+            Some(e) => e.weight,
+            None => f64::INFINITY,
+        };
+
+        let y = match graph.get(b).unwrap().first() {
+            Some(e) => e.weight,
+            None => f64::INFINITY,
+        };
+
+        x.partial_cmp(&y).unwrap()
     });
+
+    remaining.reverse();
 
     let mut assemblies: Vec<Assembly> = vec![];
 
