@@ -11,7 +11,6 @@ mod segments;
 mod split;
 mod substitution_matrix;
 mod support;
-mod tandem_repeats;
 mod viterbi;
 mod viz;
 mod windowed_scores;
@@ -29,9 +28,7 @@ use chunks::ProximityGroup;
 use anyhow::Result;
 use clap::Parser;
 
-use crate::{
-    chunks::validate_groups, pipeline::run_assembly_pipeline, tandem_repeats::TandemRepeat,
-};
+use crate::{chunks::validate_groups, pipeline::run_assembly_pipeline};
 
 #[derive(Debug, Parser, Clone)]
 #[command(name = "aurora")]
@@ -180,20 +177,16 @@ fn main() -> Result<()> {
     let alignments_file = File::open(&args.alignments)?;
     let matrices_file = File::open(&args.matrices)?;
 
-    let alignment_data = AlignmentData::from_caf_and_matrices(alignments_file, matrices_file)?;
-
-    let proximity_groups =
-        ProximityGroup::from_alignment_data(&alignment_data, args.target_join_distance);
-
-    let ultra_data = match args.ultra_file_path {
-        Some(ref path) => Some(TandemRepeat::from_ultra_json(
-            File::open(path)?,
-            &alignment_data.target_name_map,
-        )),
+    let ultra_file = match args.ultra_file_path {
+        Some(ref path) => Some(File::open(path)?),
         None => None,
     };
 
-    panic!();
+    let alignment_data =
+        AlignmentData::from_caf_and_ultra_and_matrices(alignments_file, ultra_file, matrices_file)?;
+
+    let proximity_groups =
+        ProximityGroup::from_alignment_data(&alignment_data, args.target_join_distance);
 
     debug_assert!(validate_groups(
         &proximity_groups,
@@ -206,7 +199,6 @@ fn main() -> Result<()> {
         .enumerate()
         .for_each(|(region_idx, group)| {
             run_assembly_pipeline(group, &alignment_data, region_idx, args.clone());
-            panic!();
         });
     Ok(())
 }

@@ -1,4 +1,6 @@
 use anyhow::Result;
+use itertools::Itertools;
+use serde::Deserialize;
 use std::io::{BufRead, BufReader, Read};
 use std::{fmt, hash};
 
@@ -315,6 +317,30 @@ impl<T: std::cmp::PartialEq + fmt::Debug> fmt::Debug for VecMap<T> {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct TandemRepeat {
+    pub target_start: usize,
+    pub target_end: usize,
+    pub consensus_pattern: String,
+    pub scores: Vec<f64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct UltraJson {
+    pub repeats: Vec<UltraRecord>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct UltraRecord {
+    pub sequence_name: String,
+    pub start: usize,
+    pub length: usize,
+    pub consensus: String,
+    pub position_score_deltas: Vec<f64>,
+}
+
 /// A group of alignments that share
 /// the same target sequence
 pub struct TargetGroup {
@@ -322,6 +348,7 @@ pub struct TargetGroup {
     pub target_start: usize,
     pub target_end: usize,
     pub alignments: Vec<Alignment>,
+    pub tandem_repeats: Vec<TandemRepeat>,
 }
 
 /// This holds all input alignments along
@@ -335,7 +362,11 @@ pub struct AlignmentData {
 }
 
 impl AlignmentData {
-    pub fn from_caf_and_matrices<C: Read, M: Read>(caf: C, matrices: M) -> Result<Self> {
+    pub fn from_caf_and_ultra_and_matrices<C: Read, U: Read, M: Read>(
+        caf: C,
+        ultra: Option<U>,
+        matrices: M,
+    ) -> Result<Self> {
         // Robert's notes on CAF:
         //   0: score - bit, raw, complexity adjusted or evalue.
         //   1: Percent Substitution - Percent of mismatched non-gap characters in the alignment
@@ -428,6 +459,7 @@ impl AlignmentData {
                             target_start,
                             target_end,
                             alignments: vec![],
+                            tandem_repeats: vec![],
                         });
                         target_groups.last_mut().unwrap()
                     }
@@ -456,6 +488,24 @@ impl AlignmentData {
                     substitution_matrix_id,
                 });
             });
+
+        if let Some(buf) = ultra {
+            let buf_reader = BufReader::new(buf);
+            let ultra_json: UltraJson = serde_json::from_reader(buf_reader)?;
+            ultra_json.repeats.into_iter().for_each(|r| {
+                let target_id = target_name_map.key(&r.sequence_name);
+
+                if let Some(group) = target_groups.get_mut(target_id) {
+                    group.tandem_repeats.push(TandemRepeat {
+                        // TODO: figure out if ultra uses 0- or 1-based indexing
+                        target_start: r.start,
+                        target_end: r.start + r.length - 1,
+                        consensus_pattern: r.consensus,
+                        scores: r.position_score_deltas,
+                    })
+                }
+            });
+        }
 
         target_groups.iter_mut().for_each(|g| {
             g.alignments.sort_by(|a, b| {
