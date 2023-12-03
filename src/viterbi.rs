@@ -604,7 +604,6 @@ pub struct TraceStep2 {
     pub strand: Strand,
     pub query_id: usize,
     pub ali_id: usize,
-    pub join_id: usize,
 }
 
 ///
@@ -639,7 +638,6 @@ pub fn trace_segments(trace: &Trace2) -> Vec<TraceSegment> {
         .zip(trace.iter().skip(1))
         .for_each(|(step, next_step)| {
             if step.ali_id != next_step.ali_id || step.col_idx + 1 != next_step.col_idx {
-                debug_assert_eq!(start_step.join_id, step.join_id);
                 debug_assert_eq!(start_step.row_idx, step.row_idx);
                 trace_segments.push(TraceSegment {
                     query_id: step.query_id,
@@ -672,7 +670,6 @@ pub fn traceback2(
     confidence_matrix: &Matrix<f64>,
     sources: &Matrix<usize>,
     active_cols: &[usize],
-    join_id_start: usize,
 ) -> Trace2 {
     let col_idx = *active_cols
         .last()
@@ -696,9 +693,6 @@ pub fn traceback2(
     let confidence = confidence_matrix.get_sparse(sparse_row_idx, col_idx);
     let strand = viterbi_matrix.strand_of_cell_sparse(sparse_row_idx, col_idx);
 
-    let join_id = if query_id == 0 { 0 } else { join_id_start };
-    let mut join_id_cnt = join_id;
-
     let mut trace = vec![TraceStep2 {
         sparse_row_idx,
         row_idx,
@@ -708,7 +702,6 @@ pub fn traceback2(
         strand,
         query_id,
         ali_id,
-        join_id,
     }];
 
     active_cols
@@ -731,15 +724,6 @@ pub fn traceback2(
             let confidence = confidence_matrix.get_sparse(sparse_row_idx, col_idx);
             let strand = viterbi_matrix.strand_of_cell_sparse(sparse_row_idx, col_idx);
 
-            let join_id = if query_id == 0 {
-                0
-            } else if prev_step.row_idx == row_idx {
-                join_id_cnt
-            } else {
-                join_id_cnt += 1;
-                join_id_cnt
-            };
-
             trace.push(TraceStep2 {
                 sparse_row_idx,
                 row_idx,
@@ -749,7 +733,6 @@ pub fn traceback2(
                 strand,
                 query_id,
                 ali_id,
-                join_id,
             })
         });
 

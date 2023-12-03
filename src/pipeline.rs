@@ -80,8 +80,6 @@ pub fn run_assembly_pipeline(
 
     // the initial active cols just removes the dead space between alignments
     let mut active_cols = collapsed_confidence_matrix.initial_active_cols();
-    let mut join_id_cnt = 0usize;
-    let mut relevant_rows: Vec<Vec<usize>> = vec![];
     let mut trace_conclusive: Vec<Vec<TraceSegment>> = vec![];
     let mut trace_ambiguous: Vec<Vec<TraceSegment>> = vec![];
     let mut resolved_assembly_rows: Vec<Vec<usize>> = vec![];
@@ -104,19 +102,12 @@ pub fn run_assembly_pipeline(
             &collapsed_confidence_matrix,
             &sources_matrix,
             &active_cols,
-            join_id_cnt,
         );
 
         // we should always have one trace step for every active column
         debug_assert_eq!(trace.len(), active_cols.len());
 
         let trace_segments = trace_segments(&trace);
-
-        join_id_cnt = trace
-            .iter()
-            .map(|t| t.join_id)
-            .max()
-            .expect("trace is empty");
 
         let (ambiguous, conclusive, resolved, unresolved, competed) = split_trace(
             trace_segments,
@@ -238,14 +229,6 @@ pub fn run_pipeline(
             alignment_data.query_name_map.size(),
             args.consensus_join_distance,
         );
-
-        // let data = hyper_traceback(&sources_matrix, group.alignments, alignment_data);
-        // write_soda_html(
-        //     &data,
-        //     "./fixtures/soda/trace-template.html",
-        //     "./fixtures/soda/trace.js",
-        //     "./trace.html",
-        // )n;
 
         let trace = traceback(&viterbi_matrix, &sources_matrix, &active_cols, join_id_cnt);
         join_id_cnt = trace
