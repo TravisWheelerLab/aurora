@@ -30,25 +30,28 @@ function run(data) {
   let values = new Map();
 
   let options = {
-    colorScale: d3.scaleLinear().domain([0.0, 1.0]).range(["white", "black"]),
-    segments: false,
-    labels: true,
-    confMin: 0.0,
-    confMax: 1.0,
-    confThresh: 0.0,
-    aliThresh: 300,
-    traceAtTop: true,
-    assemblyAtTop: false,
-    filters: [],
-    sidebarExpanded: false,
     sidebarMinWidth: 30,
     sidebarMaxWidth: 200,
   };
 
+  let state = {
+    sidebarExpanded: false,
+    colorScale: d3.scaleLinear().domain([0.0, 1.0]).range(["white", "black"]),
+    labels: true,
+    traceAtTop: true,
+    assemblyAtTop: false,
+    confThresh: 0.0,
+    confMin: 0.0,
+    confMax: 1.0,
+    aliThresh: 300,
+    regex: undefined,
+    traceIteration: undefined,
+    numTraceIterations: undefined,
+    onlyTrace: true,
+    traceRowsByIter: undefined,
+  }
+
   let rowToQuery = [];
-  let rowToLength = [];
-  let rowToStrand = [];
-  let rowToConf = [];
 
   let params = prepareData();
   let charts = initializeCharts();
@@ -59,42 +62,49 @@ function run(data) {
 
   function toggleSidebar() {
     let sidebar = document.querySelector("div#sidebar");
-    if (options.sidebarExpanded === true) {
+    if (state.sidebarExpanded === true) {
       sidebar.style.width = `${options.sidebarMinWidth}px`;
-      options.sidebarExpanded = false;
+      state.sidebarExpanded = false;
     } else {
       sidebar.style.width = `${options.sidebarMaxWidth}px`;
-      options.sidebarExpanded = true;
+      state.sidebarExpanded = true;
     }
   }
 
   function handleEvent(e) {
-    let sliders = ["confMin", "confMax", "confThresh", "aliThresh"];
-    let toggles = ["traceAtTop", "labels", "segments"];
-    let text = ["filters"];
+    let toggles = ["traceAtTop", "labels", "onlyTrace"];
+    let numeric = ["confThresh", "aliThresh"]
+    let text = ["regex"];
+    let traceButtons = [];
+    for (let i = 0; i < state.numTraceIterations; i++) {
+      traceButtons.push(`traceButton${i}`);
+    }
+
     let input = e.target.id;
     let value = e.target.value;
 
-    if (sliders.indexOf(input) >= 0) {
-      let valueNum = parseFloat(value);
-      options[input] = valueNum;
-
-      let valueNode = values.get(input);
-      valueNode.textContent = value;
-    } else if (toggles.indexOf(input) >= 0) {
+    if (toggles.indexOf(input) >= 0) {
       let toggleNode = inputs.get(input);
       let checked = toggleNode.checked;
-
-      options[input] = checked;
+      state[input] = checked;
+    } else if (numeric.indexOf(input) >= 0) {
+      state[input] = parseFloat(value);
     } else if (text.indexOf(input) >= 0) {
-      options[input] = value.split("\n");
+      if (value != "") {
+        state[input] = new RegExp(value);
+      } else {
+        state[input] = undefined;
+      }
+    } else if (traceButtons.indexOf(input) >= 0) {
+      let traceIter = traceButtons.indexOf(input);
+      state.traceIteration = traceIter;
     } else {
       console.error("unknown input: ", input);
     }
 
-    options.colorScale = d3
+    state.colorScale = d3
       .scaleLinear()
-      .domain([options.confMin, options.confMax])
+      .domain([state.confMin, state.confMax])
       .range(["white", "black"]);
 
     clearTimeout(optionTimeoutId);
@@ -107,22 +117,49 @@ function run(data) {
     let toggle = document.querySelector("span#toggle");
     toggle.addEventListener("click", toggleSidebar);
 
-    inputs.set("confMin", document.querySelector("input#confMin"));
-    values.set("confMin", document.querySelector("div#confMin"));
+    let confThresh = document.querySelector("input#confThresh");
+    confThresh.value = state.confThresh;
+    inputs.set("confThresh", confThresh);
 
-    inputs.set("confMax", document.querySelector("input#confMax"));
-    values.set("confMax", document.querySelector("div#confMax"));
+    let aliThresh = document.querySelector("input#aliThresh");
+    aliThresh.value = state.aliThresh;
+    inputs.set("aliThresh", aliThresh);
 
-    inputs.set("confThresh", document.querySelector("input#confThresh"));
-    values.set("confThresh", document.querySelector("div#confThresh"));
-
-    inputs.set("aliThresh", document.querySelector("input#aliThresh"));
-    values.set("aliThresh", document.querySelector("div#aliThresh"));
-
-    inputs.set("segments", document.querySelector("input#segments"));
+    inputs.set("onlyTrace", document.querySelector("input#onlyTrace"));
     inputs.set("labels", document.querySelector("input#labels"));
     inputs.set("traceAtTop", document.querySelector("input#traceAtTop"));
-    inputs.set("filters", document.querySelector("textArea#filters"));
+    inputs.set("regex", document.querySelector("input#regex"));
+
+    // grab the entire sidebar
+    let innerSidebarDiv = document.querySelector("div.inner-sidebar");
+
+    // create a div for the trace selection widget
+    let traceSelectionWidget = document.createElement("div");
+    traceSelectionWidget.className = "widget-vertical";
+
+    // shove that widget into the sidebar
+    innerSidebarDiv.appendChild(traceSelectionWidget);
+
+    // programmatically create a radio button for each trace iteration
+    for (let i = 0; i < state.numTraceIterations; i++) {
+      let radioDiv = document.createElement('div');
+      let radioButton = document.createElement('input');
+      radioButton.type = 'radio';
+      radioButton.name = 'traceButtonGroup';
+      radioButton.id = `traceButton${i}`;
+
+      let label = document.createElement('label');
+      label.htmlFor = `traceButton${i}`;
+      label.appendChild(document.createTextNode(`Trace ${i}`));
+
+      radioDiv.appendChild(radioButton);
+      radioDiv.appendChild(label);
+
+      traceSelectionWidget.append(radioDiv);
+    }
+    document.querySelector(`#traceButton0`).checked = true;
+
+    inputs.set("trace", traceSelectionWidget);
 
     inputs.forEach((input) => input.addEventListener("input", handleEvent));
   }
@@ -159,7 +196,7 @@ function run(data) {
         // sneaky: rewrite the layout object's row retrieval
         //         function so that it works for the annotations
         //         that the proxy annotations correspond to
-        this.layout.row = function (d) {
+        this.layout.row = function(d) {
           let id_tokens = d.a.id.split("-");
           let id = `${id_tokens[0]}-${id_tokens[1]}`;
           let row = this.rowMap.get(id);
@@ -241,12 +278,12 @@ function run(data) {
 
         let traceQueryIds = [];
 
-        if (options.traceAtTop) {
-          traceQueryIds = [...new Set(params.trace.map((a) => a.queryId))];
+        if (state.traceAtTop) {
+          traceQueryIds = [...new Set(params.conclusiveTrace.concat(params.ambiguousTrace).map((a) => a.queryId))];
         }
-        
+
         let assemblyQueryIds = [];
-        if (options.assemblyAtTop) {
+        if (state.assemblyAtTop) {
           assemblyQueryIds = [...new Set(params.assemblies.filter((a) => a.size > 1).map((a) => a.queryId))];
           assemblyQueryIds = assemblyQueryIds.filter(
             (id) => traceQueryIds.indexOf(id) === -1,
@@ -265,7 +302,7 @@ function run(data) {
         let layoutFn = (id) => {
           let queryAssemblies = params.assemblies.filter((a) => a.queryId == id);
           let subLayout = soda.intervalGraphLayout(queryAssemblies);
-          
+
           queryAssemblies.forEach((a) => {
             let subRow = subLayout.row({ a });
             dpRowToChartRow.set(a.row, rowCount + subRow)
@@ -302,6 +339,20 @@ function run(data) {
           y,
           width: (d) => this.xScale(d.a.end) - this.xScale(d.a.start + 1),
           height: 2,
+          fillColor: (d) => {
+            if (params.competedAssemblyRows[state.traceIteration].indexOf(d.a.row) >= 0) {
+              return "red";
+            }
+            else if (params.unresolvedAssemblyRows[state.traceIteration].indexOf(d.a.row) >= 0) {
+              return "orange";
+            }
+            else if (params.resolvedAssemblyRows[state.traceIteration].indexOf(d.a.row) >= 0) {
+              return "green";
+            }
+            else {
+              return "black";
+            }
+          },
         });
 
         // alignments
@@ -313,12 +364,11 @@ function run(data) {
           y,
           width,
           height: 12,
-          fillColor: (d) => params.assemblyHits[d.a.row] ? "green" : "red",
           fillOpacity: 0.05,
           strokeColor: "black",
         });
 
-        if (options.labels) {
+        if (state.labels) {
           let exists = new Map();
           params.proxy.forEach((a) => exists.set(a.query, [false, a.row]));
 
@@ -346,7 +396,7 @@ function run(data) {
           });
         }
 
-        if (domainWidth < options.aliThresh) {
+        if (domainWidth < state.aliThresh) {
           let annotations = domainFilter(params.sequences);
           soda.sequence({
             chart: this,
@@ -361,14 +411,27 @@ function run(data) {
         // trace
         soda.rectangle({
           chart: this,
-          selector: "trace",
-          annotations: params.trace,
+          selector: "conclusive-trace",
+          annotations: params.conclusiveTrace,
           x,
           y,
           width,
           height: 3,
           fillColor: "none",
-          strokeColor: (d) => traceColors[d.a.traceIter],
+          strokeColor: "blue",
+          strokeWidth: 3,
+        });
+
+        soda.rectangle({
+          chart: this,
+          selector: "ambiguous-trace",
+          annotations: params.ambiguousTrace,
+          x,
+          y,
+          width,
+          height: 3,
+          fillColor: "none",
+          strokeColor: "orange",
           strokeWidth: 3,
         });
 
@@ -394,50 +457,37 @@ function run(data) {
       },
     });
 
-    alignments.render = function (params) {
+    alignments.render = function(params) {
       //this.resetTransform();
 
       let queryFilter = (a) => {
-        let filters = options.filters;
-
         // don't ever filter the skip state
         if (a.row == 0) {
           return true;
         }
 
-        let query = rowToQuery[a.row].toLowerCase();
-        let conf = rowToConf[a.row];
-        if (conf < options.confThresh) {
-          return false;
+        if (state.onlyTrace) {
+          if (state.traceRowsByIter[state.traceIteration].indexOf(a.row) < 0) {
+            return false;
+          }
         }
 
-        let pass = true;
-        filters.forEach((f) => {
-          f = f.toLowerCase();
-          if (f[0] !== "!") {
-            if (!query.includes(f)) {
-              pass = false;
-              return;
-            }
-          } else {
-            f = f.slice(1);
-            if (query.includes(f)) {
-              pass = false;
-              return;
-            }
-          }
-        });
+        let query = rowToQuery[a.row].toLowerCase();
 
-        return pass;
+        if (state.regex != undefined)  {
+          return state.regex.test(query);
+        }
+
+        return true; 
       };
-      
+
       let filteredParams = {
         ...params,
         assemblies: params.assemblies.filter(queryFilter),
-        fragments: params.fragments.filter(queryFilter),
         proxy: params.proxy.filter(queryFilter),
         sequences: params.sequences.filter(queryFilter),
-        trace: params.trace.filter(queryFilter),
+        ambiguousTrace: params.ambiguousTrace[state.traceIteration].filter(queryFilter),
+        conclusiveTrace: params.conclusiveTrace[state.traceIteration].filter(queryFilter),
       };
 
       this.renderParams = filteredParams;
@@ -573,9 +623,10 @@ function run(data) {
   }
 
   function prepareTrace(traceStrings, targetStart) {
-    let trace = [];
+    let traces = [];
     for (const [iter, line] of traceStrings.entries()) {
       let iterStrings = line.split("|");
+      let iterTrace = [];
       for (const [idx, seg] of iterStrings.entries()) {
         if (seg == "") {
           continue;
@@ -585,7 +636,7 @@ function run(data) {
         let end = parseInt(tokens[1]) + targetStart;
         let queryId = parseInt(tokens[2]);
         let row = parseInt(tokens[3]);
-        trace.push({
+        iterTrace.push({
           id: `trace-${iter}-${idx}`,
           traceIter: iter,
           start,
@@ -594,79 +645,30 @@ function run(data) {
           row,
         });
       }
+      traces.push(iterTrace);
     }
-    return { trace };
+    return traces;
   }
 
-  function prepareFragments(fragmentStrings, targetStart) {
-    let fragments = [];
-    for (const [iter, line] of fragmentStrings.entries()) {
-      let iterStrings = line.split("|");
-      for (const [idx, seg] of iterStrings.entries()) {
-        let tokens = seg.split(",");
-        let start = parseInt(tokens[0]) + targetStart;
-        let end = parseInt(tokens[1]) + targetStart;
-        let row = parseInt(tokens[2]);
-        let conf = parseFloat(tokens[3]);
-        let query = tokens[4];
-        let queryStart = parseInt(tokens[5]);
-        let queryEnd = parseInt(tokens[6]);
-        let strand = tokens[7];
-        fragments.push({
-          id: `fragment-${iter}-${idx}`,
-          traceIter: iter,
-          start,
-          end,
-          conf,
-          row,
-          query,
-          queryStart,
-          queryEnd,
-          strand,
-        });
-      }
-    }
 
-    return { fragments };
-  }
-
-  function prepareSegments(segmentStrings, targetStart) {
-    let segments = [];
-    for (const [iter, line] of segmentStrings.entries()) {
-      let iterStrings = line.split("|");
-      for (const [idx, seg] of iterStrings.entries()) {
-        let tokens = seg.split(",");
-        let start = parseInt(tokens[0]) + targetStart;
-        let end = parseInt(tokens[1]) + targetStart;
-        segments.push({
-          id: `segment-${iter}-${idx}`,
-          traceIter: iter,
-          start,
-          end,
-        });
-      }
-    }
-
-    return { segments };
-  }
 
   function prepareAssemblies(assemblyStrings) {
     let assemblies = [];
-      for (const [idx, seg] of assemblyStrings.entries()) {
-        let tokens = seg.split(",");
-        let start = parseInt(tokens[0]);
-        let end = parseInt(tokens[1]);
-        let queryId = parseInt(tokens[2]);
-        let size = parseInt(tokens[3]);
-        assemblies.push({
-          id: `assembly-${idx + 1}`,
-          queryId,
-          start,
-          end,
-          size,
-          row: idx + 1,
-        });
-      }
+    for (const [idx, seg] of assemblyStrings.entries()) {
+      let tokens = seg.split(",");
+      let start = parseInt(tokens[0]);
+      let end = parseInt(tokens[1]);
+      let queryId = parseInt(tokens[2]);
+      let size = parseInt(tokens[3]);
+      assemblies.push({
+        id: `assembly-${idx + 1}`,
+        queryId,
+        start,
+        end,
+        size,
+        row: idx + 1,
+      });
+    }
     return { assemblies };
   }
 
@@ -675,7 +677,7 @@ function run(data) {
       start: data.targetStart - LABEL_WIDTH,
       end: data.targetEnd,
     };
-  
+
     let aurora = {
       ...coords,
       ...prepareAnn(data.auroraAnn),
@@ -698,36 +700,32 @@ function run(data) {
         },
       ],
     };
-  
-    let assemblyHits = data.assemblyHitString.split("").map((t) => parseInt(t));
 
     let alignments = {
       ...coords,
       ...prepareAli(data.alignmentStrings),
       ...prepareAssemblies(data.assemblyStrings),
-      ...prepareTrace(data.traceStrings, data.targetStart),
-      assemblyHits,
-      // ...prepareFragments(data.fragmentStrings, data.targetStart),
-      fragments: [],
-      // ...prepareSegments(data.segmentStrings, data.targetStart),
-      segments: [],
+      ambiguousTrace: prepareTrace(data.ambiguousTraceStrings, data.targetStart),
+      conclusiveTrace: prepareTrace(data.conclusiveTraceStrings, data.targetStart),
+      resolvedAssemblyRows: data.resolvedAssemblyRows,
+      unresolvedAssemblyRows: data.unresolvedAssemblyRows,
+      competedAssemblyRows: data.competedAssemblyRows,
     };
-    
-    rowToLength[0] = data.targetEnd - data.targetStart + 1;
-    alignments.proxy.forEach((a) => {
-      rowToQuery[a.row] = a.query;
-      rowToLength[a.row] = a.end - a.start + 1;
-      rowToStrand[a.row] = a.strand;
-    });
-    
-    for (let row = 0; row < rowToQuery.length; row++) {
-      let fragments = alignments.fragments.filter((f) => f.row == row);
-      let confTotal = fragments.reduce(
-        (acc, f) => acc + f.conf * (f.end - f.start + 1),
-        0,
-      );
-      rowToConf[row] = confTotal / rowToLength[row];
+
+    alignments.proxy.forEach((a) => rowToQuery[a.row] = a.query);
+
+    state.traceIteration = 0;
+    state.numTraceIterations = alignments.ambiguousTrace.length;
+
+    let traceRowsByIter = [];
+    for (let i = 0; i < state.numTraceIterations; i++) {
+      let rows = [];
+      alignments.ambiguousTrace[i].forEach((a) => rows.push(a.row));
+      alignments.conclusiveTrace[i].forEach((a) => rows.push(a.row));
+
+      traceRowsByIter.push([...new Set(rows)]);
     }
+    state.traceRowsByIter = traceRowsByIter;
 
     return { aurora, reference, genome, alignments };
   }
@@ -741,7 +739,7 @@ function run(data) {
           [0, 0],
           [chart.viewportWidthPx, chart.viewportHeightPx + 1],
         ])
-        .on("start", () => {})
+        .on("start", () => { })
         .on("brush", () => {
           let brushRange = soda.internalD3.event.selection;
           brushDomain = [
@@ -757,12 +755,12 @@ function run(data) {
     if (brushDomain == undefined) {
       return;
     }
-    
+
     let coords = {
       start: brushDomain[0],
       end: brushDomain[1],
     };
-    
+
     charts.genome.render({
       ...params.genome,
       ...coords,

@@ -8,6 +8,7 @@ mod pipeline;
 mod results;
 mod score_params;
 mod segments;
+mod split;
 mod substitution_matrix;
 mod support;
 mod viterbi;
@@ -23,7 +24,6 @@ use std::{
 
 use alignment::AlignmentData;
 use chunks::ProximityGroup;
-use pipeline::run_pipeline;
 
 use anyhow::Result;
 use clap::Parser;
@@ -185,6 +185,7 @@ fn main() -> Result<()> {
         .enumerate()
         .for_each(|(region_idx, group)| {
             run_assembly_pipeline(group, &alignment_data, region_idx, args.clone());
+            panic!();
         });
     Ok(())
 }

@@ -25,6 +25,7 @@ use crate::{
     matrix::MatrixDef,
     results::Annotation,
     segments::Segments,
+    viterbi::TraceSegment,
     Args,
 };
 
@@ -199,8 +200,11 @@ pub struct AdjudicationSodaData2 {
     reference_ann: Vec<BlockGroup>,
     alignment_strings: Vec<String>,
     assembly_strings: Vec<String>,
-    trace_strings: Vec<String>,
-    assembly_hit_string: String,
+    conclusive_trace_strings: Vec<String>,
+    ambiguous_trace_strings: Vec<String>,
+    resolved_assembly_rows: Vec<Vec<usize>>,
+    unresolved_assembly_rows: Vec<Vec<usize>>,
+    competed_assembly_rows: Vec<Vec<usize>>,
 }
 
 impl AdjudicationSodaData2 {
@@ -208,8 +212,11 @@ impl AdjudicationSodaData2 {
         group: &AssemblyGroup,
         query_names: &VecMap<String>,
         annotations: &[Annotation],
-        assembly_hits: &[bool],
-        trace_strings: Vec<String>,
+        trace_conclusive: Vec<Vec<TraceSegment>>,
+        trace_ambiguous: Vec<Vec<TraceSegment>>,
+        resolved_assembly_rows: Vec<Vec<usize>>,
+        unresolved_assembly_rows: Vec<Vec<usize>>,
+        competed_assembly_rows: Vec<Vec<usize>>,
         args: &Args,
     ) -> Self {
         let target_start = group.target_start;
@@ -307,7 +314,33 @@ impl AdjudicationSodaData2 {
             })
             .collect_vec();
 
-        let assembly_hit_string = assembly_hits.iter().map(|&b| b as usize).join("");
+        let conclusive_trace_strings = trace_conclusive
+            .iter()
+            .map(|t| {
+                t.iter()
+                    .map(|seg| {
+                        format!(
+                            "{},{},{},{}",
+                            seg.col_start, seg.col_end, seg.query_id, seg.row_idx
+                        )
+                    })
+                    .join("|")
+            })
+            .collect_vec();
+
+        let ambiguous_trace_strings = trace_ambiguous
+            .iter()
+            .map(|t| {
+                t.iter()
+                    .map(|seg| {
+                        format!(
+                            "{},{},{},{}",
+                            seg.col_start, seg.col_end, seg.query_id, seg.row_idx
+                        )
+                    })
+                    .join("|")
+            })
+            .collect_vec();
 
         Self {
             target_start,
@@ -317,8 +350,11 @@ impl AdjudicationSodaData2 {
             reference_ann,
             alignment_strings,
             assembly_strings,
-            trace_strings,
-            assembly_hit_string,
+            conclusive_trace_strings,
+            ambiguous_trace_strings,
+            resolved_assembly_rows,
+            unresolved_assembly_rows,
+            competed_assembly_rows,
         }
     }
 }
