@@ -411,6 +411,7 @@ impl AlignmentData {
         let mut target_name_map: VecMap<String> = VecMap::new();
         let mut query_name_map: VecMap<String> = VecMap::from(vec!["skip".into()]);
         let mut query_lengths: HashMap<usize, usize> = HashMap::new();
+        query_lengths.insert(0, 0);
 
         let caf_lines = BufReader::new(caf).lines();
 
@@ -466,8 +467,15 @@ impl AlignmentData {
                 };
 
                 let query_id = query_name_map.insert(query_name);
-                query_lengths.insert(query_id, query_end + query_remaining);
-
+                match strand {
+                    Strand::Forward => {
+                        query_lengths.insert(query_id, query_end + query_remaining);
+                    }
+                    Strand::Reverse => {
+                        query_lengths.insert(query_id, query_start + query_remaining);
+                    }
+                    Strand::Unset => panic!(),
+                }
                 let substitution_matrix_id = substitution_matrices
                     .values
                     .iter()

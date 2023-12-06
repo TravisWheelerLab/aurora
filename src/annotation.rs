@@ -4,6 +4,7 @@ pub struct Annotation {
     pub target_name: String,
     pub target_start: usize,
     pub target_end: usize,
+    pub query_id: usize,
     pub query_name: String,
     pub query_start: usize,
     pub query_end: usize,

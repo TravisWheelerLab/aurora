@@ -155,6 +155,7 @@ pub fn run_pipeline(
                     .clone(),
                 target_start: s.col_start + proximity_group.target_start,
                 target_end: s.col_end + proximity_group.target_start,
+                query_id: s.query_id,
                 query_name: match s.row_idx {
                     // 0 is the skip state row
                     // then 1..=(num_assemblies) are alignment rows

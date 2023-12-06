@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Serialize, Serializer};
 
 use crate::{alignment::Strand, annotation::Annotation};
@@ -51,7 +53,10 @@ pub struct BlockGroup {
 }
 
 impl BlockGroup {
-    pub fn from_joined_annotations(joins: &mut [&Annotation]) -> Self {
+    pub fn from_joined_annotations(
+        joins: &mut [&Annotation],
+        query_lengths: &HashMap<usize, usize>,
+    ) -> Self {
         joins.sort_by_key(|a| a.target_start);
 
         let first = joins.first().unwrap();
@@ -93,13 +98,18 @@ impl BlockGroup {
         let align_start = first.target_start;
         let align_end = last.target_end;
 
+        let query_length = query_lengths
+            .get(&joins[0].query_id)
+            .expect("no query length found");
+
+        let query_remaining = query_length - last.query_end;
+
         // TODO: off by one?
         // the visual start is (<target start> - <num unaligned model positions to the left>)
         // *note: saturating sub for the rare case in which the
         //        alignment is at the start of the chromosome
         let visual_start = first.target_start.saturating_sub(first.query_start);
-        // TODO: need model length information to get this
-        let visual_end = last.target_end + 0;
+        let visual_end = last.target_end + query_remaining;
 
         let left = Block {
             id: id_fn(),

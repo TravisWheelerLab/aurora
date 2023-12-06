@@ -156,6 +156,7 @@ impl AdjudicationSodaData {
                         .iter()
                         .filter(|&a| a.join_id == id)
                         .collect::<Vec<&Annotation>>(),
+                    &alignment_data.query_lengths,
                 )
             })
             .collect();
