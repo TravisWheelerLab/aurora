@@ -199,6 +199,7 @@ fn main() -> Result<()> {
         .enumerate()
         .for_each(|(region_idx, group)| {
             run_assembly_pipeline(group, &alignment_data, region_idx, args.clone());
+            panic!();
         });
     Ok(())
 }

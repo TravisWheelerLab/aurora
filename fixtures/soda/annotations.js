@@ -279,15 +279,9 @@ function run(data) {
         let traceQueryIds = [];
 
         if (state.traceAtTop) {
-          traceQueryIds = [...new Set(params.conclusiveTrace.concat(params.ambiguousTrace).map((a) => a.queryId))];
-        }
-
-        let assemblyQueryIds = [];
-        if (state.assemblyAtTop) {
-          assemblyQueryIds = [...new Set(params.assemblies.filter((a) => a.size > 1).map((a) => a.queryId))];
-          assemblyQueryIds = assemblyQueryIds.filter(
-            (id) => traceQueryIds.indexOf(id) === -1,
-          );
+          let allTrace = params.conclusiveTrace.concat(params.ambiguousTrace);
+          allTrace.sort((a, b) => a.start - b.start);
+          traceQueryIds = [...new Set(allTrace.map((a) => a.queryId))];
         }
 
         let remainingQueryIds = queryIds.filter(
@@ -296,9 +290,14 @@ function run(data) {
           (id) => assemblyQueryIds.indexOf(id) === -1,
         );
 
-        let rowCount = 1;
+        // the first two rows are reserved for the 
+        // skip state and the tandem repeat state
+        let rowCount = 2;
         let dpRowToChartRow = new Map([[0, 0]]);
-
+        params.tandemRepeats.forEach((r) => {
+          dpRowToChartRow.set(r.row, 1);
+        }) 
+      
         let layoutFn = (id) => {
           let queryAssemblies = params.assemblies.filter((a) => a.queryId == id);
           let subLayout = soda.intervalGraphLayout(queryAssemblies);
@@ -312,7 +311,6 @@ function run(data) {
         };
 
         traceQueryIds.forEach(layoutFn);
-        assemblyQueryIds.forEach(layoutFn);
         remainingQueryIds.forEach(layoutFn);
 
         this.layout = {
@@ -320,6 +318,7 @@ function run(data) {
           rowCount,
         };
       },
+
       draw(params) {
         this.clear();
         let domainWidth = this.domain[1] - this.domain[0];
@@ -368,6 +367,19 @@ function run(data) {
           strokeColor: "black",
         });
 
+        // tandem repeats
+        soda.rectangle({
+          chart: this,
+          selector: "tandem-repeats",
+          annotations: params.tandemRepeats,
+          x,
+          y,
+          width,
+          height: 12,
+          fillOpacity: 0.05,
+          strokeColor: "black",
+        });
+
         if (state.labels) {
           let exists = new Map();
           params.proxy.forEach((a) => exists.set(a.query, [false, a.row]));
@@ -407,6 +419,7 @@ function run(data) {
               d.a.id[0] == "m" ? "green" : d.a.id[0] == "s" ? "orange" : "red",
           });
         }
+
 
         // trace
         soda.rectangle({
@@ -466,11 +479,16 @@ function run(data) {
           return true;
         }
 
+        if (a.row > rowToQuery.length - 1) {
+          return true;
+        }
+
         if (state.onlyTrace) {
           if (state.traceRowsByIter[state.traceIteration].indexOf(a.row) < 0) {
             return false;
           }
         }
+        
 
         let query = rowToQuery[a.row].toLowerCase();
 
@@ -660,16 +678,36 @@ function run(data) {
       let end = parseInt(tokens[1]);
       let queryId = parseInt(tokens[2]);
       let size = parseInt(tokens[3]);
+      let row = parseInt(tokens[4]);
       assemblies.push({
         id: `assembly-${idx + 1}`,
         queryId,
         start,
         end,
         size,
-        row: idx + 1,
+        row,
       });
     }
     return { assemblies };
+  }
+
+  function prepareTandemRepeats(tandemRepeatStrings) {
+    let tandemRepeats = [];
+    for (const seg of tandemRepeatStrings) {
+      let tokens = seg.split(",");
+      let start = parseInt(tokens[0]);
+      let end = parseInt(tokens[1]);
+      let consensus = tokens[2];
+      let row = parseInt(tokens[3]);
+      tandemRepeats.push({
+        id: `tr-${row}`,
+        start,
+        end,
+        consensus,
+        row,
+      });
+    }
+    return { tandemRepeats };
   }
 
   function prepareData() {
@@ -705,6 +743,7 @@ function run(data) {
       ...coords,
       ...prepareAli(data.alignmentStrings),
       ...prepareAssemblies(data.assemblyStrings),
+      ...prepareTandemRepeats(data.tandemRepeatStrings),
       ambiguousTrace: prepareTrace(data.ambiguousTraceStrings, data.targetStart),
       conclusiveTrace: prepareTrace(data.conclusiveTraceStrings, data.targetStart),
       resolvedAssemblyRows: data.resolvedAssemblyRows,

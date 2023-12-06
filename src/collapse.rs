@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use itertools::Itertools;
 
 use crate::{
-    alignment::{Alignment, Strand},
+    alignment::{Alignment, Strand, TandemRepeat},
     chunks::ProximityGroup,
     viz::{write_soda_html, AssemblySodaData},
     Args,
@@ -400,6 +400,7 @@ pub struct AssemblyGroup<'a> {
     pub target_start: usize,
     pub target_end: usize,
     pub assemblies: Vec<Assembly<'a>>,
+    pub tandem_repeats: &'a [TandemRepeat],
 }
 
 impl<'a> AssemblyGroup<'a> {
@@ -535,6 +536,7 @@ impl<'a> AssemblyGroup<'a> {
             target_start: group.target_start,
             target_end: group.target_end,
             assemblies,
+            tandem_repeats: group.tandem_repeats,
         }
     }
 }

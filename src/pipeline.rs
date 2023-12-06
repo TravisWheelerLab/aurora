@@ -11,17 +11,16 @@ use crate::{
     matrix::{Matrix, MatrixDef},
     results::Annotation,
     score_params::ScoreParams,
-    segments::Segments,
     split::split_trace,
     support::windowed_confidence_slow,
-    viterbi::{trace_segments, traceback, traceback2, viterbi, viterbi_collapsed, TraceSegment},
-    viz::{write_soda_html, AdjudicationSodaData, AdjudicationSodaData2},
+    viterbi::{trace_segments, traceback2, viterbi_collapsed, TraceSegment},
+    viz::{write_soda_html, AdjudicationSodaData2},
     windowed_scores::windowed_score,
     Args, BACKGROUND_WINDOW_SIZE, SCORE_WINDOW_SIZE,
 };
 
 pub fn run_assembly_pipeline(
-    group: &ProximityGroup,
+    proximity_group: &ProximityGroup,
     alignment_data: &AlignmentData,
     region_idx: usize,
     mut args: Args,
@@ -29,31 +28,34 @@ pub fn run_assembly_pipeline(
     if args.viz {
         args.viz_output_path.push(format!(
             "{}-{}-{}-{}",
-            group.target_id, region_idx, group.target_start, group.target_end
+            proximity_group.target_id,
+            region_idx,
+            proximity_group.target_start,
+            proximity_group.target_end
         ));
 
         fs::create_dir_all(&args.viz_output_path).unwrap();
     }
 
     let score_params = ScoreParams::new(
-        group.alignments.len(),
+        proximity_group.alignments.len(),
         args.query_jump_probability,
         args.num_skip_loops_eq_to_jump,
     );
 
-    let matrix_def = MatrixDef::new(group);
+    let matrix_def = MatrixDef::from_proximity_group(proximity_group);
     let mut confidence_matrix = Matrix::<f64>::new(&matrix_def);
 
     windowed_score(
         &mut confidence_matrix,
-        group.alignments,
+        proximity_group.alignments,
+        proximity_group.tandem_repeats,
         &alignment_data.substitution_matrices,
         SCORE_WINDOW_SIZE,
         BACKGROUND_WINDOW_SIZE,
     );
 
-    // TODO: probably remove this skip confidence_by_col thingy
-    let _ = confidence(&mut confidence_matrix);
+    confidence(&mut confidence_matrix);
 
     let (confidence_avg_by_id, confidence_by_id) = windowed_confidence_slow(&mut confidence_matrix);
 
@@ -67,7 +69,12 @@ pub fn run_assembly_pipeline(
     });
 
     // convert the ProximityGroup into an AssemblyGroup
-    let assembly_group = AssemblyGroup::new(group, &confidence_avg_by_id, &confidence_by_id, &args);
+    let assembly_group = AssemblyGroup::new(
+        proximity_group,
+        &confidence_avg_by_id,
+        &confidence_by_id,
+        &args,
+    );
 
     // initialize the collpased DP matrices
     let collapsed_matrix_def = MatrixDef::from_assembly_group(&assembly_group);
@@ -142,10 +149,19 @@ pub fn run_assembly_pipeline(
         .iter()
         .flat_map(|iter_segments| {
             iter_segments.iter().map(|s| Annotation {
-                target_name: alignment_data.target_name_map.get(group.target_id).clone(),
-                target_start: s.col_start + group.target_start,
-                target_end: s.col_end + group.target_start,
-                query_name: alignment_data.query_name_map.get(s.query_id).clone(),
+                target_name: alignment_data
+                    .target_name_map
+                    .get(proximity_group.target_id)
+                    .clone(),
+                target_start: s.col_start + proximity_group.target_start,
+                target_end: s.col_end + proximity_group.target_start,
+                query_name: match s.row_idx {
+                    // 0 is the skip state row
+                    // then 1..=(num_assemblies) are alignment rows
+                    // so anything >(num_assemblies) is a tandem repeat
+                    r if r > assembly_group.assemblies.len() => "tandem repeat".to_string(),
+                    _ => alignment_data.query_name_map.get(s.query_id).clone(),
+                },
                 query_start: viterbi_matrix.consensus_position(s.row_idx, s.col_start),
                 query_end: viterbi_matrix.consensus_position(s.row_idx, s.col_end),
                 strand: viterbi_matrix.strand_of_row(s.row_idx),
@@ -180,7 +196,9 @@ pub fn run_assembly_pipeline(
 
         let out_path = args.viz_output_path.join(format!(
             "{}-{}-{}.html",
-            alignment_data.target_name_map.get(group.target_id),
+            alignment_data
+                .target_name_map
+                .get(proximity_group.target_id),
             matrix_def.target_start,
             matrix_def.target_start + matrix_def.num_cols
         ));
@@ -198,132 +216,6 @@ pub fn run_assembly_pipeline(
     }
 }
 
-pub fn run_pipeline(
-    group: &ProximityGroup,
-    alignment_data: &AlignmentData,
-    region_idx: usize,
-    args: &Args,
-) {
-    let score_params = ScoreParams::new(
-        group.alignments.len(),
-        args.query_jump_probability,
-        args.num_skip_loops_eq_to_jump,
-    );
-
-    let matrix_def = MatrixDef::new(group);
-    let mut confidence_matrix = Matrix::<f64>::new(&matrix_def);
-    let mut viterbi_matrix = Matrix::<f64>::new(&matrix_def);
-    let mut sources_matrix = Matrix::<usize>::new(&matrix_def);
-
-    windowed_score(
-        &mut confidence_matrix,
-        group.alignments,
-        &alignment_data.substitution_matrices,
-        SCORE_WINDOW_SIZE,
-        BACKGROUND_WINDOW_SIZE,
-    );
-
-    confidence(&mut confidence_matrix);
-
-    windowed_confidence_slow(&mut confidence_matrix);
-
-    // this removes any initial dead space between alignments
-
-    // let mut active_cols = confidence_matrix.initial_active_cols();
-    let mut active_cols = (0..confidence_matrix.num_cols()).collect::<Vec<_>>();
-
-    let mut last_num_cols = active_cols.len();
-    let mut results: Vec<Annotation> = vec![];
-
-    let mut trace_strings = vec![];
-    let mut fragment_strings = vec![];
-    let mut segment_strings = vec![];
-
-    let mut join_id_cnt = 0usize;
-
-    while !active_cols.is_empty() {
-        viterbi(
-            &confidence_matrix,
-            &mut viterbi_matrix,
-            &mut sources_matrix,
-            &active_cols,
-            &score_params,
-            alignment_data.query_name_map.size(),
-            args.consensus_join_distance,
-        );
-
-        let trace = traceback(&viterbi_matrix, &sources_matrix, &active_cols, join_id_cnt);
-        join_id_cnt = trace
-            .iter()
-            .map(|t| t.join_id)
-            .max()
-            .expect("trace is empty");
-
-        let mut segments = Segments::new(&trace, &confidence_matrix, &active_cols);
-        segments.create_links(
-            args.consensus_join_distance,
-            args.target_join_distance,
-            args.num_skip_loops_eq_to_jump,
-            args.min_fragment_length,
-        );
-        segments.process_links();
-
-        let (mut iteration_results, cols) = segments.get_results_and_active_cols(
-            &alignment_data.query_name_map,
-            alignment_data.target_name_map.get(group.target_id),
-            group.target_start,
-            region_idx,
-        );
-
-        results.append(&mut iteration_results);
-        active_cols = cols;
-
-        if args.viz {
-            trace_strings.push(segments.trace_soda_string(&alignment_data.query_name_map));
-            fragment_strings.push(segments.fragments_soda_string(&alignment_data.query_name_map));
-            segment_strings.push(segments.segments_soda_string());
-        }
-
-        if active_cols.len() == last_num_cols {
-            panic!();
-        }
-
-        last_num_cols = active_cols.len();
-    }
-
-    results.sort_by_key(|r| (r.join_id, r.target_start));
-    results.sort_by_key(|r| r.target_start);
-    results.retain(|r| r.query_name != "skip");
-
-    Annotation::write(&results, &mut std::io::stdout());
-
-    if args.viz {
-        let data = AdjudicationSodaData::new(
-            group,
-            &alignment_data.query_name_map,
-            &results,
-            trace_strings,
-            fragment_strings,
-            segment_strings,
-            args,
-        );
-
-        let out_path = args.viz_output_path.join(format!(
-            "{}-{}-{}.html",
-            alignment_data.target_name_map.get(group.target_id),
-            matrix_def.target_start,
-            matrix_def.target_start + matrix_def.num_cols
-        ));
-
-        write_soda_html(
-            &data,
-            "./fixtures/soda/template.html",
-            "./fixtures/soda/viz.js",
-            out_path,
-        );
-    }
-}
-
 pub trait StrSliceExt {
     fn to_digital_nucleotides(self) -> Vec<u8>;
 }
@@ -338,40 +230,5 @@ impl StrSliceExt for &str {
                     .unwrap_or_else(|| panic!("unknown byte: {byte}"))
             })
             .collect()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::alignment::{Alignment, Strand};
-
-    use super::{run_pipeline, StrSliceExt};
-
-    #[test]
-    fn test_pipeline() {
-        let ali = [
-            Alignment {
-                query_id: 1,
-                target_seq: "AAAAAAAAAAGGGGGGGGGG".to_digital_nucleotides(),
-                query_seq: "AAAAAAAAAAGGGGGGGGGG".to_digital_nucleotides(),
-                target_start: 1,
-                target_end: 20,
-                query_start: 1,
-                query_end: 20,
-                strand: Strand::Forward,
-                substitution_matrix_id: 0,
-            },
-            Alignment {
-                query_id: 2,
-                target_seq: "AAAAAAAAAAGGGGGGGGGG".to_digital_nucleotides(),
-                query_seq: "AAAAAAAAAAGGGGGGGGGG".to_digital_nucleotides(),
-                target_start: 21,
-                target_end: 40,
-                query_start: 1,
-                query_end: 20,
-                strand: Strand::Forward,
-                substitution_matrix_id: 0,
-            },
-        ];
     }
 }

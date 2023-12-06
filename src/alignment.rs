@@ -1,5 +1,4 @@
 use anyhow::Result;
-use itertools::Itertools;
 use serde::Deserialize;
 use std::io::{BufRead, BufReader, Read};
 use std::{fmt, hash};
@@ -319,6 +318,7 @@ impl<T: std::cmp::PartialEq + fmt::Debug> fmt::Debug for VecMap<T> {
 
 #[derive(Debug, Default)]
 pub struct TandemRepeat {
+    pub id: usize,
     pub target_start: usize,
     pub target_end: usize,
     pub consensus_pattern: String,
@@ -492,19 +492,24 @@ impl AlignmentData {
         if let Some(buf) = ultra {
             let buf_reader = BufReader::new(buf);
             let ultra_json: UltraJson = serde_json::from_reader(buf_reader)?;
-            ultra_json.repeats.into_iter().for_each(|r| {
-                let target_id = target_name_map.key(&r.sequence_name);
+            ultra_json
+                .repeats
+                .into_iter()
+                .enumerate()
+                .for_each(|(idx, r)| {
+                    let target_id = target_name_map.key(&r.sequence_name);
 
-                if let Some(group) = target_groups.get_mut(target_id) {
-                    group.tandem_repeats.push(TandemRepeat {
-                        // TODO: figure out if ultra uses 0- or 1-based indexing
-                        target_start: r.start,
-                        target_end: r.start + r.length - 1,
-                        consensus_pattern: r.consensus,
-                        scores: r.position_score_deltas,
-                    })
-                }
-            });
+                    if let Some(group) = target_groups.get_mut(target_id) {
+                        group.tandem_repeats.push(TandemRepeat {
+                            // TODO: figure out if ultra uses 0- or 1-based indexing
+                            id: idx + 1,
+                            target_start: r.start,
+                            target_end: r.start + r.length - 1,
+                            consensus_pattern: r.consensus,
+                            scores: r.position_score_deltas,
+                        })
+                    }
+                });
         }
 
         target_groups.iter_mut().for_each(|g| {

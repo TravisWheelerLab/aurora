@@ -20,11 +20,8 @@ use crate::{
         NucleotideByteUtils, ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
         PAD_DIGITAL, SPACE_UTF8,
     },
-    chunks::ProximityGroup,
     collapse::{Assembly, AssemblyGroup},
-    matrix::MatrixDef,
     results::Annotation,
-    segments::Segments,
     viterbi::TraceSegment,
     Args,
 };
@@ -48,50 +45,6 @@ pub fn write_soda_html(
     let mut file = std::fs::File::create(out_path).expect("failed to create file");
 
     std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
-}
-
-impl MatrixDef {
-    pub fn soda_data(&self) -> serde_json::Value {
-        let mut ali_map: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
-        (0..self.num_cols).for_each(|col| {
-            self.ali_ids_by_col[col]
-                .iter()
-                .enumerate()
-                .for_each(|(sparse_row, &id)| {
-                    let row = self.active_rows_by_col[col][sparse_row];
-                    let vec = ali_map.entry(id).or_default();
-                    vec.push((row, col));
-                });
-        });
-
-        let mut ali_strings: Vec<String> = vec![];
-        ali_map.iter().for_each(|(&id, list)| {
-            if id == 0 {
-                return;
-            }
-
-            let (row, mut start_col) = list[0];
-            let mut col = start_col;
-            list[1..].iter().for_each(|&(r, c)| {
-                if r != row {
-                    panic!("{id}");
-                }
-                if (c - 1) != col {
-                    ali_strings.push(format!("{},{},{},{}", id, start_col, col, row));
-                    start_col = c;
-                }
-                col = c;
-            });
-            ali_strings.push(format!("{},{},{},{}", id, start_col, col, row));
-        });
-
-        serde_json::json!({
-            "start": 0,
-            "end": self.num_cols,
-            "rowCount": self.num_rows,
-            "alignments": ali_strings,
-        })
-    }
 }
 
 impl Alignment {
@@ -137,55 +90,6 @@ impl Alignment {
     }
 }
 
-impl Segments {
-    pub fn trace_soda_string(&self, query_names: &VecMap<String>) -> String {
-        (0..self.num_segments)
-            // only look at the segments removed
-            .filter(|&idx| self.marked_for_removal[idx])
-            // (segments have multiple fragments if there was a join)
-            .flat_map(|idx| &self.trace_fragments[idx])
-            .map(|f| {
-                format!(
-                    "{},{},{},{},{}",
-                    f.start_col_idx,
-                    f.end_col_idx,
-                    f.query_id,
-                    f.row_idx,
-                    query_names.get(f.query_id)
-                )
-            })
-            .join("|")
-    }
-
-    pub fn fragments_soda_string(&self, query_names: &VecMap<String>) -> String {
-        (0..self.num_segments)
-            .filter(|&idx| self.marked_for_removal[idx])
-            .flat_map(|idx| &self.fragments[idx])
-            .map(|f| {
-                format!(
-                    "{},{},{},{:5.4},{},{},{},{}",
-                    f.start_col_idx,
-                    f.end_col_idx,
-                    f.row_idx,
-                    f.avg_confidence,
-                    query_names.get(f.query_id),
-                    f.consensus_start,
-                    f.consensus_end,
-                    f.strand
-                )
-            })
-            .join("|")
-    }
-
-    pub fn segments_soda_string(&self) -> String {
-        (0..self.num_segments)
-            .filter(|&idx| self.marked_for_removal[idx])
-            .map(|idx| &self.segments[idx])
-            .map(|s| format!("{},{}", s.start_col_idx, s.end_col_idx))
-            .join("|")
-    }
-}
-
 ///
 ///
 ///
@@ -200,6 +104,7 @@ pub struct AdjudicationSodaData2 {
     reference_ann: Vec<BlockGroup>,
     alignment_strings: Vec<String>,
     assembly_strings: Vec<String>,
+    tandem_repeat_strings: Vec<String>,
     conclusive_trace_strings: Vec<String>,
     ambiguous_trace_strings: Vec<String>,
     resolved_assembly_rows: Vec<Vec<usize>>,
@@ -208,6 +113,8 @@ pub struct AdjudicationSodaData2 {
 }
 
 impl AdjudicationSodaData2 {
+    // TODO: refactor these args
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         group: &AssemblyGroup,
         query_names: &VecMap<String>,
@@ -303,13 +210,30 @@ impl AdjudicationSodaData2 {
         let assembly_strings = group
             .assemblies
             .iter()
-            .map(|assembly| {
+            .enumerate()
+            .map(|(assembly_idx, assembly)| {
                 format!(
-                    "{},{},{},{}",
+                    "{},{},{},{},{}",
                     assembly.target_start,
                     assembly.target_end,
                     assembly.query_id,
-                    assembly.alignments.len()
+                    assembly.alignments.len(),
+                    assembly_idx + 1,
+                )
+            })
+            .collect_vec();
+
+        let tandem_repeat_strings = group
+            .tandem_repeats
+            .iter()
+            .enumerate()
+            .map(|(repeat_idx, repeat)| {
+                format!(
+                    "{},{},{},{}",
+                    repeat.target_start,
+                    repeat.target_end,
+                    repeat.consensus_pattern,
+                    repeat_idx + group.assemblies.len() + 1,
                 )
             })
             .collect_vec();
@@ -350,129 +274,12 @@ impl AdjudicationSodaData2 {
             reference_ann,
             alignment_strings,
             assembly_strings,
+            tandem_repeat_strings,
             conclusive_trace_strings,
             ambiguous_trace_strings,
             resolved_assembly_rows,
             unresolved_assembly_rows,
             competed_assembly_rows,
-        }
-    }
-}
-
-///
-///
-///
-///
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AdjudicationSodaData {
-    target_start: usize,
-    target_end: usize,
-    target_seq: String,
-    aurora_ann: Vec<BlockGroup>,
-    reference_ann: Vec<BlockGroup>,
-    alignment_strings: Vec<String>,
-    trace_strings: Vec<String>,
-    fragment_strings: Vec<String>,
-    segment_strings: Vec<String>,
-}
-
-impl AdjudicationSodaData {
-    // TODO: these parameters need a refactor
-    pub fn new(
-        group: &ProximityGroup,
-        query_names: &VecMap<String>,
-        annotations: &[Annotation],
-        trace_strings: Vec<String>,
-        fragment_strings: Vec<String>,
-        segment_strings: Vec<String>,
-        args: &Args,
-    ) -> Self {
-        let target_start = group.target_start;
-        let target_end = group.target_end;
-        let target_length = target_end - target_start + 1;
-
-        let mut target_seq_digital_bytes = vec![PAD_DIGITAL; target_length];
-        group
-            .alignments
-            .iter()
-            .flat_map(|a| {
-                a.target_seq
-                    .iter()
-                    .filter(|&&c| c != GAP_OPEN_DIGITAL && c != GAP_EXTEND_DIGITAL)
-                    .enumerate()
-                    .map(|(idx, c)| (idx + a.target_start - target_start, c))
-            })
-            .for_each(|(col_idx, &char)| target_seq_digital_bytes[col_idx] = char);
-
-        let target_seq = target_seq_digital_bytes.into_utf8_string();
-
-        let unique_join_ids: Vec<usize> = annotations.iter().map(|a| a.join_id).unique().collect();
-
-        let aurora_ann: Vec<BlockGroup> = unique_join_ids
-            .iter()
-            .map(|&id| {
-                BlockGroup::from_joined_annotations(
-                    &mut annotations
-                        .iter()
-                        .filter(|&a| a.join_id == id)
-                        .collect::<Vec<&Annotation>>(),
-                )
-            })
-            .collect();
-
-        let mut overlapping_bed = vec![];
-
-        let target_name = "";
-        if let (Some(path), Some(&offset)) = (
-            &args.viz_reference_bed_path,
-            args.viz_reference_bed_index.get(target_name),
-        ) {
-            let file = File::open(path).expect("failed to open reference bed");
-            let reader = BufReader::new(file);
-
-            reader
-                .lines()
-                .skip(offset)
-                .map(|l| l.expect("failed to read line"))
-                .for_each(|line| {
-                    let tokens: Vec<&str> = line.split_whitespace().collect();
-
-                    let target = tokens[0];
-                    if target != target_name {
-                        return;
-                    }
-
-                    let thick_start = tokens[6].parse::<usize>().expect("failed to parse usize");
-                    let thick_end = tokens[7].parse::<usize>().expect("failed to parse usize");
-                    if thick_start < target_end && thick_end > target_start {
-                        overlapping_bed.push(BedRecord::from_tokens(&tokens));
-                    }
-                });
-        }
-
-        let reference_ann = overlapping_bed
-            .iter()
-            .map(BlockGroup::from_bed_record)
-            .collect::<Vec<BlockGroup>>();
-
-        let alignment_strings: Vec<String> = group
-            .alignments
-            .iter()
-            .enumerate()
-            .map(|(ali_idx, a)| a.soda_string(ali_idx + 1, query_names.get(a.query_id)))
-            .collect();
-
-        Self {
-            target_start,
-            target_end,
-            target_seq,
-            aurora_ann,
-            reference_ann,
-            alignment_strings,
-            trace_strings,
-            fragment_strings,
-            segment_strings,
         }
     }
 }

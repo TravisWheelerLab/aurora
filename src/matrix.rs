@@ -7,6 +7,15 @@ use crate::{
     collapse::AssemblyGroup,
 };
 
+use self::constants::*;
+
+pub mod constants {
+    pub const SKIP_STATE_ROW: usize = 0;
+    pub const SKIP_STATE_QUERY_ID: usize = 0;
+    pub const SKIP_STATE_ALI_ID: usize = 0;
+    pub const INVALID_CONSENSUS_POSITION: usize = 0;
+}
+
 /// This is an auxiliary data structure that
 /// describes the layout of a column major
 /// (in memory) sparse matrix.
@@ -41,18 +50,22 @@ pub struct MatrixDef {
 
 impl MatrixDef {
     pub fn from_assembly_group(group: &AssemblyGroup) -> Self {
-        let num_rows = group.assemblies.len() + 1;
+        // +1 for the skip state
+        let num_rows = group.assemblies.len() + group.tandem_repeats.len() + 1;
         let num_cols = group.target_end - group.target_start + 1;
 
         let mut num_cells = num_cols;
 
-        let mut active_rows_by_col = vec![vec![0usize]; num_cols];
-        let mut consensus_positions_by_col = vec![vec![0usize]; num_cols];
-        let mut ali_ids_by_col = vec![vec![0usize]; num_cols];
+        let mut active_rows_by_col = vec![vec![SKIP_STATE_ROW]; num_cols];
+        let mut consensus_positions_by_col = vec![vec![INVALID_CONSENSUS_POSITION]; num_cols];
+        let mut ali_ids_by_col = vec![vec![SKIP_STATE_ALI_ID]; num_cols];
 
-        let mut col_range_by_logical_row = vec![(0usize, num_cols); num_rows];
+        let mut col_range_by_logical_row = vec![(0usize, num_cols - 1); num_rows];
         let mut query_id_by_logical_row = vec![0usize; num_rows];
         let mut strand_by_logical_row = vec![Strand::default(); num_rows];
+
+        query_id_by_logical_row[SKIP_STATE_ROW] = SKIP_STATE_QUERY_ID;
+        strand_by_logical_row[SKIP_STATE_ROW] = Strand::Forward;
 
         group
             .assemblies
@@ -67,6 +80,7 @@ impl MatrixDef {
                         debug_assert!(a.target_start <= b.target_start);
                     });
 
+                // +1 for the skip state
                 let row_idx = assembly_idx + 1;
 
                 query_id_by_logical_row[row_idx] = assembly.query_id;
@@ -210,6 +224,25 @@ impl MatrixDef {
                 });
             });
 
+        group
+            .tandem_repeats
+            .iter()
+            .enumerate()
+            .for_each(|(repeat_idx, repeat)| {
+                // we place the tandem repeats after the alignments
+                let row_idx = group.assemblies.len() + repeat_idx + 1;
+                strand_by_logical_row[row_idx] = Strand::Forward;
+
+                let col_start = repeat.target_start - group.target_start;
+                let col_end = repeat.target_end - group.target_start;
+                num_cells += col_end - col_start + 1;
+                (col_start..=col_end).for_each(|col_idx| {
+                    active_rows_by_col[col_idx].push(row_idx);
+                    consensus_positions_by_col[col_idx].push(INVALID_CONSENSUS_POSITION);
+                    ali_ids_by_col[col_idx].push(repeat.id);
+                });
+            });
+
         Self {
             num_rows,
             num_cols,
@@ -224,28 +257,28 @@ impl MatrixDef {
         }
     }
 
-    pub fn new(group: &ProximityGroup) -> Self {
+    pub fn from_proximity_group(group: &ProximityGroup) -> Self {
         let target_start = group.target_start;
         let target_end = group.target_end;
 
         // +1 for the skip state
-        let num_rows = group.alignments.len() + 1;
+        let num_rows = group.alignments.len() + group.tandem_repeats.len() + 1;
         // +1 for subtracting across the interval
         let num_cols = target_end - target_start + 1;
 
         // add cells for the skip state, which has a cell in every column
         let mut num_cells = num_cols;
 
-        let mut active_rows_by_col = vec![vec![0usize]; num_cols];
-        let mut consensus_positions_by_col = vec![vec![0usize]; num_cols];
-        let mut ali_ids_by_col = vec![vec![0usize]; num_cols];
+        let mut active_rows_by_col = vec![vec![SKIP_STATE_ROW]; num_cols];
+        let mut consensus_positions_by_col = vec![vec![INVALID_CONSENSUS_POSITION]; num_cols];
+        let mut ali_ids_by_col = vec![vec![SKIP_STATE_ALI_ID]; num_cols];
 
-        // NOTE: we are setting the first row (skip state) to span the entire matrix
-        let mut col_range_by_logical_row = vec![(0usize, num_cols); num_rows];
+        let mut col_range_by_logical_row = vec![(0usize, num_cols - 1); num_rows];
         let mut query_id_by_logical_row = vec![0usize; num_rows];
         let mut strand_by_logical_row = vec![Strand::default(); num_rows];
-        // we'll say the skip state is the forward strand for convenience
-        strand_by_logical_row[0] = Strand::Forward;
+
+        query_id_by_logical_row[SKIP_STATE_ROW] = SKIP_STATE_QUERY_ID;
+        strand_by_logical_row[SKIP_STATE_ROW] = Strand::Forward;
 
         group
             .alignments
@@ -253,7 +286,6 @@ impl MatrixDef {
             .enumerate()
             .for_each(|(ali_idx, ali)| {
                 // the index of the row that the alignment maps to
-                // it's +1 because of the skip state
                 let row_idx = ali_idx + 1;
 
                 query_id_by_logical_row[row_idx] = ali.query_id;
@@ -334,6 +366,27 @@ impl MatrixDef {
                         }
                     }
                 }
+            });
+
+        group
+            .tandem_repeats
+            .iter()
+            .enumerate()
+            .for_each(|(repeat_idx, repeat)| {
+                // we place the tandem repeats after the alignments
+                let row_idx = group.alignments.len() + repeat_idx + 1;
+
+                let col_start = repeat.target_start - target_start;
+                let col_end = repeat.target_end - target_start;
+
+                col_range_by_logical_row[row_idx] = (col_start, col_end);
+
+                num_cells += col_end - col_start + 1;
+                (col_start..=col_end).for_each(|col_idx| {
+                    active_rows_by_col[col_idx].push(row_idx);
+                    consensus_positions_by_col[col_idx].push(INVALID_CONSENSUS_POSITION);
+                    ali_ids_by_col[col_idx].push(repeat.id);
+                });
             });
 
         Self {
