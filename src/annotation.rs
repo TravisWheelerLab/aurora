@@ -1,7 +1,4 @@
-use crate::{
-    alignment::{self, AlignmentData, Strand},
-    viterbi::{TraceSegment, TraceStep2},
-};
+use crate::alignment::Strand;
 
 pub struct Annotation {
     pub target_name: String,
@@ -28,21 +25,6 @@ pub struct LineWidths {
 }
 
 impl Annotation {
-    pub fn new(segment: &TraceSegment) -> Self {
-        Self {
-            target_name: "temp".to_string(),
-            target_start: segment.col_start,
-            target_end: segment.col_end,
-            query_name: "temp".to_string(),
-            query_start: 0,
-            query_end: 0,
-            strand: Strand::Forward,
-            confidence: 0.0,
-            join_id: 0,
-            region_id: 0,
-        }
-    }
-
     pub fn line(&self, widths: &LineWidths) -> String {
         format!(
             "{:w0$} {:w1$} {:w2$} {:w3$} {:w4$} {:w5$} {} {:4.3} {:w6$} {}",

@@ -1,6 +1,6 @@
 use serde::{Serialize, Serializer};
 
-use crate::{alignment::Strand, results::Annotation};
+use crate::{alignment::Strand, annotation::Annotation};
 
 use super::BedRecord;
 

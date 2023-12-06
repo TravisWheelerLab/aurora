@@ -5,21 +5,21 @@ use itertools::Itertools;
 use crate::{
     alignment::AlignmentData,
     alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE,
+    annotation::Annotation,
     chunks::ProximityGroup,
     collapse::AssemblyGroup,
     confidence::confidence,
     matrix::{Matrix, MatrixDef},
-    results::Annotation,
     score_params::ScoreParams,
     split::split_trace,
-    support::windowed_confidence_slow,
-    viterbi::{trace_segments, traceback2, viterbi_collapsed, TraceSegment},
-    viz::{write_soda_html, AdjudicationSodaData2},
+    support::windowed_confidence,
+    viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment},
+    viz::{write_soda_html, AdjudicationSodaData},
     windowed_scores::windowed_score,
     Args, BACKGROUND_WINDOW_SIZE, SCORE_WINDOW_SIZE,
 };
 
-pub fn run_assembly_pipeline(
+pub fn run_pipeline(
     proximity_group: &ProximityGroup,
     alignment_data: &AlignmentData,
     region_idx: usize,
@@ -57,7 +57,7 @@ pub fn run_assembly_pipeline(
 
     confidence(&mut confidence_matrix);
 
-    let (confidence_avg_by_id, confidence_by_id) = windowed_confidence_slow(&mut confidence_matrix);
+    let (confidence_avg_by_id, confidence_by_id) = windowed_confidence(&mut confidence_matrix);
 
     // adjust the skip state to include skip-loop penalty
     let skip_adjust = args
@@ -104,7 +104,7 @@ pub fn run_assembly_pipeline(
             &score_params,
         );
 
-        let trace = traceback2(
+        let trace = traceback(
             &viterbi_matrix,
             &collapsed_confidence_matrix,
             &sources_matrix,
@@ -182,9 +182,9 @@ pub fn run_assembly_pipeline(
     Annotation::write(&annotations, &mut std::io::stdout());
 
     if args.viz {
-        let data = AdjudicationSodaData2::new(
+        let data = AdjudicationSodaData::new(
             &assembly_group,
-            &alignment_data.query_name_map,
+            &alignment_data,
             &annotations,
             trace_conclusive,
             trace_ambiguous,

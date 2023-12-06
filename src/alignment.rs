@@ -1,5 +1,6 @@
 use anyhow::Result;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
 use std::{fmt, hash};
 
@@ -155,7 +156,6 @@ pub fn caf_str_to_digital_nucleotides(caf_str: &str) -> (Vec<u8>, Vec<u8>) {
     let mut ali_idx = 0usize;
     for &utf8_byte in caf_str_bytes {
         let new_state = match utf8_byte {
-            // rust note: this if statement is called a match guard
             b if NUCLEOTIDE_ALPHABET_UTF8.contains(&b) => match prev_state {
                 CafState::Mutation => CafState::Match,
                 other => other,
@@ -282,11 +282,6 @@ impl<T: std::cmp::PartialEq> VecMap<T> {
         &self.values[key]
     }
 
-    pub fn get_mut(&mut self, key: usize) -> &mut T {
-        debug_assert!(key < self.values.len(), "invalid key: {key}");
-        &mut self.values[key]
-    }
-
     pub fn contains(&self, value: &T) -> bool {
         self.values.contains(value)
     }
@@ -358,6 +353,7 @@ pub struct AlignmentData {
     pub target_groups: Vec<TargetGroup>,
     pub target_name_map: VecMap<String>,
     pub query_name_map: VecMap<String>,
+    pub query_lengths: HashMap<usize, usize>,
     pub substitution_matrices: VecMap<SubstitutionMatrix>,
 }
 
@@ -414,6 +410,7 @@ impl AlignmentData {
         let mut target_groups: Vec<TargetGroup> = vec![];
         let mut target_name_map: VecMap<String> = VecMap::new();
         let mut query_name_map: VecMap<String> = VecMap::from(vec!["skip".into()]);
+        let mut query_lengths: HashMap<usize, usize> = HashMap::new();
 
         let caf_lines = BufReader::new(caf).lines();
 
@@ -433,6 +430,9 @@ impl AlignmentData {
                 let query_start =
                     str::parse::<usize>(tokens[10]).expect("failed to parse query start");
                 let query_end = str::parse::<usize>(tokens[11]).expect("failed to parse query end");
+                let query_remaining =
+                    str::parse::<usize>(tokens[12]).expect("failed to parse query remaining");
+
                 let strand = match tokens[13] {
                     "0" => Strand::Forward,
                     "1" => Strand::Reverse,
@@ -466,6 +466,7 @@ impl AlignmentData {
                 };
 
                 let query_id = query_name_map.insert(query_name);
+                query_lengths.insert(query_id, query_end + query_remaining);
 
                 let substitution_matrix_id = substitution_matrices
                     .values
@@ -524,6 +525,7 @@ impl AlignmentData {
             target_groups,
             target_name_map,
             query_name_map,
+            query_lengths,
             substitution_matrices,
         })
     }

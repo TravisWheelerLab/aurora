@@ -15,13 +15,13 @@ use itertools::Itertools;
 use serde::Serialize;
 
 use crate::{
-    alignment::{Alignment, Strand, VecMap},
+    alignment::{Alignment, AlignmentData, Strand},
     alphabet::{
         NucleotideByteUtils, ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
         PAD_DIGITAL, SPACE_UTF8,
     },
+    annotation::Annotation,
     collapse::{Assembly, AssemblyGroup},
-    results::Annotation,
     viterbi::TraceSegment,
     Args,
 };
@@ -96,7 +96,7 @@ impl Alignment {
 ///
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AdjudicationSodaData2 {
+pub struct AdjudicationSodaData {
     target_start: usize,
     target_end: usize,
     target_seq: String,
@@ -112,12 +112,12 @@ pub struct AdjudicationSodaData2 {
     competed_assembly_rows: Vec<Vec<usize>>,
 }
 
-impl AdjudicationSodaData2 {
+impl AdjudicationSodaData {
     // TODO: refactor these args
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         group: &AssemblyGroup,
-        query_names: &VecMap<String>,
+        alignment_data: &AlignmentData,
         annotations: &[Annotation],
         trace_conclusive: Vec<Vec<TraceSegment>>,
         trace_ambiguous: Vec<Vec<TraceSegment>>,
@@ -200,10 +200,9 @@ impl AdjudicationSodaData2 {
             .iter()
             .enumerate()
             .flat_map(|(idx, assembly)| {
-                assembly
-                    .alignments
-                    .iter()
-                    .map(move |a| a.soda_string(idx + 1, query_names.get(a.query_id)))
+                assembly.alignments.iter().map(move |a| {
+                    a.soda_string(idx + 1, alignment_data.query_name_map.get(a.query_id))
+                })
             })
             .collect_vec();
 

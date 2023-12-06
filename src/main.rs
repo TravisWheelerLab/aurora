@@ -1,13 +1,12 @@
 mod alignment;
 mod alphabet;
+mod annotation;
 mod chunks;
 mod collapse;
 mod confidence;
 mod matrix;
 mod pipeline;
-mod results;
 mod score_params;
-mod segments;
 mod split;
 mod substitution_matrix;
 mod support;
@@ -28,7 +27,7 @@ use chunks::ProximityGroup;
 use anyhow::Result;
 use clap::Parser;
 
-use crate::{chunks::validate_groups, pipeline::run_assembly_pipeline};
+use crate::{chunks::validate_groups, pipeline::run_pipeline};
 
 #[derive(Debug, Parser, Clone)]
 #[command(name = "aurora")]
@@ -198,7 +197,7 @@ fn main() -> Result<()> {
         .inspect(|g| println!("{g:?}"))
         .enumerate()
         .for_each(|(region_idx, group)| {
-            run_assembly_pipeline(group, &alignment_data, region_idx, args.clone());
+            run_pipeline(group, &alignment_data, region_idx, args.clone());
             panic!();
         });
     Ok(())

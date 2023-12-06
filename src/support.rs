@@ -7,7 +7,7 @@ use crate::matrix::Matrix;
 ///
 ///
 ///
-pub fn windowed_confidence_slow(
+pub fn windowed_confidence(
     matrix: &mut Matrix<f64>,
 ) -> (HashMap<usize, f64>, HashMap<usize, Vec<f64>>) {
     // TODO: parameterize this
