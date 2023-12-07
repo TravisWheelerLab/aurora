@@ -54,8 +54,8 @@ impl<'a> ProximityGroup<'a> {
             .flat_map(|target_group| {
                 let query_ids = 0..alignment_data.query_name_map.size();
                 let mut target_intervals: Vec<Interval> = query_ids
-                    // skip the skip state and tandem repeats
-                    .skip(2)
+                    // skip the skip state
+                    .skip(1)
                     .flat_map(|query_id| {
                         // grab all alignments to this query
                         let alignments: Vec<&Alignment> = target_group

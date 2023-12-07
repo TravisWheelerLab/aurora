@@ -24,10 +24,9 @@ function run(data) {
     "#bab0ab",
   ];
 
-  // these maps contain the dom
+  // this maps contain the dom
   // nodes that control options
   let inputs = new Map();
-  let values = new Map();
 
   let options = {
     sidebarMinWidth: 30,
@@ -49,7 +48,7 @@ function run(data) {
     numTraceIterations: undefined,
     onlyTrace: true,
     traceRowsByIter: undefined,
-  }
+  };
 
   let rowToQuery = [];
 
@@ -73,7 +72,7 @@ function run(data) {
 
   function handleEvent(e) {
     let toggles = ["traceAtTop", "labels", "onlyTrace"];
-    let numeric = ["confThresh", "aliThresh"]
+    let numeric = ["confThresh", "aliThresh"];
     let text = ["regex"];
     let traceButtons = [];
     for (let i = 0; i < state.numTraceIterations; i++) {
@@ -142,13 +141,13 @@ function run(data) {
 
     // programmatically create a radio button for each trace iteration
     for (let i = 0; i < state.numTraceIterations; i++) {
-      let radioDiv = document.createElement('div');
-      let radioButton = document.createElement('input');
-      radioButton.type = 'radio';
-      radioButton.name = 'traceButtonGroup';
+      let radioDiv = document.createElement("div");
+      let radioButton = document.createElement("input");
+      radioButton.type = "radio";
+      radioButton.name = "traceButtonGroup";
       radioButton.id = `traceButton${i}`;
 
-      let label = document.createElement('label');
+      let label = document.createElement("label");
       label.htmlFor = `traceButton${i}`;
       label.appendChild(document.createTextNode(`Trace ${i}`));
 
@@ -196,7 +195,7 @@ function run(data) {
         // sneaky: rewrite the layout object's row retrieval
         //         function so that it works for the annotations
         //         that the proxy annotations correspond to
-        this.layout.row = function(d) {
+        this.layout.row = function (d) {
           let id_tokens = d.a.id.split("-");
           let id = `${id_tokens[0]}-${id_tokens[1]}`;
           let row = this.rowMap.get(id);
@@ -259,6 +258,9 @@ function run(data) {
       draw(params) {
         this.addAxis();
 
+        let a = params.annotations[0];
+        console.log(a.start, a.end, a.sequence.length);
+
         soda.sequence({
           chart: this,
           selector: "genome",
@@ -286,25 +288,25 @@ function run(data) {
 
         let remainingQueryIds = queryIds.filter(
           (id) => traceQueryIds.indexOf(id) === -1,
-        ).filter(
-          (id) => assemblyQueryIds.indexOf(id) === -1,
         );
 
-        // the first two rows are reserved for the 
+        // the first two rows are reserved for the
         // skip state and the tandem repeat state
         let rowCount = 2;
         let dpRowToChartRow = new Map([[0, 0]]);
         params.tandemRepeats.forEach((r) => {
           dpRowToChartRow.set(r.row, 1);
-        }) 
-      
+        });
+
         let layoutFn = (id) => {
-          let queryAssemblies = params.assemblies.filter((a) => a.queryId == id);
+          let queryAssemblies = params.assemblies.filter(
+            (a) => a.queryId == id,
+          );
           let subLayout = soda.intervalGraphLayout(queryAssemblies);
 
           queryAssemblies.forEach((a) => {
             let subRow = subLayout.row({ a });
-            dpRowToChartRow.set(a.row, rowCount + subRow)
+            dpRowToChartRow.set(a.row, rowCount + subRow);
           });
 
           rowCount += subLayout.rowCount;
@@ -339,16 +341,25 @@ function run(data) {
           width: (d) => this.xScale(d.a.end) - this.xScale(d.a.start + 1),
           height: 2,
           fillColor: (d) => {
-            if (params.competedAssemblyRows[state.traceIteration].indexOf(d.a.row) >= 0) {
+            if (
+              params.competedAssemblyRows[state.traceIteration].indexOf(
+                d.a.row,
+              ) >= 0
+            ) {
               return "red";
-            }
-            else if (params.unresolvedAssemblyRows[state.traceIteration].indexOf(d.a.row) >= 0) {
+            } else if (
+              params.unresolvedAssemblyRows[state.traceIteration].indexOf(
+                d.a.row,
+              ) >= 0
+            ) {
               return "orange";
-            }
-            else if (params.resolvedAssemblyRows[state.traceIteration].indexOf(d.a.row) >= 0) {
+            } else if (
+              params.resolvedAssemblyRows[state.traceIteration].indexOf(
+                d.a.row,
+              ) >= 0
+            ) {
               return "green";
-            }
-            else {
+            } else {
               return "black";
             }
           },
@@ -420,7 +431,6 @@ function run(data) {
           });
         }
 
-
         // trace
         soda.rectangle({
           chart: this,
@@ -470,7 +480,7 @@ function run(data) {
       },
     });
 
-    alignments.render = function(params) {
+    alignments.render = function (params) {
       //this.resetTransform();
 
       let queryFilter = (a) => {
@@ -488,15 +498,14 @@ function run(data) {
             return false;
           }
         }
-        
 
         let query = rowToQuery[a.row].toLowerCase();
 
-        if (state.regex != undefined)  {
+        if (state.regex != undefined) {
           return state.regex.test(query);
         }
 
-        return true; 
+        return true;
       };
 
       let filteredParams = {
@@ -504,8 +513,10 @@ function run(data) {
         assemblies: params.assemblies.filter(queryFilter),
         proxy: params.proxy.filter(queryFilter),
         sequences: params.sequences.filter(queryFilter),
-        ambiguousTrace: params.ambiguousTrace[state.traceIteration].filter(queryFilter),
-        conclusiveTrace: params.conclusiveTrace[state.traceIteration].filter(queryFilter),
+        ambiguousTrace:
+          params.ambiguousTrace[state.traceIteration].filter(queryFilter),
+        conclusiveTrace:
+          params.conclusiveTrace[state.traceIteration].filter(queryFilter),
       };
 
       this.renderParams = filteredParams;
@@ -668,8 +679,6 @@ function run(data) {
     return traces;
   }
 
-
-
   function prepareAssemblies(assemblyStrings) {
     let assemblies = [];
     for (const [idx, seg] of assemblyStrings.entries()) {
@@ -744,14 +753,20 @@ function run(data) {
       ...prepareAli(data.alignmentStrings),
       ...prepareAssemblies(data.assemblyStrings),
       ...prepareTandemRepeats(data.tandemRepeatStrings),
-      ambiguousTrace: prepareTrace(data.ambiguousTraceStrings, data.targetStart),
-      conclusiveTrace: prepareTrace(data.conclusiveTraceStrings, data.targetStart),
+      ambiguousTrace: prepareTrace(
+        data.ambiguousTraceStrings,
+        data.targetStart,
+      ),
+      conclusiveTrace: prepareTrace(
+        data.conclusiveTraceStrings,
+        data.targetStart,
+      ),
       resolvedAssemblyRows: data.resolvedAssemblyRows,
       unresolvedAssemblyRows: data.unresolvedAssemblyRows,
       competedAssemblyRows: data.competedAssemblyRows,
     };
 
-    alignments.proxy.forEach((a) => rowToQuery[a.row] = a.query);
+    alignments.proxy.forEach((a) => (rowToQuery[a.row] = a.query));
 
     state.traceIteration = 0;
     state.numTraceIterations = alignments.ambiguousTrace.length;
@@ -778,7 +793,7 @@ function run(data) {
           [0, 0],
           [chart.viewportWidthPx, chart.viewportHeightPx + 1],
         ])
-        .on("start", () => { })
+        .on("start", () => {})
         .on("brush", () => {
           let brushRange = soda.internalD3.event.selection;
           brushDomain = [
@@ -815,7 +830,6 @@ function run(data) {
       ...params.alignments,
       ...coords,
     });
-
   }
 
   function render() {
