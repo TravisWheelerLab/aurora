@@ -1,12 +1,13 @@
 mod alignment;
 mod alphabet;
+mod annotation;
 mod chunks;
+mod collapse;
 mod confidence;
 mod matrix;
 mod pipeline;
-mod results;
 mod score_params;
-mod segments;
+mod split;
 mod substitution_matrix;
 mod support;
 mod viterbi;
@@ -20,15 +21,15 @@ use std::{
     path::PathBuf,
 };
 
-use alignment::Alignment;
-use chunks::chunks_by_query_distance;
-use pipeline::run_pipeline;
+use alignment::AlignmentData;
+use chunks::ProximityGroup;
 
 use anyhow::Result;
 use clap::Parser;
-use substitution_matrix::SubstitutionMatrix;
 
-#[derive(Debug, Parser)]
+use crate::{chunks::validate_groups, pipeline::run_pipeline};
+
+#[derive(Debug, Parser, Clone)]
 #[command(name = "aurora")]
 #[command(about = "stuff")]
 pub struct Args {
@@ -91,9 +92,26 @@ pub struct Args {
     )]
     pub min_fragment_length: usize,
 
+    ///
+    #[arg(
+        short = 'F',
+        long = "fudge-distance",
+        default_value = "10",
+        value_name = "n"
+    )]
+    pub fudge_distance: usize,
+
+    /// The path to ULTRA output
+    #[arg(short = 'U', long = "ultra-file", value_name = "path")]
+    pub ultra_file_path: Option<PathBuf>,
+
     /// Produce visualization output
     #[arg(long = "viz")]
     pub viz: bool,
+
+    /// Produce visualization output
+    #[arg(long = "assembly-viz")]
+    pub assembly_viz: bool,
 
     /// The path to the directory to which
     /// vizualization output will be written
@@ -158,27 +176,28 @@ fn main() -> Result<()> {
     let alignments_file = File::open(&args.alignments)?;
     let matrices_file = File::open(&args.matrices)?;
 
-    let (mut alignments, query_names) = Alignment::from_caf(alignments_file)?;
-    let substitution_matrices = SubstitutionMatrix::parse(matrices_file);
+    let ultra_file = match args.ultra_file_path {
+        Some(ref path) => Some(File::open(path)?),
+        None => None,
+    };
 
-    let num_queries = query_names.len();
+    let alignment_data =
+        AlignmentData::from_caf_and_ultra_and_matrices(alignments_file, ultra_file, matrices_file)?;
 
-    let chunks = chunks_by_query_distance(&mut alignments, num_queries, args.target_join_distance);
+    let proximity_groups =
+        ProximityGroup::from_alignment_data(&alignment_data, args.target_join_distance);
 
-    chunks
+    debug_assert!(validate_groups(
+        &proximity_groups,
+        args.target_join_distance
+    ));
+
+    proximity_groups
         .iter()
-        // .inspect(|c| println!("{} - {}", c.start_idx, c.end_idx))
-        .map(|c| &alignments[c.start_idx..=c.end_idx])
+        // .inspect(|g| println!("{g:?}"))
         .enumerate()
-        .for_each(|(region_idx, ali_slice)| {
-            run_pipeline(
-                ali_slice,
-                &query_names,
-                &substitution_matrices,
-                region_idx,
-                &args,
-            )
+        .for_each(|(region_idx, group)| {
+            run_pipeline(group, &alignment_data, region_idx, args.clone());
         });
-
     Ok(())
 }

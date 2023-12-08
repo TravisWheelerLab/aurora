@@ -2,6 +2,12 @@ import * as soda from "https://esm.run/@sodaviz/soda@0.13.1";
 import * as d3 from "https://esm.run/d3-scale@4";
 
 function run(data) {
+  document.querySelector('.container').addEventListener('wheel', function(event) {
+    if (event.ctrlKey) {
+      event.preventDefault();
+    }
+  });
+
   const LABEL_WIDTH = 500;
   let brushDomain = undefined;
 
@@ -11,42 +17,64 @@ function run(data) {
   let optionTimeoutTime = 100;
   let optionTimeoutId = 0;
 
-  let traceColors = [
-    "#4e79a7",
-    "#f28e2c",
-    "#e15759",
-    "#76b7b2",
-    "#59a14f",
-    "#edc949",
-    "#af7aa1",
-    "#ff9da7",
-    "#9c755f",
-    "#bab0ab",
+
+  let classNames = [
+    "sine",
+    "line",
+    "ltr",
+    "dna",
+    "simple",
+    "low_complexity",
+    "satellite",
+    "rna",
+    "other",
+    "unknown",
   ];
 
-  // these maps contain the dom
+  let classColors = [
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#7f7f7f",
+    "#bcbd22",
+    "#17becf"
+  ];
+
+  // this maps contain the dom
   // nodes that control options
   let inputs = new Map();
-  let values = new Map();
 
   let options = {
-    colorScale: d3.scaleLinear().domain([0.0, 1.0]).range(["white", "black"]),
-    segments: false,
-    labels: true,
-    confMin: 0.0,
-    confMax: 1.0,
-    confThresh: 0.0,
-    aliThresh: 300,
-    traceAtTop: true,
-    filters: [],
-    sidebarExpanded: false,
     sidebarMinWidth: 30,
     sidebarMaxWidth: 200,
+    conclusiveColor: "#4e79a7",
+    ambiguousColor: "#f28e2c",
+    resolvedColor: "green",
+    unresolvedColor: "orange",
+    competedColor: "red",
+    confidenceSegmentColor: "purple",
+  };
+
+  let state = {
+    sidebarExpanded: false,
+    labels: true,
+    traceAtTop: true,
+    assemblyAtTop: false,
+    confThresh: 0.0,
+    aliThresh: 300,
+    regex: undefined,
+    traceIteration: undefined,
+    numTraceIterations: undefined,
+    onlyTrace: true,
+    showInactive: false,
+    traceRowsByIter: undefined,
   };
 
   let rowToQuery = [];
-  let rowToLength = [];
-  let rowToStrand = [];
   let rowToConf = [];
 
   let params = prepareData();
@@ -58,43 +86,45 @@ function run(data) {
 
   function toggleSidebar() {
     let sidebar = document.querySelector("div#sidebar");
-    if (options.sidebarExpanded === true) {
+    if (state.sidebarExpanded === true) {
       sidebar.style.width = `${options.sidebarMinWidth}px`;
-      options.sidebarExpanded = false;
+      state.sidebarExpanded = false;
     } else {
       sidebar.style.width = `${options.sidebarMaxWidth}px`;
-      options.sidebarExpanded = true;
+      state.sidebarExpanded = true;
     }
   }
 
   function handleEvent(e) {
-    let sliders = ["confMin", "confMax", "confThresh", "aliThresh"];
-    let toggles = ["traceAtTop", "labels", "segments"];
-    let text = ["filters"];
+    let toggles = ["traceAtTop", "labels", "onlyTrace", "showInactive"];
+    let numeric = ["confThresh", "aliThresh"];
+    let text = ["regex"];
+    let traceButtons = [];
+    for (let i = 0; i < state.numTraceIterations; i++) {
+      traceButtons.push(`traceButton${i}`);
+    }
+
     let input = e.target.id;
     let value = e.target.value;
 
-    if (sliders.indexOf(input) >= 0) {
-      let valueNum = parseFloat(value);
-      options[input] = valueNum;
-
-      let valueNode = values.get(input);
-      valueNode.textContent = value;
-    } else if (toggles.indexOf(input) >= 0) {
+    if (toggles.indexOf(input) >= 0) {
       let toggleNode = inputs.get(input);
       let checked = toggleNode.checked;
-
-      options[input] = checked;
+      state[input] = checked;
+    } else if (numeric.indexOf(input) >= 0) {
+      state[input] = parseFloat(value);
     } else if (text.indexOf(input) >= 0) {
-      options[input] = value.split("\n");
+      if (value != "") {
+        state[input] = new RegExp(value);
+      } else {
+        state[input] = undefined;
+      }
+    } else if (traceButtons.indexOf(input) >= 0) {
+      let traceIter = traceButtons.indexOf(input);
+      state.traceIteration = traceIter;
     } else {
       console.error("unknown input: ", input);
     }
-
-    options.colorScale = d3
-      .scaleLinear()
-      .domain([options.confMin, options.confMax])
-      .range(["white", "black"]);
 
     clearTimeout(optionTimeoutId);
     optionTimeoutId = window.setTimeout(() => {
@@ -106,22 +136,50 @@ function run(data) {
     let toggle = document.querySelector("span#toggle");
     toggle.addEventListener("click", toggleSidebar);
 
-    inputs.set("confMin", document.querySelector("input#confMin"));
-    values.set("confMin", document.querySelector("div#confMin"));
+    let confThresh = document.querySelector("input#confThresh");
+    confThresh.value = state.confThresh;
+    inputs.set("confThresh", confThresh);
 
-    inputs.set("confMax", document.querySelector("input#confMax"));
-    values.set("confMax", document.querySelector("div#confMax"));
+    let aliThresh = document.querySelector("input#aliThresh");
+    aliThresh.value = state.aliThresh;
+    inputs.set("aliThresh", aliThresh);
 
-    inputs.set("confThresh", document.querySelector("input#confThresh"));
-    values.set("confThresh", document.querySelector("div#confThresh"));
-
-    inputs.set("aliThresh", document.querySelector("input#aliThresh"));
-    values.set("aliThresh", document.querySelector("div#aliThresh"));
-
-    inputs.set("segments", document.querySelector("input#segments"));
     inputs.set("labels", document.querySelector("input#labels"));
     inputs.set("traceAtTop", document.querySelector("input#traceAtTop"));
-    inputs.set("filters", document.querySelector("textArea#filters"));
+    inputs.set("onlyTrace", document.querySelector("input#onlyTrace"));
+    inputs.set("showInactive", document.querySelector("input#showInactive"));
+    inputs.set("regex", document.querySelector("input#regex"));
+
+    // grab the entire sidebar
+    let innerSidebarDiv = document.querySelector("div.inner-sidebar");
+
+    // create a div for the trace selection widget
+    let traceSelectionWidget = document.createElement("div");
+    traceSelectionWidget.className = "widget-vertical";
+
+    // shove that widget into the sidebar
+    innerSidebarDiv.appendChild(traceSelectionWidget);
+
+    // programmatically create a radio button for each trace iteration
+    for (let i = 0; i < state.numTraceIterations; i++) {
+      let radioDiv = document.createElement("div");
+      let radioButton = document.createElement("input");
+      radioButton.type = "radio";
+      radioButton.name = "traceButtonGroup";
+      radioButton.id = `traceButton${i}`;
+
+      let label = document.createElement("label");
+      label.htmlFor = `traceButton${i}`;
+      label.appendChild(document.createTextNode(`Trace ${i}`));
+
+      radioDiv.appendChild(radioButton);
+      radioDiv.appendChild(label);
+
+      traceSelectionWidget.append(radioDiv);
+    }
+    document.querySelector(`#traceButton0`).checked = true;
+
+    inputs.set("trace", traceSelectionWidget);
 
     inputs.forEach((input) => input.addEventListener("input", handleEvent));
   }
@@ -158,7 +216,7 @@ function run(data) {
         // sneaky: rewrite the layout object's row retrieval
         //         function so that it works for the annotations
         //         that the proxy annotations correspond to
-        this.layout.row = function (d) {
+        this.layout.row = function(d) {
           let id_tokens = d.a.id.split("-");
           let id = `${id_tokens[0]}-${id_tokens[1]}`;
           let row = this.rowMap.get(id);
@@ -170,13 +228,23 @@ function run(data) {
           this.addAxis();
         }
 
+        function classColor(d) {
+          let c = d.a.label.split("#")[1].split("/")[0].toLowerCase();;
+          let i = classNames.indexOf(c);
+          if (i == -1) {
+            i = 9;
+          }
+          return classColors[i];
+        }
+
         // fragments
         soda.chevronRectangle({
           chart: this,
           selector: "groups",
           annotations: params.aligned,
           orientation: (d) => d.a.strand,
-          strokeColor: "black",
+          strokeColor: classColor,
+          strokeWidth: 2,
         });
 
         // joins;
@@ -217,11 +285,16 @@ function run(data) {
 
     let genome = new soda.Chart({
       ...chartConf,
+      upperPadSize: 25,
+      updateLayout() { },
       draw(params) {
+        this.addAxis();
+
         soda.sequence({
           chart: this,
           selector: "genome",
           annotations: params.annotations,
+          row: 0,
         });
       },
     });
@@ -237,44 +310,36 @@ function run(data) {
 
         let traceQueryIds = [];
 
-        if (options.traceAtTop) {
-          traceQueryIds = [...new Set(params.trace.map((a) => a.queryId))];
+        if (state.traceAtTop) {
+          let allTrace = params.conclusiveTrace.concat(params.ambiguousTrace);
+          allTrace.sort((a, b) => a.start - b.start);
+          traceQueryIds = [...new Set(allTrace.map((a) => a.queryId))];
         }
 
         let remainingQueryIds = queryIds.filter(
           (id) => traceQueryIds.indexOf(id) === -1,
         );
 
-        let rowCount = 1;
+        // the first two rows are reserved for the
+        // skip state and the tandem repeat state
+        let rowCount = 2;
         let dpRowToChartRow = new Map([[0, 0]]);
+        params.tandemRepeats.forEach((r) => {
+          dpRowToChartRow.set(r.row, 1);
+        });
 
         let layoutFn = (id) => {
-          // get the annotations with this id
-          let rowAnn = params.proxy.filter((a) => a.queryId == id);
+          let queryAssemblies = params.assemblies.filter(
+            (a) => a.queryId == id,
+          );
+          let subLayout = soda.intervalGraphLayout(queryAssemblies);
 
-          // sub-group them by overlap
-          let groups = soda.aggregateIntransitive({
-            annotations: rowAnn,
-            criterion: (a, b) => a.start < b.end && a.end > b.start,
+          queryAssemblies.forEach((a) => {
+            let subRow = subLayout.row({ a });
+            dpRowToChartRow.set(a.row, rowCount + subRow);
           });
 
-          // for each sub-group of overlapping annotations in the row
-          let maxSubLayoutRowCount = 0;
-          groups.forEach((g) => {
-            let ann = g.annotations;
-            let subLayout = soda.intervalGraphLayout(ann);
-            maxSubLayoutRowCount = Math.max(
-              maxSubLayoutRowCount,
-              subLayout.rowCount,
-            );
-            // for each annotation in the sub-group
-            ann.forEach((a) => {
-              let subRow = subLayout.row({ a });
-              dpRowToChartRow.set(a.row, rowCount + subRow);
-            });
-          });
-
-          rowCount += maxSubLayoutRowCount;
+          rowCount += subLayout.rowCount;
         };
 
         traceQueryIds.forEach(layoutFn);
@@ -285,6 +350,7 @@ function run(data) {
           rowCount,
         };
       },
+
       draw(params) {
         this.clear();
         let domainWidth = this.domain[1] - this.domain[0];
@@ -296,56 +362,93 @@ function run(data) {
         let x = (d) => this.xScale(d.a.start - 0.25);
         let width = (d) => this.xScale(d.a.end) - this.xScale(d.a.start - 0.5);
 
-        if (options.segments) {
-          // segments
+        if (state.showInactive) {
+          // inactive segments
           soda.rectangle({
             chart: this,
-            selector: "segments",
-            annotations: params.segments,
-            row: 0,
-            x,
-            width,
+            selector: "inactive",
+            annotations: params.inactiveSegments,
+            fillColor: "red",
+            fillOpacity: 0.1,
+            y: 0,
             height: this.viewportHeightPx,
-            fillColor: (d) => traceColors[d.a.traceIter],
-            strokeColor: (d) => traceColors[d.a.traceIter],
-            fillOpacity: 0.05,
-            strokeWidth: 1,
-          });
-        } else {
-          // note: this is a hack to place the segments
-          //       <g> tag at the top until I can fix the
-          //       bug in soda that doesn't clear <g> tags
-          soda.rectangle({
-            chart: this,
-            selector: "segments",
-            annotations: [],
           });
         }
 
-        // proxy
+        // assemblies
         soda.rectangle({
           chart: this,
-          selector: "proxy",
-          annotations: params.proxy,
+          selector: "assembly",
+          annotations: params.assemblies.filter((a) => a.size > 1),
           y,
           width: (d) => this.xScale(d.a.end) - this.xScale(d.a.start + 1),
           height: 2,
+          fillColor: (d) => {
+            if (
+              params.competedAssemblyRows[state.traceIteration].indexOf(
+                d.a.row,
+              ) >= 0
+            ) {
+              return options.competedColor;
+            } else if (
+              params.unresolvedAssemblyRows[state.traceIteration].indexOf(
+                d.a.row,
+              ) >= 0
+            ) {
+              return options.unresolvedColor;
+            } else if (
+              params.resolvedAssemblyRows[state.traceIteration].indexOf(
+                d.a.row,
+              ) >= 0
+            ) {
+              return options.resolvedColor;
+            } else {
+              return "black";
+            }
+          },
         });
 
-        // fragments
+        // alignments
         soda.rectangle({
           chart: this,
-          selector: "fragments",
-          annotations: params.fragments,
+          selector: "alignments",
+          annotations: params.sequences,
           x,
           y,
           width,
           height: 12,
-          fillColor: (d) => options.colorScale(d.a.conf),
+          fillColor: "white",
           strokeColor: "black",
         });
 
-        if (options.labels) {
+        // tandem repeats
+        soda.rectangle({
+          chart: this,
+          selector: "tandem-repeats",
+          annotations: params.tandemRepeats,
+          x,
+          y,
+          width,
+          height: 12,
+          fillOpacity: 0.05,
+          strokeColor: "black",
+        });
+
+        // confidence segments
+        soda.rectangle({
+          chart: this,
+          selector: "confidence-segments",
+          annotations: params.confidenceSegments,
+          x,
+          y,
+          width,
+          height: 12,
+          fillOpacity: (d) => d.a.conf,
+          strokeColor: options.confidenceSegmentColor,
+          strokeOpacity: 0.75,
+        });
+
+        if (state.labels) {
           let exists = new Map();
           params.proxy.forEach((a) => exists.set(a.query, [false, a.row]));
 
@@ -371,9 +474,20 @@ function run(data) {
             x: (d) => Math.max(d.c.xScale(d.a.start), 0),
             text: (d) => [d.a.query, "..."],
           });
+
+          // tandem repeat labels
+          soda.dynamicText({
+            chart: this,
+            selector: "tr-labels",
+            annotations: params.tandemRepeats,
+            fillColor: "black",
+            text: (d) => [`tandem repeat(${d.a.period})`, "..."],
+          });
+
+
         }
 
-        if (domainWidth < options.aliThresh) {
+        if (domainWidth < state.aliThresh) {
           let annotations = domainFilter(params.sequences);
           soda.sequence({
             chart: this,
@@ -388,26 +502,45 @@ function run(data) {
         // trace
         soda.rectangle({
           chart: this,
-          selector: "trace",
-          annotations: params.trace,
+          selector: "conclusive-trace",
+          annotations: params.conclusiveTrace,
           x,
           y,
           width,
-          height: 12,
+          height: 3,
           fillColor: "none",
-          strokeColor: (d) => traceColors[d.a.traceIter],
+          strokeColor: options.conclusiveColor,
+          strokeWidth: 3,
+        });
+
+        soda.rectangle({
+          chart: this,
+          selector: "ambiguous-trace",
+          annotations: params.ambiguousTrace,
+          x,
+          y,
+          width,
+          height: 3,
+          fillColor: "none",
+          strokeColor: options.ambiguousColor,
           strokeWidth: 3,
         });
 
         soda.tooltip({
-          annotations: params.fragments,
+          annotations: params.ambiguousTrace.concat(params.conclusiveTrace),
+          text: (d) =>
+            `confidence: ${d.a.conf}`,
+        })
+
+        soda.tooltip({
+          annotations: params.confidenceSegments,
           text: (d) =>
             `${d.a.query}: ` +
-            `${d.a.queryStart.toLocaleString()}..${d.a.queryEnd.toLocaleString()}` +
+            `${d.a.queryStart.toLocaleString()}..${d.a.queryEnd.toLocaleString()} / ${d.a.queryLength.toLocaleString()}` +
             `<br>chrom: ${d.a.start.toLocaleString()}..${d.a.end.toLocaleString()}` +
             `<br>strand: ${d.a.strand}` +
             `<br>confidence: ${d.a.conf}`,
-        });
+        })
       },
 
       postZoom() {
@@ -421,51 +554,49 @@ function run(data) {
       },
     });
 
-    alignments.render = function (params) {
+    alignments.render = function(params) {
       //this.resetTransform();
 
       let queryFilter = (a) => {
-        let filters = options.filters;
-
         // don't ever filter the skip state
         if (a.row == 0) {
           return true;
         }
 
+        if (a.row > rowToQuery.length - 1) {
+          return true;
+        }
+
+        if (state.onlyTrace) {
+          if (state.traceRowsByIter[state.traceIteration].indexOf(a.row) < 0) {
+            return false;
+          }
+        }
+
         let query = rowToQuery[a.row].toLowerCase();
-        let conf = rowToConf[a.row];
-        if (conf < options.confThresh) {
+
+        if (state.regex != undefined) {
+          return state.regex.test(query);
+        }
+
+        if (rowToConf[a.row] <= state.confThresh) {
           return false;
         }
 
-        let pass = true;
-        filters.forEach((f) => {
-          f = f.toLowerCase();
-          if (f[0] !== "!") {
-            if (!query.includes(f)) {
-              pass = false;
-              return;
-            }
-          } else {
-            f = f.slice(1);
-            if (query.includes(f)) {
-              pass = false;
-              return;
-            }
-          }
-        });
-
-        return pass;
+        return true;
       };
 
       let filteredParams = {
-        start: params.start,
-        end: params.end,
-        segments: params.segments,
-        fragments: params.fragments.filter(queryFilter),
+        ...params,
+        assemblies: params.assemblies.filter(queryFilter),
         proxy: params.proxy.filter(queryFilter),
         sequences: params.sequences.filter(queryFilter),
-        trace: params.trace.filter(queryFilter),
+        ambiguousTrace:
+          params.ambiguousTrace[state.traceIteration].filter(queryFilter),
+        conclusiveTrace:
+          params.conclusiveTrace[state.traceIteration].filter(queryFilter),
+        inactiveSegments: params.inactiveSegments[state.traceIteration],
+        confidenceSegments: params.confidenceSegments[state.traceIteration].filter(queryFilter),
       };
 
       this.renderParams = filteredParams;
@@ -601,81 +732,130 @@ function run(data) {
   }
 
   function prepareTrace(traceStrings, targetStart) {
-    let trace = [];
+    let traces = [];
     for (const [iter, line] of traceStrings.entries()) {
       let iterStrings = line.split("|");
+      let iterTrace = [];
       for (const [idx, seg] of iterStrings.entries()) {
+        if (seg == "") {
+          continue;
+        }
         let tokens = seg.split(",");
         let start = parseInt(tokens[0]) + targetStart;
         let end = parseInt(tokens[1]) + targetStart;
         let queryId = parseInt(tokens[2]);
         let row = parseInt(tokens[3]);
-        let query = tokens[4];
-        trace.push({
+        let conf = parseFloat(tokens[4]);
+        iterTrace.push({
           id: `trace-${iter}-${idx}`,
           traceIter: iter,
           start,
           end,
           queryId,
           row,
-          query,
+          conf,
         });
       }
+      traces.push(iterTrace);
     }
-
-    return { trace };
+    return traces;
   }
 
-  function prepareFragments(fragmentStrings, targetStart) {
-    let fragments = [];
-    for (const [iter, line] of fragmentStrings.entries()) {
-      let iterStrings = line.split("|");
+  function prepareAssemblies(assemblyStrings) {
+    let assemblies = [];
+    for (const [idx, seg] of assemblyStrings.entries()) {
+      let tokens = seg.split(",");
+      let start = parseInt(tokens[0]);
+      let end = parseInt(tokens[1]);
+      let queryId = parseInt(tokens[2]);
+      let size = parseInt(tokens[3]);
+      let row = parseInt(tokens[4]);
+      assemblies.push({
+        id: `assembly-${idx + 1}`,
+        queryId,
+        start,
+        end,
+        size,
+        row,
+      });
+    }
+    return { assemblies };
+  }
+
+  function prepareTandemRepeats(tandemRepeatStrings) {
+    let tandemRepeats = [];
+    for (const seg of tandemRepeatStrings) {
+      let tokens = seg.split(",");
+      let start = parseInt(tokens[0]);
+      let end = parseInt(tokens[1]);
+      let consensus = tokens[2];
+      let period = parseInt(tokens[3]);
+      let row = parseInt(tokens[4]);
+      tandemRepeats.push({
+        id: `tr-${row}`,
+        start,
+        end,
+        consensus,
+        period,
+        row,
+      });
+    }
+    return { tandemRepeats };
+  }
+
+  function prepareInactiveSegments(inactiveSegmentStrings) {
+    let inactiveSegments = [];
+
+    for (const [iter, iterStrings] of inactiveSegmentStrings.entries()) {
+      let iterSegs = [];
       for (const [idx, seg] of iterStrings.entries()) {
         let tokens = seg.split(",");
-        let start = parseInt(tokens[0]) + targetStart;
-        let end = parseInt(tokens[1]) + targetStart;
+        let start = parseInt(tokens[0]);
+        let end = parseInt(tokens[1]);
+        iterSegs.push({
+          id: `ia-${iter}-${idx}`,
+          start,
+          end,
+        });
+      }
+      inactiveSegments.push(iterSegs);
+    }
+    return { inactiveSegments };
+  }
+
+  function prepareConfidenceSegments(confidenceSegmentStrings) {
+    let confidenceSegments = [];
+
+    for (const [iter, iterStrings] of confidenceSegmentStrings.entries()) {
+      let iterSegs = [];
+      for (const [idx, seg] of iterStrings.entries()) {
+        let tokens = seg.split(",");
+        let start = parseInt(tokens[0]);
+        let end = parseInt(tokens[1]);
         let row = parseInt(tokens[2]);
         let conf = parseFloat(tokens[3]);
-        let query = tokens[4];
-        let queryStart = parseInt(tokens[5]);
-        let queryEnd = parseInt(tokens[6]);
+        let queryStart = parseInt(tokens[4]);
+        let queryEnd = parseInt(tokens[5]);
+        let queryLength = parseInt(tokens[6]);
         let strand = tokens[7];
-        fragments.push({
-          id: `fragment-${iter}-${idx}`,
-          traceIter: iter,
+        let query = tokens[8];
+
+        iterSegs.push({
+          id: `cs-${iter}-${idx}`,
           start,
           end,
-          conf,
           row,
-          query,
+          conf,
           queryStart,
           queryEnd,
+          queryLength,
           strand,
+          query,
         });
       }
+      confidenceSegments.push(iterSegs);
     }
-
-    return { fragments };
-  }
-
-  function prepareSegments(segmentStrings, targetStart) {
-    let segments = [];
-    for (const [iter, line] of segmentStrings.entries()) {
-      let iterStrings = line.split("|");
-      for (const [idx, seg] of iterStrings.entries()) {
-        let tokens = seg.split(",");
-        let start = parseInt(tokens[0]) + targetStart;
-        let end = parseInt(tokens[1]) + targetStart;
-        segments.push({
-          id: `segment-${iter}-${idx}`,
-          traceIter: iter,
-          start,
-          end,
-        });
-      }
-    }
-
-    return { segments };
+    return { confidenceSegments };
   }
 
   function prepareData() {
@@ -695,41 +875,66 @@ function run(data) {
       ...prepareAnn(data.referenceAnn),
     };
 
+    let genomeAnn = [];
+    let cnt = 0;
+    for (let i = 0; i < data.targetSeq.length; i += 1000) {
+      let start = data.targetStart + i;
+      let end = Math.min(data.targetEnd + 1, start + 1000)
+      let split = (data.targetSeq.slice(i, i + 1000));
+      genomeAnn.push({
+        id: `gseq-${cnt++}`,
+        start,
+        end,
+        sequence: split,
+      })
+    }
+
     let genome = {
       ...coords,
-      annotations: [
-        {
-          id: "genome-sequence",
-          start: data.targetStart,
-          end: data.targetEnd + 1,
-          sequence: data.targetSeq,
-        },
-      ],
+      annotations: genomeAnn,
     };
 
     let alignments = {
       ...coords,
       ...prepareAli(data.alignmentStrings),
-      ...prepareTrace(data.traceStrings, data.targetStart),
-      ...prepareFragments(data.fragmentStrings, data.targetStart),
-      ...prepareSegments(data.segmentStrings, data.targetStart),
+      ...prepareAssemblies(data.assemblyStrings),
+      ...prepareTandemRepeats(data.tandemRepeatStrings),
+      ambiguousTrace: prepareTrace(
+        data.ambiguousTraceStrings,
+        data.targetStart,
+      ),
+      conclusiveTrace: prepareTrace(
+        data.conclusiveTraceStrings,
+        data.targetStart,
+      ),
+      resolvedAssemblyRows: data.resolvedAssemblyRows,
+      unresolvedAssemblyRows: data.unresolvedAssemblyRows,
+      competedAssemblyRows: data.competedAssemblyRows,
+      ...prepareInactiveSegments(data.inactiveSegmentStrings),
+      ...prepareConfidenceSegments(data.confidenceSegmentStrings),
     };
 
-    rowToLength[0] = data.targetEnd - data.targetStart + 1;
     alignments.proxy.forEach((a) => {
       rowToQuery[a.row] = a.query;
-      rowToLength[a.row] = a.end - a.start + 1;
-      rowToStrand[a.row] = a.strand;
+      rowToConf[a.row] = 0.0;
     });
 
-    for (let row = 0; row < rowToQuery.length; row++) {
-      let fragments = alignments.fragments.filter((f) => f.row == row);
-      let confTotal = fragments.reduce(
-        (acc, f) => acc + f.conf * (f.end - f.start + 1),
-        0,
-      );
-      rowToConf[row] = confTotal / rowToLength[row];
+    alignments.confidenceSegments[0].forEach((a) => {
+      rowToConf[a.row] = Math.max(rowToConf[a.row], a.conf);
+    });
+
+    state.traceIteration = 0;
+    state.numTraceIterations = alignments.ambiguousTrace.length;
+
+    let traceRowsByIter = [];
+    for (let i = 0; i < state.numTraceIterations; i++) {
+      let rows = [];
+      alignments.ambiguousTrace[i].forEach((a) => rows.push(a.row));
+      alignments.conclusiveTrace[i].forEach((a) => rows.push(a.row));
+
+      traceRowsByIter.push([...new Set(rows)]);
     }
+    state.traceRowsByIter = traceRowsByIter;
 
     return { aurora, reference, genome, alignments };
   }
@@ -743,7 +948,7 @@ function run(data) {
           [0, 0],
           [chart.viewportWidthPx, chart.viewportHeightPx + 1],
         ])
-        .on("start", () => {})
+        .on("start", () => { })
         .on("brush", () => {
           let brushRange = soda.internalD3.event.selection;
           brushDomain = [

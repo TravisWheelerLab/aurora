@@ -11,18 +11,20 @@ pub struct ScoreParams {
 
 impl ScoreParams {
     pub fn new(
-        num_queries: usize,
+        num_alignments: usize,
         query_jump_probability: f64,
         num_skip_loops_eq_to_jump: usize,
     ) -> Self {
-        let query_jump_probability_per = query_jump_probability / num_queries as f64;
+        let query_jump_probability_per = query_jump_probability / num_alignments as f64;
 
         let query_jump_score = query_jump_probability_per.ln();
 
         // jumping to the skip state and then jumping back to a query sequence
         // should be the same cost as jumping between query sequences
         let query_to_skip_score =
-            (query_jump_score / 2.0) + query_jump_score / num_skip_loops_eq_to_jump as f64;
+            (query_jump_score / 2.0) 
+            // add a tiny bit of penalty to make entering and leaving asymmetrical 
+            + query_jump_score / num_skip_loops_eq_to_jump as f64;
 
         // staying in the same query sequence is essentially free (this should
         // not be zero mathematically, but it becomes zero due to floating point
@@ -40,5 +42,18 @@ impl ScoreParams {
             query_loop_score,
             skip_loop_score,
         }
+    }
+}
+
+impl std::fmt::Debug for ScoreParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "{}\n{}\n{}\n{}",
+            self.query_jump_score,
+            self.query_to_skip_score,
+            self.query_loop_score,
+            self.skip_loop_score
+        )
     }
 }

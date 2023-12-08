@@ -6,18 +6,6 @@ use std::{
 
 use crate::alphabet::STR_TO_DIGITAL_NUCLEOTIDE;
 
-pub trait SubstitutionMatrixSliceExt {
-    fn retrieve(&self, matrix_name: &str) -> &SubstitutionMatrix;
-}
-
-impl SubstitutionMatrixSliceExt for &[SubstitutionMatrix] {
-    fn retrieve(&self, matrix_name: &str) -> &SubstitutionMatrix {
-        self.iter()
-            .find(|m| m.name == matrix_name)
-            .unwrap_or_else(|| panic!("no matrix: {}", matrix_name))
-    }
-}
-
 pub struct SubstitutionMatrix {
     pub name: String,
     pub lambda: f64,
@@ -28,6 +16,12 @@ pub struct SubstitutionMatrix {
     pub original_scores: [[f64; 14]; 14],
     pub unscaled_scores: [[f64; 14]; 14],
     pub core_ratios: [[f64; 4]; 4],
+}
+
+impl PartialEq for SubstitutionMatrix {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
 }
 
 enum ParserState {
