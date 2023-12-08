@@ -26,6 +26,7 @@ use chunks::ProximityGroup;
 
 use anyhow::Result;
 use clap::Parser;
+use rayon::prelude::*;
 
 use crate::{chunks::validate_groups, pipeline::run_pipeline};
 
@@ -40,6 +41,14 @@ pub struct Args {
     /// The path to substitution matrices
     #[arg()]
     matrices: String,
+
+    #[arg(
+        short = 't',
+        long = "threads",
+        default_value_t = 8usize,
+        value_name = "n"
+    )]
+    pub num_threads: usize,
 
     /// The probability of jumping between query models
     #[arg(
@@ -192,8 +201,13 @@ fn main() -> Result<()> {
         args.target_join_distance
     ));
 
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(args.num_threads)
+        .build_global()
+        .unwrap();
+
     proximity_groups
-        .iter()
+        .par_iter()
         // .inspect(|g| println!("{g:?}"))
         .enumerate()
         .for_each(|(region_idx, group)| {
