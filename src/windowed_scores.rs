@@ -164,8 +164,11 @@ pub fn windowed_score(
                     }
                 });
 
-            let mut window_score = scores[0..half_window].iter().sum::<f64>()
-                + target_gap_scores[0..half_window].iter().sum::<f64>();
+            let ali_length = scores.len();
+            let mut window_score = scores[0..half_window.min(ali_length)].iter().sum::<f64>()
+                + target_gap_scores[0..half_window.min(ali_length)]
+                    .iter()
+                    .sum::<f64>();
             matrix.set(row_idx, start_col_idx, window_score);
 
             let len = scores.len();

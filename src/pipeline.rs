@@ -11,7 +11,7 @@ use crate::{
     confidence::confidence,
     matrix::{Matrix, MatrixDef},
     score_params::ScoreParams,
-    split::split_trace,
+    split::{split_trace, MatrixRange},
     support::windowed_confidence,
     viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment},
     viz::{write_soda_html, AdjudicationSodaData},
@@ -87,13 +87,12 @@ pub fn run_pipeline(
 
     // the initial active cols just removes the dead space between alignments
     let mut active_cols = collapsed_confidence_matrix.initial_active_cols();
+    let mut inactive_segments: Vec<Vec<MatrixRange>> = vec![];
     let mut trace_conclusive: Vec<Vec<TraceSegment>> = vec![];
     let mut trace_ambiguous: Vec<Vec<TraceSegment>> = vec![];
     let mut resolved_assembly_rows: Vec<Vec<usize>> = vec![];
     let mut unresolved_assembly_rows: Vec<Vec<usize>> = vec![];
     let mut competed_assembly_rows: Vec<Vec<usize>> = vec![];
-
-    let mut STOP = false;
 
     while !active_cols.is_empty() {
         viterbi_collapsed(
@@ -116,7 +115,7 @@ pub fn run_pipeline(
 
         let trace_segments = trace_segments(&trace);
 
-        let (ambiguous, conclusive, resolved, unresolved, competed) = split_trace(
+        let (ambiguous, conclusive, resolved, unresolved, competed, inactive) = split_trace(
             trace_segments,
             &assembly_group,
             &active_cols,
@@ -131,6 +130,7 @@ pub fn run_pipeline(
 
         debug_assert!(new_active_cols.len() <= active_cols.len());
 
+        inactive_segments.push(inactive);
         trace_conclusive.push(conclusive);
         trace_ambiguous.push(ambiguous);
         resolved_assembly_rows.push(resolved);
@@ -138,45 +138,57 @@ pub fn run_pipeline(
         competed_assembly_rows.push(competed);
 
         if new_active_cols.len() == active_cols.len() {
-            STOP = true;
             break;
         }
 
         active_cols = new_active_cols;
     }
 
+    let final_ambigous = trace_ambiguous.last().expect("no ambiguous trace").to_vec();
+    trace_conclusive.push(final_ambigous);
+
     let mut annotations: Vec<Annotation> = trace_conclusive
         .iter()
         .flat_map(|iter_segments| {
-            iter_segments.iter().map(|s| Annotation {
-                target_name: alignment_data
-                    .target_name_map
-                    .get(proximity_group.target_id)
-                    .clone(),
-                target_start: s.col_start + proximity_group.target_start,
-                target_end: s.col_end + proximity_group.target_start,
-                query_id: s.query_id,
-                query_name: match s.row_idx {
-                    // 0 is the skip state row
-                    // then 1..=(num_assemblies) are alignment rows
-                    // so anything >(num_assemblies) is a tandem repeat
-                    r if r > assembly_group.assemblies.len() => "tandem repeat".to_string(),
-                    _ => alignment_data.query_name_map.get(s.query_id).clone(),
-                },
-                query_start: viterbi_matrix.consensus_position(s.row_idx, s.col_start),
-                query_end: viterbi_matrix.consensus_position(s.row_idx, s.col_end),
-                strand: viterbi_matrix.strand_of_row(s.row_idx),
-                confidence: (s.col_start..=s.col_end)
-                    .map(|col_idx| collapsed_confidence_matrix.get(s.row_idx, col_idx))
-                    .sum::<f64>()
-                    / (s.col_end - s.col_start + 1) as f64,
-                join_id: s.row_idx,
-                region_id: region_idx,
-            })
+            iter_segments
+                .iter()
+                .filter(|s| s.ali_id != 0)
+                .map(|s| Annotation {
+                    target_name: alignment_data
+                        .target_name_map
+                        .get(proximity_group.target_id)
+                        .clone(),
+                    target_start: s.col_start + proximity_group.target_start,
+                    target_end: s.col_end + proximity_group.target_start,
+                    query_id: s.query_id,
+                    query_name: match s.row_idx {
+                        // 0 is the skip state row
+                        // then 1..=(num_assemblies) are alignment rows
+                        // so anything >(num_assemblies) is a tandem repeat
+                        r if r > assembly_group.assemblies.len() => {
+                            //
+                            let tandem_repeat_idx = s.row_idx - assembly_group.assemblies.len() - 1;
+                            let repeat = &assembly_group.tandem_repeats[tandem_repeat_idx];
+                            format!(
+                                "({}:{})#tandem repeat",
+                                repeat.period, repeat.consensus_pattern,
+                            )
+                        }
+                        _ => alignment_data.query_name_map.get(s.query_id).clone(),
+                    },
+                    query_start: viterbi_matrix.consensus_position(s.row_idx, s.col_start),
+                    query_end: viterbi_matrix.consensus_position(s.row_idx, s.col_end),
+                    strand: viterbi_matrix.strand_of_row(s.row_idx),
+                    confidence: (s.col_start..=s.col_end)
+                        .map(|col_idx| collapsed_confidence_matrix.get(s.row_idx, col_idx))
+                        .sum::<f64>()
+                        / (s.col_end - s.col_start + 1) as f64,
+                    join_id: s.row_idx,
+                    region_id: region_idx,
+                })
         })
         .collect_vec();
 
-    annotations.sort_by_key(|r| (r.join_id, r.target_start));
     annotations.sort_by_key(|r| r.target_start);
     annotations.retain(|r| r.query_name != "skip");
 
@@ -185,13 +197,15 @@ pub fn run_pipeline(
     if args.viz {
         let data = AdjudicationSodaData::new(
             &assembly_group,
-            &alignment_data,
+            &collapsed_confidence_matrix,
+            alignment_data,
             &annotations,
             trace_conclusive,
             trace_ambiguous,
             resolved_assembly_rows,
             unresolved_assembly_rows,
             competed_assembly_rows,
+            inactive_segments,
             &args,
         );
 
@@ -210,10 +224,6 @@ pub fn run_pipeline(
             "./fixtures/soda/annotations.js",
             out_path,
         );
-    }
-
-    if STOP {
-        panic!();
     }
 }
 

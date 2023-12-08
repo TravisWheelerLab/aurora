@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[derive(Debug)]
-struct MatrixRange {
+pub struct MatrixRange {
     pub col_start: usize,
     pub col_end: usize,
 }
@@ -35,6 +35,7 @@ pub fn split_trace(
     Vec<usize>,
     Vec<usize>,
     Vec<usize>,
+    Vec<MatrixRange>,
 ) {
     let rows_in_trace = trace_segments
         .iter()
@@ -212,7 +213,7 @@ pub fn split_trace(
                 }
                 // or if the gap is contained in ANY inactive column range
                 inactive_col_ranges.iter().any(|range| {
-                    assembly_gap.col_start >= range.col_start - args.fudge_distance
+                    assembly_gap.col_start >= range.col_start.saturating_sub(args.fudge_distance)
                         && assembly_gap.col_end <= range.col_end + args.fudge_distance
                 })
             })
@@ -228,69 +229,72 @@ pub fn split_trace(
     let mut ambiguous = vec![];
     let mut conclusive = vec![];
 
-    trace_segments
-        .into_iter()
-        .filter(|s| s.row_idx != 0)
-        .for_each(|segment| {
-            if unresolved_assembly_rows.contains(&segment.row_idx) {
-                ambiguous.push(segment);
-                return;
-            }
+    trace_segments.into_iter().for_each(|segment| {
+        // always treat runs in the skip state as ambiguous
+        if segment.row_idx == 0 {
+            ambiguous.push(segment);
+            return;
+        }
 
-            let overlapping_unresolved_assembly_parts = unresolved_assemblies
+        if unresolved_assembly_rows.contains(&segment.row_idx) {
+            ambiguous.push(segment);
+            return;
+        }
+
+        let overlapping_unresolved_assembly_parts = unresolved_assemblies
+            .iter()
+            .filter(|a| a.row_idx != segment.row_idx)
+            .flat_map(|a| &a.alignment_matrix_ranges)
+            .filter(|f| segment.col_start < f.col_end && segment.col_end > f.col_start)
+            .collect_vec();
+
+        if overlapping_unresolved_assembly_parts.is_empty() {
+            conclusive.push(segment);
+        } else {
+            let min_overlap = overlapping_unresolved_assembly_parts
                 .iter()
-                .filter(|a| a.row_idx != segment.row_idx)
-                .flat_map(|a| &a.alignment_matrix_ranges)
-                .filter(|f| segment.col_start < f.col_end && segment.col_end > f.col_start)
-                .collect_vec();
+                .map(|f| f.col_start)
+                .min()
+                .unwrap_or(segment.col_start);
 
-            if overlapping_unresolved_assembly_parts.is_empty() {
-                conclusive.push(segment);
-            } else {
-                let min_overlap = overlapping_unresolved_assembly_parts
-                    .iter()
-                    .map(|f| f.col_start)
-                    .min()
-                    .unwrap_or(segment.col_start);
+            let max_overlap = overlapping_unresolved_assembly_parts
+                .iter()
+                .map(|f| f.col_end)
+                .max()
+                .unwrap_or(segment.col_end);
 
-                let max_overlap = overlapping_unresolved_assembly_parts
-                    .iter()
-                    .map(|f| f.col_end)
-                    .max()
-                    .unwrap_or(segment.col_end);
+            let slice_start = min_overlap.max(segment.col_start);
+            let slice_end = max_overlap.min(segment.col_end);
 
-                let slice_start = min_overlap.max(segment.col_start);
-                let slice_end = max_overlap.min(segment.col_end);
-
-                if slice_start > segment.col_start {
-                    conclusive.push(TraceSegment {
-                        query_id: segment.query_id,
-                        ali_id: segment.ali_id,
-                        row_idx: segment.row_idx,
-                        col_start: segment.col_start,
-                        col_end: slice_start - 1,
-                    })
-                }
-
-                if slice_end < segment.col_end {
-                    conclusive.push(TraceSegment {
-                        query_id: segment.query_id,
-                        ali_id: segment.ali_id,
-                        row_idx: segment.row_idx,
-                        col_start: slice_end + 1,
-                        col_end: segment.col_end,
-                    })
-                }
-
-                ambiguous.push(TraceSegment {
+            if slice_start > segment.col_start {
+                conclusive.push(TraceSegment {
                     query_id: segment.query_id,
                     ali_id: segment.ali_id,
                     row_idx: segment.row_idx,
-                    col_start: slice_start,
-                    col_end: slice_end,
-                });
+                    col_start: segment.col_start,
+                    col_end: slice_start - 1,
+                })
             }
-        });
+
+            if slice_end < segment.col_end {
+                conclusive.push(TraceSegment {
+                    query_id: segment.query_id,
+                    ali_id: segment.ali_id,
+                    row_idx: segment.row_idx,
+                    col_start: slice_end + 1,
+                    col_end: segment.col_end,
+                })
+            }
+
+            ambiguous.push(TraceSegment {
+                query_id: segment.query_id,
+                ali_id: segment.ali_id,
+                row_idx: segment.row_idx,
+                col_start: slice_start,
+                col_end: slice_end,
+            });
+        }
+    });
 
     (
         ambiguous,
@@ -298,5 +302,6 @@ pub fn split_trace(
         resolved_assembly_rows,
         unresolved_assembly_rows,
         competed_assembly_rows,
+        inactive_col_ranges,
     )
 }

@@ -194,7 +194,7 @@ fn main() -> Result<()> {
 
     proximity_groups
         .iter()
-        .inspect(|g| println!("{g:?}"))
+        // .inspect(|g| println!("{g:?}"))
         .enumerate()
         .for_each(|(region_idx, group)| {
             run_pipeline(group, &alignment_data, region_idx, args.clone());

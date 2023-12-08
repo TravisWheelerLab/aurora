@@ -2,6 +2,12 @@ import * as soda from "https://esm.run/@sodaviz/soda@0.13.1";
 import * as d3 from "https://esm.run/d3-scale@4";
 
 function run(data) {
+  document.querySelector('.container').addEventListener('wheel', function(event) {
+    if (event.ctrlKey) {
+      event.preventDefault();
+    }
+  });
+
   const LABEL_WIDTH = 500;
   let brushDomain = undefined;
 
@@ -11,17 +17,31 @@ function run(data) {
   let optionTimeoutTime = 100;
   let optionTimeoutId = 0;
 
-  let traceColors = [
-    "#4e79a7",
-    "#f28e2c",
-    "#e15759",
-    "#76b7b2",
-    "#59a14f",
-    "#edc949",
-    "#af7aa1",
-    "#ff9da7",
-    "#9c755f",
-    "#bab0ab",
+
+  let classNames = [
+    "sine",
+    "line",
+    "ltr",
+    "dna",
+    "simple",
+    "low_complexity",
+    "satellite",
+    "rna",
+    "other",
+    "unknown",
+  ];
+
+  let classColors = [
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#7f7f7f",
+    "#bcbd22",
+    "#17becf"
   ];
 
   // this maps contain the dom
@@ -31,26 +51,31 @@ function run(data) {
   let options = {
     sidebarMinWidth: 30,
     sidebarMaxWidth: 200,
+    conclusiveColor: "#4e79a7",
+    ambiguousColor: "#f28e2c",
+    resolvedColor: "green",
+    unresolvedColor: "orange",
+    competedColor: "red",
+    confidenceSegmentColor: "purple",
   };
 
   let state = {
     sidebarExpanded: false,
-    colorScale: d3.scaleLinear().domain([0.0, 1.0]).range(["white", "black"]),
     labels: true,
     traceAtTop: true,
     assemblyAtTop: false,
     confThresh: 0.0,
-    confMin: 0.0,
-    confMax: 1.0,
     aliThresh: 300,
     regex: undefined,
     traceIteration: undefined,
     numTraceIterations: undefined,
     onlyTrace: true,
+    showInactive: false,
     traceRowsByIter: undefined,
   };
 
   let rowToQuery = [];
+  let rowToConf = [];
 
   let params = prepareData();
   let charts = initializeCharts();
@@ -71,7 +96,7 @@ function run(data) {
   }
 
   function handleEvent(e) {
-    let toggles = ["traceAtTop", "labels", "onlyTrace"];
+    let toggles = ["traceAtTop", "labels", "onlyTrace", "showInactive"];
     let numeric = ["confThresh", "aliThresh"];
     let text = ["regex"];
     let traceButtons = [];
@@ -101,11 +126,6 @@ function run(data) {
       console.error("unknown input: ", input);
     }
 
-    state.colorScale = d3
-      .scaleLinear()
-      .domain([state.confMin, state.confMax])
-      .range(["white", "black"]);
-
     clearTimeout(optionTimeoutId);
     optionTimeoutId = window.setTimeout(() => {
       renderBottom(false);
@@ -124,9 +144,10 @@ function run(data) {
     aliThresh.value = state.aliThresh;
     inputs.set("aliThresh", aliThresh);
 
-    inputs.set("onlyTrace", document.querySelector("input#onlyTrace"));
     inputs.set("labels", document.querySelector("input#labels"));
     inputs.set("traceAtTop", document.querySelector("input#traceAtTop"));
+    inputs.set("onlyTrace", document.querySelector("input#onlyTrace"));
+    inputs.set("showInactive", document.querySelector("input#showInactive"));
     inputs.set("regex", document.querySelector("input#regex"));
 
     // grab the entire sidebar
@@ -195,7 +216,7 @@ function run(data) {
         // sneaky: rewrite the layout object's row retrieval
         //         function so that it works for the annotations
         //         that the proxy annotations correspond to
-        this.layout.row = function (d) {
+        this.layout.row = function(d) {
           let id_tokens = d.a.id.split("-");
           let id = `${id_tokens[0]}-${id_tokens[1]}`;
           let row = this.rowMap.get(id);
@@ -207,13 +228,23 @@ function run(data) {
           this.addAxis();
         }
 
+        function classColor(d) {
+          let c = d.a.label.split("#")[1].split("/")[0].toLowerCase();;
+          let i = classNames.indexOf(c);
+          if (i == -1) {
+            i = 9;
+          }
+          return classColors[i];
+        }
+
         // fragments
         soda.chevronRectangle({
           chart: this,
           selector: "groups",
           annotations: params.aligned,
           orientation: (d) => d.a.strand,
-          strokeColor: "black",
+          strokeColor: classColor,
+          strokeWidth: 2,
         });
 
         // joins;
@@ -255,16 +286,15 @@ function run(data) {
     let genome = new soda.Chart({
       ...chartConf,
       upperPadSize: 25,
+      updateLayout() { },
       draw(params) {
         this.addAxis();
-
-        let a = params.annotations[0];
-        console.log(a.start, a.end, a.sequence.length);
 
         soda.sequence({
           chart: this,
           selector: "genome",
           annotations: params.annotations,
+          row: 0,
         });
       },
     });
@@ -332,6 +362,19 @@ function run(data) {
         let x = (d) => this.xScale(d.a.start - 0.25);
         let width = (d) => this.xScale(d.a.end) - this.xScale(d.a.start - 0.5);
 
+        if (state.showInactive) {
+          // inactive segments
+          soda.rectangle({
+            chart: this,
+            selector: "inactive",
+            annotations: params.inactiveSegments,
+            fillColor: "red",
+            fillOpacity: 0.1,
+            y: 0,
+            height: this.viewportHeightPx,
+          });
+        }
+
         // assemblies
         soda.rectangle({
           chart: this,
@@ -346,19 +389,19 @@ function run(data) {
                 d.a.row,
               ) >= 0
             ) {
-              return "red";
+              return options.competedColor;
             } else if (
               params.unresolvedAssemblyRows[state.traceIteration].indexOf(
                 d.a.row,
               ) >= 0
             ) {
-              return "orange";
+              return options.unresolvedColor;
             } else if (
               params.resolvedAssemblyRows[state.traceIteration].indexOf(
                 d.a.row,
               ) >= 0
             ) {
-              return "green";
+              return options.resolvedColor;
             } else {
               return "black";
             }
@@ -374,7 +417,7 @@ function run(data) {
           y,
           width,
           height: 12,
-          fillOpacity: 0.05,
+          fillColor: "white",
           strokeColor: "black",
         });
 
@@ -389,6 +432,20 @@ function run(data) {
           height: 12,
           fillOpacity: 0.05,
           strokeColor: "black",
+        });
+
+        // confidence segments
+        soda.rectangle({
+          chart: this,
+          selector: "confidence-segments",
+          annotations: params.confidenceSegments,
+          x,
+          y,
+          width,
+          height: 12,
+          fillOpacity: (d) => d.a.conf,
+          strokeColor: options.confidenceSegmentColor,
+          strokeOpacity: 0.75,
         });
 
         if (state.labels) {
@@ -417,6 +474,17 @@ function run(data) {
             x: (d) => Math.max(d.c.xScale(d.a.start), 0),
             text: (d) => [d.a.query, "..."],
           });
+
+          // tandem repeat labels
+          soda.dynamicText({
+            chart: this,
+            selector: "tr-labels",
+            annotations: params.tandemRepeats,
+            fillColor: "black",
+            text: (d) => [`tandem repeat(${d.a.period})`, "..."],
+          });
+
+
         }
 
         if (domainWidth < state.aliThresh) {
@@ -441,7 +509,7 @@ function run(data) {
           width,
           height: 3,
           fillColor: "none",
-          strokeColor: "blue",
+          strokeColor: options.conclusiveColor,
           strokeWidth: 3,
         });
 
@@ -454,19 +522,25 @@ function run(data) {
           width,
           height: 3,
           fillColor: "none",
-          strokeColor: "orange",
+          strokeColor: options.ambiguousColor,
           strokeWidth: 3,
         });
 
-        // soda.tooltip({
-        //   annotations: params.sequences,
-        //   text: (d) =>
-        //     `${d.a.query}: ` +
-        //     `${d.a.queryStart.toLocaleString()}..${d.a.queryEnd.toLocaleString()}` +
-        //     `<br>chrom: ${d.a.start.toLocaleString()}..${d.a.end.toLocaleString()}` +
-        //     `<br>strand: ${d.a.strand}` +
-        //     `<br>confidence: ${d.a.conf}`,
-        // });
+        soda.tooltip({
+          annotations: params.ambiguousTrace.concat(params.conclusiveTrace),
+          text: (d) =>
+            `confidence: ${d.a.conf}`,
+        })
+
+        soda.tooltip({
+          annotations: params.confidenceSegments,
+          text: (d) =>
+            `${d.a.query}: ` +
+            `${d.a.queryStart.toLocaleString()}..${d.a.queryEnd.toLocaleString()} / ${d.a.queryLength.toLocaleString()}` +
+            `<br>chrom: ${d.a.start.toLocaleString()}..${d.a.end.toLocaleString()}` +
+            `<br>strand: ${d.a.strand}` +
+            `<br>confidence: ${d.a.conf}`,
+        })
       },
 
       postZoom() {
@@ -480,7 +554,7 @@ function run(data) {
       },
     });
 
-    alignments.render = function (params) {
+    alignments.render = function(params) {
       //this.resetTransform();
 
       let queryFilter = (a) => {
@@ -505,6 +579,10 @@ function run(data) {
           return state.regex.test(query);
         }
 
+        if (rowToConf[a.row] <= state.confThresh) {
+          return false;
+        }
+
         return true;
       };
 
@@ -517,6 +595,8 @@ function run(data) {
           params.ambiguousTrace[state.traceIteration].filter(queryFilter),
         conclusiveTrace:
           params.conclusiveTrace[state.traceIteration].filter(queryFilter),
+        inactiveSegments: params.inactiveSegments[state.traceIteration],
+        confidenceSegments: params.confidenceSegments[state.traceIteration].filter(queryFilter),
       };
 
       this.renderParams = filteredParams;
@@ -665,6 +745,7 @@ function run(data) {
         let end = parseInt(tokens[1]) + targetStart;
         let queryId = parseInt(tokens[2]);
         let row = parseInt(tokens[3]);
+        let conf = parseFloat(tokens[4]);
         iterTrace.push({
           id: `trace-${iter}-${idx}`,
           traceIter: iter,
@@ -672,6 +753,7 @@ function run(data) {
           end,
           queryId,
           row,
+          conf,
         });
       }
       traces.push(iterTrace);
@@ -707,16 +789,73 @@ function run(data) {
       let start = parseInt(tokens[0]);
       let end = parseInt(tokens[1]);
       let consensus = tokens[2];
-      let row = parseInt(tokens[3]);
+      let period = parseInt(tokens[3]);
+      let row = parseInt(tokens[4]);
       tandemRepeats.push({
         id: `tr-${row}`,
         start,
         end,
         consensus,
+        period,
         row,
       });
     }
     return { tandemRepeats };
+  }
+
+  function prepareInactiveSegments(inactiveSegmentStrings) {
+    let inactiveSegments = [];
+
+    for (const [iter, iterStrings] of inactiveSegmentStrings.entries()) {
+      let iterSegs = [];
+      for (const [idx, seg] of iterStrings.entries()) {
+        let tokens = seg.split(",");
+        let start = parseInt(tokens[0]);
+        let end = parseInt(tokens[1]);
+        iterSegs.push({
+          id: `ia-${iter}-${idx}`,
+          start,
+          end,
+        });
+      }
+      inactiveSegments.push(iterSegs);
+    }
+    return { inactiveSegments };
+  }
+
+  function prepareConfidenceSegments(confidenceSegmentStrings) {
+    let confidenceSegments = [];
+
+    for (const [iter, iterStrings] of confidenceSegmentStrings.entries()) {
+      let iterSegs = [];
+      for (const [idx, seg] of iterStrings.entries()) {
+        let tokens = seg.split(",");
+        let start = parseInt(tokens[0]);
+        let end = parseInt(tokens[1]);
+        let row = parseInt(tokens[2]);
+        let conf = parseFloat(tokens[3]);
+        let queryStart = parseInt(tokens[4]);
+        let queryEnd = parseInt(tokens[5]);
+        let queryLength = parseInt(tokens[6]);
+        let strand = tokens[7];
+        let query = tokens[8];
+
+        iterSegs.push({
+          id: `cs-${iter}-${idx}`,
+          start,
+          end,
+          row,
+          conf,
+          queryStart,
+          queryEnd,
+          queryLength,
+          strand,
+          query,
+        });
+      }
+      confidenceSegments.push(iterSegs);
+    }
+    return { confidenceSegments };
   }
 
   function prepareData() {
@@ -736,16 +875,23 @@ function run(data) {
       ...prepareAnn(data.referenceAnn),
     };
 
+    let genomeAnn = [];
+    let cnt = 0;
+    for (let i = 0; i < data.targetSeq.length; i += 1000) {
+      let start = data.targetStart + i;
+      let end = Math.min(data.targetEnd + 1, start + 1000)
+      let split = (data.targetSeq.slice(i, i + 1000));
+      genomeAnn.push({
+        id: `gseq-${cnt++}`,
+        start,
+        end,
+        sequence: split,
+      })
+    }
+
     let genome = {
       ...coords,
-      annotations: [
-        {
-          id: "genome-sequence",
-          start: data.targetStart,
-          end: data.targetEnd + 1,
-          sequence: data.targetSeq,
-        },
-      ],
+      annotations: genomeAnn,
     };
 
     let alignments = {
@@ -764,9 +910,18 @@ function run(data) {
       resolvedAssemblyRows: data.resolvedAssemblyRows,
       unresolvedAssemblyRows: data.unresolvedAssemblyRows,
       competedAssemblyRows: data.competedAssemblyRows,
+      ...prepareInactiveSegments(data.inactiveSegmentStrings),
+      ...prepareConfidenceSegments(data.confidenceSegmentStrings),
     };
 
-    alignments.proxy.forEach((a) => (rowToQuery[a.row] = a.query));
+    alignments.proxy.forEach((a) => {
+      rowToQuery[a.row] = a.query;
+      rowToConf[a.row] = 0.0;
+    });
+
+    alignments.confidenceSegments[0].forEach((a) => {
+      rowToConf[a.row] = Math.max(rowToConf[a.row], a.conf);
+    });
 
     state.traceIteration = 0;
     state.numTraceIterations = alignments.ambiguousTrace.length;
@@ -793,7 +948,7 @@ function run(data) {
           [0, 0],
           [chart.viewportWidthPx, chart.viewportHeightPx + 1],
         ])
-        .on("start", () => {})
+        .on("start", () => { })
         .on("brush", () => {
           let brushRange = soda.internalD3.event.selection;
           brushDomain = [

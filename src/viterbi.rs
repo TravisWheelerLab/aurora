@@ -172,6 +172,7 @@ pub type Trace = Vec<TraceStep>;
 ///
 ///
 ///
+#[derive(Clone)]
 pub struct TraceSegment {
     pub query_id: usize,
     pub ali_id: usize,

@@ -317,6 +317,7 @@ pub struct TandemRepeat {
     pub target_start: usize,
     pub target_end: usize,
     pub consensus_pattern: String,
+    pub period: usize,
     pub scores: Vec<f64>,
 }
 
@@ -333,6 +334,7 @@ struct UltraRecord {
     pub start: usize,
     pub length: usize,
     pub consensus: String,
+    pub period: usize,
     pub position_score_deltas: Vec<f64>,
 }
 
@@ -515,6 +517,7 @@ impl AlignmentData {
                             target_start: r.start,
                             target_end: r.start + r.length - 1,
                             consensus_pattern: r.consensus,
+                            period: r.period,
                             scores: r.position_score_deltas,
                         })
                     }

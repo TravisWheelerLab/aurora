@@ -22,6 +22,8 @@ use crate::{
     },
     annotation::Annotation,
     collapse::{Assembly, AssemblyGroup},
+    matrix::Matrix,
+    split::MatrixRange,
     viterbi::TraceSegment,
     Args,
 };
@@ -110,6 +112,8 @@ pub struct AdjudicationSodaData {
     resolved_assembly_rows: Vec<Vec<usize>>,
     unresolved_assembly_rows: Vec<Vec<usize>>,
     competed_assembly_rows: Vec<Vec<usize>>,
+    inactive_segment_strings: Vec<Vec<String>>,
+    confidence_segment_strings: Vec<Vec<String>>,
 }
 
 impl AdjudicationSodaData {
@@ -117,6 +121,7 @@ impl AdjudicationSodaData {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         group: &AssemblyGroup,
+        confidence_matrix: &Matrix<f64>,
         alignment_data: &AlignmentData,
         annotations: &[Annotation],
         trace_conclusive: Vec<Vec<TraceSegment>>,
@@ -124,6 +129,7 @@ impl AdjudicationSodaData {
         resolved_assembly_rows: Vec<Vec<usize>>,
         unresolved_assembly_rows: Vec<Vec<usize>>,
         competed_assembly_rows: Vec<Vec<usize>>,
+        inactive_segments: Vec<Vec<MatrixRange>>,
         args: &Args,
     ) -> Self {
         let target_start = group.target_start;
@@ -163,14 +169,13 @@ impl AdjudicationSodaData {
 
         let mut overlapping_bed = vec![];
 
-        let target_name = "";
+        let target_name = alignment_data.target_name_map.get(group.target_id);
         if let (Some(path), Some(&offset)) = (
             &args.viz_reference_bed_path,
             args.viz_reference_bed_index.get(target_name),
         ) {
             let file = File::open(path).expect("failed to open reference bed");
             let reader = BufReader::new(file);
-
             reader
                 .lines()
                 .skip(offset)
@@ -229,40 +234,113 @@ impl AdjudicationSodaData {
             .enumerate()
             .map(|(repeat_idx, repeat)| {
                 format!(
-                    "{},{},{},{}",
+                    "{},{},{},{},{}",
                     repeat.target_start,
                     repeat.target_end,
                     repeat.consensus_pattern,
+                    repeat.period,
                     repeat_idx + group.assemblies.len() + 1,
                 )
             })
             .collect_vec();
 
+        let trace_string_fn = |seg: &TraceSegment| {
+            let mut conf = 0.0;
+            (seg.col_start..=seg.col_end)
+                .for_each(|col_idx| conf += confidence_matrix.get(seg.row_idx, col_idx));
+            conf /= (seg.col_end - seg.col_start + 1) as f64;
+            format!(
+                "{},{},{},{},{:3.2}",
+                seg.col_start, seg.col_end, seg.query_id, seg.row_idx, conf
+            )
+        };
+
         let conclusive_trace_strings = trace_conclusive
             .iter()
-            .map(|t| {
-                t.iter()
-                    .map(|seg| {
-                        format!(
-                            "{},{},{},{}",
-                            seg.col_start, seg.col_end, seg.query_id, seg.row_idx
-                        )
-                    })
-                    .join("|")
-            })
+            .map(|t| t.iter().map(trace_string_fn).join("|"))
             .collect_vec();
 
         let ambiguous_trace_strings = trace_ambiguous
             .iter()
-            .map(|t| {
-                t.iter()
-                    .map(|seg| {
+            .map(|t| t.iter().map(trace_string_fn).join("|"))
+            .collect_vec();
+
+        let inactive_segment_strings = inactive_segments
+            .iter()
+            .map(|segs| {
+                segs.iter()
+                    .map(|s| {
                         format!(
-                            "{},{},{},{}",
-                            seg.col_start, seg.col_end, seg.query_id, seg.row_idx
+                            "{},{}",
+                            s.col_start + group.target_start,
+                            s.col_end + group.target_start
                         )
                     })
-                    .join("|")
+                    .collect_vec()
+            })
+            .collect_vec();
+
+        let confidence_segment_strings = trace_ambiguous
+            .iter()
+            .zip(trace_conclusive.iter())
+            .map(|(a, c)| {
+                a.iter()
+                    .chain(c)
+                    .map(|seg| {
+                        (
+                            seg.col_start + group.target_start,
+                            seg.col_end + group.target_start,
+                        )
+                    })
+                    .flat_map(|(seg_target_start, seg_target_end)| {
+                        group
+                            .assemblies
+                            .iter()
+                            .enumerate()
+                            .map(|(i, a)| (i + 1, a))
+                            .flat_map(move |(row_idx, assembly)| {
+                                assembly
+                                    .alignments
+                                    .iter()
+                                    .filter(move |ali| {
+                                        ali.target_start < seg_target_end
+                                            && ali.target_end > seg_target_start
+                                    })
+                                    .map(move |ali| {
+                                        (
+                                            row_idx,
+                                            ali,
+                                            seg_target_start.max(ali.target_start)
+                                                - group.target_start,
+                                            seg_target_end.min(ali.target_end) - group.target_start,
+                                        )
+                                    })
+                                    .map(move |(row_idx, ali, col_start, col_end)| {
+                                        let mut conf = 0.0;
+                                        (col_start..=col_end).for_each(|col_idx| {
+                                            conf += confidence_matrix.get(row_idx, col_idx)
+                                        });
+                                        conf /= (col_end - col_start + 1) as f64;
+                                        format!(
+                                            "{},{},{},{:3.2},{},{},{},{},{}",
+                                            seg_target_start.max(ali.target_start),
+                                            seg_target_end.min(ali.target_end),
+                                            row_idx,
+                                            conf,
+                                            confidence_matrix
+                                                .consensus_position(row_idx, col_start),
+                                            confidence_matrix.consensus_position(row_idx, col_end),
+                                            alignment_data
+                                                .query_lengths
+                                                .get(&ali.query_id)
+                                                .unwrap(),
+                                            confidence_matrix.strand_of_row(row_idx),
+                                            alignment_data.query_name_map.get(ali.query_id),
+                                        )
+                                    })
+                            })
+                    })
+                    .collect_vec()
             })
             .collect_vec();
 
@@ -280,6 +358,8 @@ impl AdjudicationSodaData {
             resolved_assembly_rows,
             unresolved_assembly_rows,
             competed_assembly_rows,
+            inactive_segment_strings,
+            confidence_segment_strings,
         }
     }
 }
