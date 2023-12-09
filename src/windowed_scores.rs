@@ -1,4 +1,4 @@
-use crate::alignment::{Alignment, VecMap};
+use crate::alignment::{Alignment, TandemRepeat, VecMap};
 use crate::alphabet::{GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, PAD_DIGITAL};
 use crate::matrix::Matrix;
 use crate::substitution_matrix::SubstitutionMatrix;
@@ -78,6 +78,7 @@ pub fn background(
 pub fn windowed_score(
     matrix: &mut Matrix<f64>,
     alignments: &[Alignment],
+    tandem_repeats: &[TandemRepeat],
     substitution_matrices: &VecMap<SubstitutionMatrix>,
     window_size: usize,
     background_window_size: usize,
@@ -103,10 +104,11 @@ pub fn windowed_score(
     (0..alignments.len())
         .map(|ali_idx| {
             (
+                // +1 for the skip state
                 ali_idx + 1,
                 alignments[ali_idx].target_start - matrix_target_start,
                 &alignments[ali_idx],
-                substitution_matrices.value(alignments[ali_idx].substitution_matrix_id),
+                substitution_matrices.get(alignments[ali_idx].substitution_matrix_id),
             )
         })
         .for_each(|(row_idx, start_col_idx, alignment, substitution_matrix)| {
@@ -162,8 +164,11 @@ pub fn windowed_score(
                     }
                 });
 
-            let mut window_score = scores[0..half_window].iter().sum::<f64>()
-                + target_gap_scores[0..half_window].iter().sum::<f64>();
+            let ali_length = scores.len();
+            let mut window_score = scores[0..half_window.min(ali_length)].iter().sum::<f64>()
+                + target_gap_scores[0..half_window.min(ali_length)]
+                    .iter()
+                    .sum::<f64>();
             matrix.set(row_idx, start_col_idx, window_score);
 
             let len = scores.len();
@@ -190,6 +195,33 @@ pub fn windowed_score(
                     matrix.set(row_idx, col_idx, window_score);
                     prev_left_idx = left_idx;
                     prev_right_idx = right_idx;
+                });
+        });
+
+    tandem_repeats
+        .iter()
+        .enumerate()
+        .for_each(|(repeat_idx, repeat)| {
+            let row_idx = repeat_idx + alignments.len() + 1;
+            let col_start = repeat.target_start - matrix_target_start;
+            let col_end = repeat.target_end - matrix_target_start;
+
+            let repeat_len = repeat.target_end - repeat.target_start + 1;
+            let mut scores_padded = vec![0.0; repeat_len + window_size];
+
+            repeat.scores.iter().enumerate().for_each(|(idx, score)| {
+                scores_padded[idx + half_window] = *score;
+            });
+
+            debug_assert_eq!(col_end - col_start + 1, repeat_len);
+            let mut window_score = scores_padded[0..window_size].iter().sum::<f64>();
+            (col_start + 1..=col_end)
+                .zip(1..repeat_len)
+                .map(|(col_idx, repeat_idx)| (col_idx, repeat_idx - 1, repeat_idx + window_size))
+                .for_each(|(col_idx, left_idx, right_idx)| {
+                    window_score -= scores_padded[left_idx];
+                    window_score += scores_padded[right_idx];
+                    matrix.set(row_idx, col_idx, window_score);
                 });
         });
 }

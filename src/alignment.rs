@@ -1,16 +1,18 @@
 use anyhow::Result;
-use std::fmt;
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
+use std::{fmt, hash};
 
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::alphabet::{
-    NucleotideByteUtils, ALIGNMENT_ALPHABET_STR, DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL,
-    GAP_OPEN_DIGITAL, NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, UTF8_TO_DIGITAL_NUCLEOTIDE,
+    ALIGNMENT_ALPHABET_STR, DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
+    NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, UTF8_TO_DIGITAL_NUCLEOTIDE,
 };
 use crate::substitution_matrix::SubstitutionMatrix;
 
-#[derive(Default, Debug, Clone, Copy, PartialEq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Strand {
     Forward,
     Reverse,
@@ -47,7 +49,7 @@ impl fmt::Display for Strand {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Eq)]
 pub struct Alignment {
     pub target_seq: Vec<u8>,
     pub query_seq: Vec<u8>,
@@ -56,37 +58,49 @@ pub struct Alignment {
     pub query_start: usize,
     pub query_end: usize,
     pub strand: Strand,
+    pub id: usize,
     pub query_id: usize,
     pub substitution_matrix_id: usize,
 }
 
-impl std::fmt::Display for Alignment {
+impl PartialEq for Alignment {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl hash::Hash for Alignment {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl fmt::Display for Alignment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}: {}-{} {}-{}",
+            "{}: T|{}-{} Q|{}-{}",
             self.query_id, self.target_start, self.target_end, self.query_start, self.query_end
         )
     }
 }
 
-// TODO: I don't think we need this anymore
-// impl Serialize for Alignment {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: Serializer,
-//     {
-//         let mut state = serializer.serialize_struct("Alignment", 6)?;
-//         state.serialize_field("name", &self.query_name)?;
-//         state.serialize_field("start", &self.target_start)?;
-//         state.serialize_field("end", &self.target_end)?;
-//         state.serialize_field("row", &self.query_id)?;
-//         state.serialize_field("strand", &self.strand.to_string())?;
-//         state.serialize_field("targetSeq", &self.target_seq.to_utf8_string())?;
-//         state.serialize_field("sequence", &self.query_seq.to_utf8_string())?;
-//         state.end()
-//     }
-// }
+impl Serialize for Alignment {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("Alignment", 5)?;
+        state.serialize_field("query", &self.query_id)?;
+        state.serialize_field("queryStart", &self.query_start)?;
+        state.serialize_field("queryEnd", &self.query_end)?;
+        state.serialize_field("targetStart", &self.target_start)?;
+        state.serialize_field("targetEnd", &self.target_end)?;
+        state.serialize_field("row", &self.query_id)?;
+        state.serialize_field("strand", &self.strand.to_string())?;
+        state.end()
+    }
+}
 
 pub fn caf_str_to_digital_nucleotides(caf_str: &str) -> (Vec<u8>, Vec<u8>) {
     //  Robert's notes on the CAF format:
@@ -142,7 +156,6 @@ pub fn caf_str_to_digital_nucleotides(caf_str: &str) -> (Vec<u8>, Vec<u8>) {
     let mut ali_idx = 0usize;
     for &utf8_byte in caf_str_bytes {
         let new_state = match utf8_byte {
-            // rust note: this if statement is called a match guard
             b if NUCLEOTIDE_ALPHABET_UTF8.contains(&b) => match prev_state {
                 CafState::Mutation => CafState::Match,
                 other => other,
@@ -264,7 +277,7 @@ impl<T: std::cmp::PartialEq> VecMap<T> {
         }
     }
 
-    pub fn value(&self, key: usize) -> &T {
+    pub fn get(&self, key: usize) -> &T {
         debug_assert!(key < self.values.len(), "invalid key: {key}");
         &self.values[key]
     }
@@ -283,10 +296,46 @@ impl<T: std::cmp::PartialEq> VecMap<T> {
         self.values
             .iter()
             .enumerate()
-            .find(|(k, n)| *n == value)
+            .find(|(_, n)| *n == value)
             .expect("key not found")
             .0
     }
+}
+
+impl<T: std::cmp::PartialEq + fmt::Debug> fmt::Debug for VecMap<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (0..self.size()).for_each(|key| {
+            writeln!(f, "{key}: {:?}", self.values[key]).unwrap();
+        });
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct TandemRepeat {
+    pub id: usize,
+    pub target_start: usize,
+    pub target_end: usize,
+    pub consensus_pattern: String,
+    pub period: usize,
+    pub scores: Vec<f64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct UltraJson {
+    pub repeats: Vec<UltraRecord>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct UltraRecord {
+    pub sequence_name: String,
+    pub start: usize,
+    pub length: usize,
+    pub consensus: String,
+    pub period: usize,
+    pub position_score_deltas: Vec<f64>,
 }
 
 /// A group of alignments that share
@@ -296,6 +345,7 @@ pub struct TargetGroup {
     pub target_start: usize,
     pub target_end: usize,
     pub alignments: Vec<Alignment>,
+    pub tandem_repeats: Vec<TandemRepeat>,
 }
 
 /// This holds all input alignments along
@@ -305,11 +355,16 @@ pub struct AlignmentData {
     pub target_groups: Vec<TargetGroup>,
     pub target_name_map: VecMap<String>,
     pub query_name_map: VecMap<String>,
+    pub query_lengths: HashMap<usize, usize>,
     pub substitution_matrices: VecMap<SubstitutionMatrix>,
 }
 
 impl AlignmentData {
-    pub fn from_caf_and_matrices<C: Read, M: Read>(caf: C, matrices: M) -> Result<Self> {
+    pub fn from_caf_and_ultra_and_matrices<C: Read, U: Read, M: Read>(
+        caf: C,
+        ultra: Option<U>,
+        matrices: M,
+    ) -> Result<Self> {
         // Robert's notes on CAF:
         //   0: score - bit, raw, complexity adjusted or evalue.
         //   1: Percent Substitution - Percent of mismatched non-gap characters in the alignment
@@ -357,13 +412,16 @@ impl AlignmentData {
         let mut target_groups: Vec<TargetGroup> = vec![];
         let mut target_name_map: VecMap<String> = VecMap::new();
         let mut query_name_map: VecMap<String> = VecMap::from(vec!["skip".into()]);
+        let mut query_lengths: HashMap<usize, usize> = HashMap::new();
+        query_lengths.insert(0, 0);
 
         let caf_lines = BufReader::new(caf).lines();
 
         caf_lines
             .map(|l| l.expect("failed to read line"))
             .filter(|l| !l.is_empty())
-            .for_each(|line| {
+            .enumerate()
+            .for_each(|(line_num, line)| {
                 let tokens: Vec<&str> = line.split(',').collect();
 
                 let target_name = tokens[4].to_string();
@@ -375,6 +433,9 @@ impl AlignmentData {
                 let query_start =
                     str::parse::<usize>(tokens[10]).expect("failed to parse query start");
                 let query_end = str::parse::<usize>(tokens[11]).expect("failed to parse query end");
+                let query_remaining =
+                    str::parse::<usize>(tokens[12]).expect("failed to parse query remaining");
+
                 let strand = match tokens[13] {
                     "0" => Strand::Forward,
                     "1" => Strand::Reverse,
@@ -401,13 +462,22 @@ impl AlignmentData {
                             target_start,
                             target_end,
                             alignments: vec![],
+                            tandem_repeats: vec![],
                         });
                         target_groups.last_mut().unwrap()
                     }
                 };
 
                 let query_id = query_name_map.insert(query_name);
-
+                match strand {
+                    Strand::Forward => {
+                        query_lengths.insert(query_id, query_end + query_remaining);
+                    }
+                    Strand::Reverse => {
+                        query_lengths.insert(query_id, query_start + query_remaining);
+                    }
+                    Strand::Unset => panic!(),
+                }
                 let substitution_matrix_id = substitution_matrices
                     .values
                     .iter()
@@ -419,15 +489,40 @@ impl AlignmentData {
                 target_group.alignments.push(Alignment {
                     target_seq,
                     query_seq,
-                    query_id,
                     target_start,
                     target_end,
                     query_start,
                     query_end,
                     strand,
+                    id: line_num + 1,
+                    query_id,
                     substitution_matrix_id,
                 });
             });
+
+        if let Some(buf) = ultra {
+            let buf_reader = BufReader::new(buf);
+            let ultra_json: UltraJson = serde_json::from_reader(buf_reader)?;
+            ultra_json
+                .repeats
+                .into_iter()
+                .enumerate()
+                .for_each(|(idx, r)| {
+                    let target_id = target_name_map.key(&r.sequence_name);
+
+                    if let Some(group) = target_groups.get_mut(target_id) {
+                        group.tandem_repeats.push(TandemRepeat {
+                            // TODO: figure out if ultra uses 0- or 1-based indexing
+                            id: idx + 1,
+                            target_start: r.start,
+                            target_end: r.start + r.length - 1,
+                            consensus_pattern: r.consensus,
+                            period: r.period,
+                            scores: r.position_score_deltas,
+                        })
+                    }
+                });
+        }
 
         target_groups.iter_mut().for_each(|g| {
             g.alignments.sort_by(|a, b| {
@@ -441,6 +536,7 @@ impl AlignmentData {
             target_groups,
             target_name_map,
             query_name_map,
+            query_lengths,
             substitution_matrices,
         })
     }

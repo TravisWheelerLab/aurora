@@ -1,0 +1,136 @@
+<!doctype html>
+<html>
+  <style>
+    :root {
+      --primary-color: cadetblue;
+      --darker-primary-color: darkcyan;
+      --background-color: white;
+    }
+    body {
+      margin: 0;
+      font-family: "Lato", sans-serif;
+    }
+
+    .container {
+      display: flex;
+    }
+
+    .sidebar {
+      width: 30px;
+      height: 100vh;
+      border: 1px solid black;
+      overflow-x: hidden;
+      transition: width 0.3s ease;
+      top: 0;
+      position: -webkit-sticky;
+      position: sticky;
+    }
+
+    .inner-sidebar {
+      width: 200px;
+    }
+
+    .viz {
+      flex-grow: 1;
+    }
+
+    .button {
+      border: none;
+      border-radius: 10px;
+      text-decoration: none;
+      display: inline-block;
+      margin: 4px;
+      padding: 6px 4px;
+      transition-duration: 0.4s;
+      user-select: none;
+      cursor: pointer;
+      outline: none;
+      background: var(--primary-color);
+      color: white;
+    }
+
+    .button:hover {
+      background: var(--darker-primary-color);
+    }
+
+    .widget-horizontal {
+      padding-left: 20px;
+      margin: 10px;
+      display: flex;
+    }
+
+    .widget-vertical {
+      padding-left: 20px;
+      margin: 10px;
+      display: flex;
+      flex-direction: column;
+    }
+  </style>
+
+  <body>
+    <div class="container">
+      <div class="sidebar" id="sidebar">
+        <div class="inner-sidebar">
+          <span class="button" id="toggle">&#xFF0B;</span>
+
+          <div class="widget-vertical">
+            <label for="aliThresh">Alignment threshold:</label><br />
+            <input type="text" id="aliThresh" rows="15" cols="15" resize="none"></input>
+          </div>
+
+          <div class="widget-vertical">
+            <label for="confThresh">Confidence threshold:</label><br />
+            <input type="text" id="confThresh" rows="15" cols="15" resize="none"></input>
+          </div>
+
+          <div class="widget-horizontal">
+            <label>
+              <input
+                type="checkbox"
+                id="traceAtTop"
+                name="traceAtTop"
+                checked
+              />
+              Trace at top
+            </label>
+          </div>
+
+          <div class="widget-horizontal">
+            <label>
+              <input type="checkbox" id="labels" name="labels" checked />
+              Labels
+            </label>
+          </div>
+
+          <div class="widget-horizontal">
+            <label>
+              <input type="checkbox" id="onlyTrace" name="onlyTrace" checked />
+              Only show trace
+            </label>
+          </div>
+
+          <div class="widget-horizontal">
+            <label>
+              <input type="checkbox" id="showInactive" name="showInactive"/>
+              Show inactive columns
+            </label>
+          </div>
+
+          <div class="widget-vertical">
+            <label for="regex">Regex:</label><br />
+            <input type="text" id="regex" rows="15" cols="15" resize="none"></input>
+          </div>
+        </div>
+      </div>
+      <div class="viz"></div>
+    </div>
+  </body>
+
+  <script type="module">
+    JS_TARGET;
+
+    let data = DATA_TARGET;
+
+    run(data);
+  </script>
+</html>

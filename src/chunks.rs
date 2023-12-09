@@ -1,4 +1,4 @@
-use crate::alignment::{Alignment, AlignmentData};
+use crate::alignment::{Alignment, AlignmentData, TandemRepeat};
 
 #[derive(Copy, Clone)]
 struct Interval {
@@ -21,6 +21,7 @@ pub struct ProximityGroup<'a> {
     pub target_start: usize,
     pub target_end: usize,
     pub alignments: &'a [Alignment],
+    pub tandem_repeats: &'a [TandemRepeat],
 }
 
 impl<'a> std::fmt::Debug for ProximityGroup<'a> {
@@ -37,9 +38,9 @@ impl<'a> std::fmt::Debug for ProximityGroup<'a> {
 
 impl<'a> ProximityGroup<'a> {
     pub fn from_alignment_data(
-        alignment_data: &AlignmentData,
+        alignment_data: &'a AlignmentData,
         join_distance: usize,
-    ) -> Vec<ProximityGroup> {
+    ) -> Vec<ProximityGroup<'a>> {
         alignment_data.target_groups.iter().for_each(|g| {
             debug_assert!(g
                 .alignments
@@ -53,6 +54,7 @@ impl<'a> ProximityGroup<'a> {
             .flat_map(|target_group| {
                 let query_ids = 0..alignment_data.query_name_map.size();
                 let mut target_intervals: Vec<Interval> = query_ids
+                    // skip the skip state
                     .skip(1)
                     .flat_map(|query_id| {
                         // grab all alignments to this query
@@ -92,6 +94,15 @@ impl<'a> ProximityGroup<'a> {
                     })
                     .collect();
 
+                // add intervals for each tandem repeat
+                target_group.tandem_repeats.iter().for_each(|r| {
+                    target_intervals.push(Interval {
+                        target_id: target_group.target_id,
+                        target_start: r.target_start,
+                        target_end: r.target_end,
+                    })
+                });
+
                 target_intervals.sort_by_key(|interval| interval.target_start);
 
                 let merged_intervals = target_intervals.iter().skip(1).fold(
@@ -107,25 +118,44 @@ impl<'a> ProximityGroup<'a> {
                     },
                 );
 
-                let mut start_idx = 0usize;
+                let mut ali_start_idx = 0usize;
+                let mut repeat_start_idx = 0usize;
                 merged_intervals.into_iter().map(move |interval| {
-                    let end_idx = target_group
+                    // find the index of the first alignment
+                    // that is outside of the interval
+                    let ali_end_idx = target_group
                         .alignments
                         .iter()
                         .enumerate()
-                        .skip(start_idx)
+                        .skip(ali_start_idx)
                         .find(|(_, a)| a.target_start > interval.target_end)
                         .unwrap_or((target_group.alignments.len(), &Alignment::default()))
                         .0;
 
-                    let alignments = &target_group.alignments[start_idx..end_idx];
+                    // find the index of the first repeat
+                    // that is outside of the interval
+                    let repeat_end_idx = target_group
+                        .tandem_repeats
+                        .iter()
+                        .enumerate()
+                        .skip(repeat_start_idx)
+                        .find(|(_, a)| a.target_start > interval.target_end)
+                        .unwrap_or((target_group.tandem_repeats.len(), &TandemRepeat::default()))
+                        .0;
 
-                    start_idx = end_idx;
+                    let alignments = &target_group.alignments[ali_start_idx..ali_end_idx];
+                    let tandem_repeats =
+                        &target_group.tandem_repeats[repeat_start_idx..repeat_end_idx];
+
+                    ali_start_idx = ali_end_idx;
+                    repeat_start_idx = repeat_end_idx;
+
                     ProximityGroup {
                         target_id: interval.target_id,
                         target_start: interval.target_start,
                         target_end: interval.target_end,
                         alignments,
+                        tandem_repeats,
                     }
                 })
             })
@@ -135,6 +165,12 @@ impl<'a> ProximityGroup<'a> {
 
 pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool {
     for (group_idx, group) in groups.iter().enumerate() {
+        for repeat in group.tandem_repeats {
+            if repeat.target_start < group.target_start || repeat.target_end > group.target_end {
+                return false;
+            }
+        }
+
         for ali in group.alignments {
             // check if any alignments are outside of the chunk boundaries
             if ali.target_start < group.target_start || ali.target_end > group.target_end {
