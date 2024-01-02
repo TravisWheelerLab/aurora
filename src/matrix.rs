@@ -457,6 +457,7 @@ where
         self.data[col][sparse_row_index]
     }
 
+    #[allow(dead_code)]
     pub fn get_mut(&mut self, row: usize, col: usize) -> &mut T {
         let sparse_row_index = self.logical_to_sparse_row_idx(row, col);
         &mut self.data[col][sparse_row_index]

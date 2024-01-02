@@ -22,6 +22,8 @@ pub struct ProximityGroup<'a> {
     pub target_end: usize,
     pub alignments: &'a [Alignment],
     pub tandem_repeats: &'a [TandemRepeat],
+    pub line_start: usize,
+    pub line_end: usize,
 }
 
 impl<'a> std::fmt::Debug for ProximityGroup<'a> {
@@ -147,16 +149,21 @@ impl<'a> ProximityGroup<'a> {
                     let tandem_repeats =
                         &target_group.tandem_repeats[repeat_start_idx..repeat_end_idx];
 
-                    ali_start_idx = ali_end_idx;
-                    repeat_start_idx = repeat_end_idx;
-
-                    ProximityGroup {
+                    // create the group before adjusting the ali_start_idx
+                    let group = ProximityGroup {
                         target_id: interval.target_id,
                         target_start: interval.target_start,
                         target_end: interval.target_end,
                         alignments,
                         tandem_repeats,
-                    }
+                        line_start: target_group.alignments[ali_start_idx].id,
+                        line_end: target_group.alignments[ali_end_idx - 1].id,
+                    };
+
+                    ali_start_idx = ali_end_idx;
+                    repeat_start_idx = repeat_end_idx;
+
+                    group
                 })
             })
             .collect()

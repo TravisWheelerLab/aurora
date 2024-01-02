@@ -17,7 +17,7 @@ mod windowed_scores;
 use std::{
     collections::HashMap,
     fs::{create_dir_all, File},
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
 };
 
@@ -45,7 +45,7 @@ pub struct Args {
     #[arg(
         short = 't',
         long = "threads",
-        default_value_t = 8usize,
+        default_value_t = 1usize,
         value_name = "n"
     )]
     pub num_threads: usize,
@@ -101,7 +101,8 @@ pub struct Args {
     )]
     pub min_fragment_length: usize,
 
-    ///
+    /// The distance used to approximate various
+    /// alignment overlap conditions.
     #[arg(
         short = 'F',
         long = "fudge-distance",
@@ -114,16 +115,20 @@ pub struct Args {
     #[arg(short = 'U', long = "ultra-file", value_name = "path")]
     pub ultra_file_path: Option<PathBuf>,
 
-    /// Produce visualization output
+    /// Produce visualization output for annotations
     #[arg(long = "viz")]
     pub viz: bool,
 
-    /// Produce visualization output
+    /// Produce visualization output for potential join "assemblies"
     #[arg(long = "assembly-viz")]
     pub assembly_viz: bool,
 
+    /// Produce a file that describes the regions
+    #[arg(long = "regions", value_name = "path")]
+    pub regions_path: Option<PathBuf>,
+
     /// The path to the directory to which
-    /// vizualization output will be written
+    /// visualization output will be written
     #[arg(long = "viz-out", default_value = "./viz", value_name = "path")]
     pub viz_output_path: PathBuf,
 
@@ -195,6 +200,42 @@ fn main() -> Result<()> {
 
     let proximity_groups =
         ProximityGroup::from_alignment_data(&alignment_data, args.target_join_distance);
+
+    if let Some(path) = &args.regions_path {
+        let regions_file = File::create(path).unwrap();
+        let mut regions_writer = BufWriter::new(regions_file);
+        proximity_groups.iter().enumerate().for_each(|(idx, g)| {
+            writeln!(
+                &mut regions_writer,
+                "{},{},{}:{},{}:{}",
+                idx,
+                alignment_data.target_name_map.get(g.target_id),
+                g.target_start,
+                g.target_end,
+                g.line_start,
+                g.line_end,
+            )
+            .expect("failed to write to regions file")
+        });
+    }
+
+    if args.viz {
+        let index_file = File::create(args.viz_output_path.join("index.html")).unwrap();
+        let mut index_writer = BufWriter::new(index_file);
+
+        proximity_groups.iter().enumerate().for_each(|(idx, g)| {
+            writeln!(
+                &mut index_writer,
+                "<a href={}/index.html>region {} | {} {}:{}</a><br>",
+                idx,
+                idx,
+                alignment_data.target_name_map.get(g.target_id),
+                g.target_start,
+                g.target_end,
+            )
+            .expect("failed to write to index.html");
+        });
+    }
 
     debug_assert!(validate_groups(
         &proximity_groups,

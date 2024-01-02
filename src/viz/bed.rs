@@ -107,11 +107,13 @@ impl BedRecord {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_str(record_str: &str) -> Self {
         let tokens: Vec<&str> = record_str.split_whitespace().collect();
         Self::from_tokens(&tokens)
     }
 
+    #[allow(dead_code)]
     pub fn from_joined_annotations(joins: &mut [&Annotation]) -> Self {
         joins.sort_by_key(|a| a.target_start);
 
@@ -184,6 +186,7 @@ impl BedRecord {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_block_group(group: &BlockGroup) -> Self {
         let mut block_sizes: Vec<i32> = vec![];
         let mut block_starts: Vec<i32> = vec![];

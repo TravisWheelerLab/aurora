@@ -229,12 +229,17 @@ function run(data) {
         }
 
         function classColor(d) {
-          let c = d.a.label.split("#")[1].split("/")[0].toLowerCase();;
-          let i = classNames.indexOf(c);
-          if (i == -1) {
-            i = 9;
+          let firstSplit = d.a.label.split('#');
+          if (firstSplit.length > 1) {
+            let c = firstSplit[1].split("/")[0].toLowerCase();;
+            let i = classNames.indexOf(c);
+            if (i == -1) {
+              i = 9;
+            }
+            return classColors[i];
+          } else {
+            return classColors[9];
           }
-          return classColors[i];
         }
 
         // fragments
@@ -277,11 +282,11 @@ function run(data) {
       upperPadSize: 25,
       ...annChartConf,
     });
-
+    
     let aurora = new soda.Chart(annChartConf);
-    let auroraZoom = new soda.Chart({
-      ...annChartConf,
-    });
+
+    let referenceZoom = new soda.Chart(annChartConf)
+    let auroraZoom = new soda.Chart(annChartConf);
 
     let genome = new soda.Chart({
       ...chartConf,
@@ -609,7 +614,7 @@ function run(data) {
       this.draw(filteredParams);
       this.postRender(filteredParams);
     };
-    return { reference, aurora, auroraZoom, genome, alignments };
+    return { reference, referenceZoom, aurora, auroraZoom, genome, alignments };
   }
 
   function prepareAnn(ann) {
@@ -974,6 +979,12 @@ function run(data) {
       ...params.genome,
       ...coords,
     });
+
+    charts.referenceZoom.render({
+      ...params.reference,
+      ...coords,
+    });
+
 
     charts.auroraZoom.render({
       ...params.aurora,

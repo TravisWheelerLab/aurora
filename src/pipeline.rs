@@ -26,13 +26,7 @@ pub fn run_pipeline(
     mut args: Args,
 ) {
     if args.viz {
-        args.viz_output_path.push(format!(
-            "{}-{}-{}-{}",
-            proximity_group.target_id,
-            region_idx,
-            proximity_group.target_start,
-            proximity_group.target_end
-        ));
+        args.viz_output_path.push(format!("{}", region_idx));
 
         fs::create_dir_all(&args.viz_output_path).unwrap();
     }
@@ -209,14 +203,7 @@ pub fn run_pipeline(
             &args,
         );
 
-        let out_path = args.viz_output_path.join(format!(
-            "{}-{}-{}.html",
-            alignment_data
-                .target_name_map
-                .get(proximity_group.target_id),
-            matrix_def.target_start,
-            matrix_def.target_start + matrix_def.num_cols
-        ));
+        let out_path = args.viz_output_path.join("index.html");
 
         write_soda_html(
             &data,
