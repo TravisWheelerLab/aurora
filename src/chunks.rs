@@ -147,6 +147,7 @@ impl<'a> ProximityGroup<'a> {
                         .0;
 
                     let alignments = &target_group.alignments[ali_start_idx..ali_end_idx];
+
                     let tandem_repeats =
                         &target_group.tandem_repeats[repeat_start_idx..repeat_end_idx];
 

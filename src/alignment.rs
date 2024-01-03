@@ -524,12 +524,16 @@ impl AlignmentData {
                 });
         }
 
-        target_groups.iter_mut().for_each(|g| {
-            g.alignments.sort_by(|a, b| {
-                a.target_start
-                    .cmp(&b.target_start)
-                    .then(a.query_id.cmp(&b.query_id))
-            })
+        target_groups
+            .iter_mut()
+            .for_each(|g| g.alignments.sort_by(|a, b| a.id.cmp(&b.id)));
+
+        target_groups.iter().for_each(|g| {
+            debug_assert!(g
+                .alignments
+                .iter()
+                .zip(g.alignments.iter().skip(1))
+                .all(|(a, b)| a.target_start <= b.target_start));
         });
 
         Ok(Self {
