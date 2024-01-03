@@ -508,6 +508,11 @@ impl AlignmentData {
                 .into_iter()
                 .enumerate()
                 .for_each(|(idx, r)| {
+                    // TODO: fix the VecMap API to better handle this
+                    if !target_name_map.contains(&r.sequence_name) {
+                        target_name_map.insert(r.sequence_name.clone());
+                    }
+
                     let target_id = target_name_map.key(&r.sequence_name);
 
                     if let Some(group) = target_groups.get_mut(target_id) {

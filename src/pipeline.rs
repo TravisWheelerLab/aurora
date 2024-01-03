@@ -203,14 +203,13 @@ pub fn run_pipeline(
             &args,
         );
 
+        let mut exe_path = std::env::current_exe().expect("failed to resolve executable path");
+        exe_path.pop();
+        let template_path = exe_path.join("../../fixtures/soda/annotations.html");
+        let js_path = exe_path.join("../../fixtures/soda/annotations.js");
         let out_path = args.viz_output_path.join("index.html");
 
-        write_soda_html(
-            &data,
-            "./fixtures/soda/annotations.html",
-            "./fixtures/soda/annotations.js",
-            out_path,
-        );
+        write_soda_html(&data, template_path, js_path, out_path);
     }
 }
 

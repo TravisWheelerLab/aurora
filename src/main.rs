@@ -127,6 +127,10 @@ pub struct Args {
     #[arg(long = "regions", value_name = "path")]
     pub regions_path: Option<PathBuf>,
 
+    /// Don't adjudicate regions that are only made up of tandem repeats
+    #[arg(short = 'X', long = "exclude-isolated-tr")]
+    pub exclude_isolated_tandem_repeats: bool,
+
     /// The path to the directory to which
     /// visualization output will be written
     #[arg(long = "viz-out", default_value = "./viz", value_name = "path")]
@@ -251,6 +255,13 @@ fn main() -> Result<()> {
         .par_iter()
         // .inspect(|g| println!("{g:?}"))
         .enumerate()
+        .filter(|(_, g)| {
+            if args.exclude_isolated_tandem_repeats {
+                !g.alignments.is_empty()
+            } else {
+                true
+            }
+        })
         .for_each(|(region_idx, group)| {
             run_pipeline(group, &alignment_data, region_idx, args.clone());
         });
