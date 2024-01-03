@@ -122,6 +122,7 @@ impl<'a> ProximityGroup<'a> {
 
                 let mut ali_start_idx = 0usize;
                 let mut repeat_start_idx = 0usize;
+
                 merged_intervals.into_iter().map(move |interval| {
                     // find the index of the first alignment
                     // that is outside of the interval
@@ -149,6 +150,23 @@ impl<'a> ProximityGroup<'a> {
                     let tandem_repeats =
                         &target_group.tandem_repeats[repeat_start_idx..repeat_end_idx];
 
+                    // if ali_start_idx and ali_end_idx are the same, that means there are no
+                    // alignments in this region (i.e., it's just a region with tandem repeats)
+                    let (line_start, line_end) = if ali_start_idx == ali_end_idx {
+                        (0, 0)
+                    } else {
+                        (
+                            alignments
+                                .first()
+                                .expect("alignments are empty in ProximityGroup")
+                                .id,
+                            alignments
+                                .last()
+                                .expect("alignments are empty in ProximityGroup")
+                                .id,
+                        )
+                    };
+
                     // create the group before adjusting the ali_start_idx
                     let group = ProximityGroup {
                         target_id: interval.target_id,
@@ -156,8 +174,8 @@ impl<'a> ProximityGroup<'a> {
                         target_end: interval.target_end,
                         alignments,
                         tandem_repeats,
-                        line_start: target_group.alignments[ali_start_idx].id,
-                        line_end: target_group.alignments[ali_end_idx - 1].id,
+                        line_start,
+                        line_end,
                     };
 
                     ali_start_idx = ali_end_idx;
