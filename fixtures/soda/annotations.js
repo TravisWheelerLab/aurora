@@ -63,6 +63,7 @@ function run(data) {
     sidebarExpanded: false,
     labels: true,
     traceAtTop: true,
+    onlySelected: true,
     assemblyAtTop: false,
     confThresh: 0.0,
     aliThresh: 300,
@@ -96,7 +97,7 @@ function run(data) {
   }
 
   function handleEvent(e) {
-    let toggles = ["traceAtTop", "labels", "onlyTrace", "showInactive"];
+    let toggles = ["traceAtTop", "onlySelected", "labels", "onlyTrace", "showInactive"];
     let numeric = ["confThresh", "aliThresh"];
     let text = ["regex"];
     let traceButtons = [];
@@ -146,6 +147,7 @@ function run(data) {
 
     inputs.set("labels", document.querySelector("input#labels"));
     inputs.set("traceAtTop", document.querySelector("input#traceAtTop"));
+    inputs.set("onlySelected", document.querySelector("input#onlySelected"));
     inputs.set("onlyTrace", document.querySelector("input#onlyTrace"));
     inputs.set("showInactive", document.querySelector("input#showInactive"));
     inputs.set("regex", document.querySelector("input#regex"));
@@ -282,7 +284,7 @@ function run(data) {
       upperPadSize: 25,
       ...annChartConf,
     });
-    
+
     let aurora = new soda.Chart(annChartConf);
 
     let referenceZoom = new soda.Chart(annChartConf)
@@ -311,12 +313,15 @@ function run(data) {
       rowHeight: 30,
 
       updateLayout(params) {
-        let queryIds = [...new Set(params.proxy.map((a) => a.queryId))];
 
+        let queryIds = [...new Set(params.proxy.map((a) => a.queryId))];
         let traceQueryIds = [];
 
         if (state.traceAtTop) {
-          let allTrace = params.conclusiveTrace.concat(params.ambiguousTrace);
+          let allTrace = params.conclusiveTrace
+            .concat(params.ambiguousTrace)
+            .filter((a) => a.queryId != 0);
+
           allTrace.sort((a, b) => a.start - b.start);
           traceQueryIds = [...new Set(allTrace.map((a) => a.queryId))];
         }
@@ -570,6 +575,12 @@ function run(data) {
 
         if (a.row > rowToQuery.length - 1) {
           return true;
+        }
+
+        if (state.onlySelected) {
+          if (a.end < params.start || a.start > params.end) {
+            return false;
+          }
         }
 
         if (state.onlyTrace) {
@@ -1004,6 +1015,6 @@ function run(data) {
     initializeBrush();
 
     let zoomSync = new soda.ZoomSyncer();
-    zoomSync.add([charts.auroraZoom, charts.genome, charts.alignments]);
+    zoomSync.add([charts.auroraZoom, charts.referenceZoom, charts.genome, charts.alignments]);
   }
 }

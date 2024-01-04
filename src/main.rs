@@ -16,7 +16,7 @@ mod windowed_scores;
 
 use std::{
     collections::HashMap,
-    fs::{create_dir_all, File},
+    fs::{self, create_dir_all, File},
     io::{BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
 };
@@ -26,6 +26,7 @@ use chunks::ProximityGroup;
 
 use anyhow::Result;
 use clap::Parser;
+use itertools::Itertools;
 use rayon::prelude::*;
 
 use crate::{chunks::validate_groups, pipeline::run_pipeline};
@@ -116,8 +117,13 @@ pub struct Args {
     pub ultra_file_path: Option<PathBuf>,
 
     /// Produce visualization output for annotations
-    #[arg(long = "viz")]
+    #[arg(short = 'V', long = "viz")]
     pub viz: bool,
+
+    /// The path to the directory to which
+    /// visualization output will be written
+    #[arg(long = "viz-out", default_value = "./viz", value_name = "path")]
+    pub viz_output_path: PathBuf,
 
     /// Produce visualization output for potential join "assemblies"
     #[arg(long = "assembly-viz")]
@@ -131,14 +137,9 @@ pub struct Args {
     #[arg(short = 'X', long = "exclude-isolated-tr")]
     pub exclude_isolated_tandem_repeats: bool,
 
-    /// The path to the directory to which
-    /// visualization output will be written
-    #[arg(long = "viz-out", default_value = "./viz", value_name = "path")]
-    pub viz_output_path: PathBuf,
-
     /// The path to the BED file that contains
     /// reference annotations for visualization
-    #[arg(long = "viz-ref-bed", value_name = "path")]
+    #[arg(short = 'R', long = "viz-ref-bed", value_name = "path")]
     pub viz_reference_bed_path: Option<PathBuf>,
 
     #[clap(skip)]
@@ -152,6 +153,16 @@ fn main() -> Result<()> {
     let mut args = Args::parse();
 
     if args.viz {
+        if let Ok(metadata) = fs::metadata(&args.viz_output_path) {
+            if metadata.is_dir() {
+                // TODO: real error
+                panic!(
+                    "directory: {} already exists",
+                    args.viz_output_path.to_str().unwrap()
+                )
+            }
+        }
+
         create_dir_all(&args.viz_output_path)?;
         args.viz_output_path = args.viz_output_path.canonicalize()?;
 
@@ -203,7 +214,16 @@ fn main() -> Result<()> {
         AlignmentData::from_caf_and_ultra_and_matrices(alignments_file, ultra_file, matrices_file)?;
 
     let proximity_groups =
-        ProximityGroup::from_alignment_data(&alignment_data, args.target_join_distance);
+        ProximityGroup::from_alignment_data(&alignment_data, args.target_join_distance)
+            .into_iter()
+            .filter(|g| {
+                if args.exclude_isolated_tandem_repeats {
+                    !g.alignments.is_empty()
+                } else {
+                    true
+                }
+            })
+            .collect_vec();
 
     if let Some(path) = &args.regions_path {
         let regions_file = File::create(path).unwrap();
@@ -255,13 +275,6 @@ fn main() -> Result<()> {
         .par_iter()
         // .inspect(|g| println!("{g:?}"))
         .enumerate()
-        .filter(|(_, g)| {
-            if args.exclude_isolated_tandem_repeats {
-                !g.alignments.is_empty()
-            } else {
-                true
-            }
-        })
         .for_each(|(region_idx, group)| {
             run_pipeline(group, &alignment_data, region_idx, args.clone());
         });
