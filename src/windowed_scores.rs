@@ -1,7 +1,10 @@
+use anyhow::Context;
+use thiserror::Error;
+
 use crate::alignment::{Alignment, TandemRepeat, VecMap};
-use crate::alphabet::{GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, PAD_DIGITAL};
+use crate::alphabet::{NucleotideByteUtils, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, PAD_DIGITAL};
 use crate::matrix::Matrix;
-use crate::substitution_matrix::SubstitutionMatrix;
+use crate::substitution_matrix::{AlignmentScore, SubstitutionMatrix};
 
 ///
 ///
@@ -69,6 +72,207 @@ pub fn background(
         .for_each(|s| debug_assert!((1.0 - s).abs() < 1e-6));
 
     background
+}
+
+#[derive(Error, Debug)]
+pub enum GapError {
+    #[error("sequence is length 0")]
+    ZeroLengthSequence,
+    #[error("gap open found in already opened gap")]
+    DoubleOpen,
+    #[error("gap extend found before a gap open")]
+    ExtendBeforeOpen,
+    #[error("alignment starts with a target gap")]
+    StartsWithGap,
+    #[error("alignment ends with a target gap")]
+    EndsWithGap,
+}
+
+fn locate_target_gaps(alignment: &Alignment) -> anyhow::Result<Vec<f64>> {
+    let error_context = || {
+        format!(
+            "target seq: {}",
+            alignment.target_seq.to_debug_utf8_string()
+        )
+    };
+
+    let first_target_char = *alignment
+        .target_seq
+        .first()
+        .ok_or(GapError::ZeroLengthSequence)?;
+
+    if first_target_char == GAP_OPEN_DIGITAL || first_target_char == GAP_EXTEND_DIGITAL {
+        return Err(GapError::StartsWithGap).with_context(error_context);
+    }
+
+    let target_length = alignment.target_end - alignment.target_start + 1;
+    let mut gaps = vec![0.0; target_length - 1];
+    let mut target_pos = 0usize;
+    let mut gap_start: Option<usize> = None;
+
+    alignment
+        .target_seq
+        .iter()
+        .enumerate()
+        .try_for_each(|(ali_pos, &target_byte)| {
+            match (gap_start, target_byte) {
+                (None, GAP_OPEN_DIGITAL) => {
+                    gap_start = Some(ali_pos);
+                }
+                (None, GAP_EXTEND_DIGITAL) => {
+                    return Err(GapError::ExtendBeforeOpen).with_context(error_context)
+                }
+                (None, _) => target_pos += 1,
+                (Some(_), GAP_EXTEND_DIGITAL) => {}
+                (Some(_), GAP_OPEN_DIGITAL) => {
+                    return Err(GapError::DoubleOpen).with_context(error_context)
+                }
+                (Some(start), _) => {
+                    let size = ali_pos - start;
+                    gaps[target_pos - 1] = size as f64;
+                    target_pos += 1;
+                    gap_start = None;
+                }
+            };
+            Ok(())
+        })?;
+
+    if gap_start.is_some() {
+        Err(GapError::EndsWithGap).with_context(error_context)
+    } else {
+        Ok(gaps)
+    }
+}
+
+fn locate_query_gaps(alignment: &Alignment) -> anyhow::Result<Vec<f64>> {
+    let error_context = || format!("query seq: {}", alignment.target_seq.to_debug_utf8_string());
+
+    let first_query_char = *alignment
+        .query_seq
+        .first()
+        .ok_or(GapError::ZeroLengthSequence)?;
+
+    if first_query_char == GAP_OPEN_DIGITAL || first_query_char == GAP_EXTEND_DIGITAL {
+        return Err(GapError::StartsWithGap).with_context(error_context);
+    }
+
+    let target_length = alignment.target_end - alignment.target_start + 1;
+    let mut gaps = vec![0.0; target_length];
+    let mut gap_start: Option<usize> = None;
+    alignment
+        .query_seq
+        .iter()
+        .zip(&alignment.target_seq)
+        .filter(|(_, &target_byte)| {
+            target_byte != GAP_OPEN_DIGITAL && target_byte != GAP_EXTEND_DIGITAL
+        })
+        .enumerate()
+        .try_for_each(|(target_pos, (&query_byte, _))| {
+            match (gap_start, query_byte) {
+                (None, GAP_OPEN_DIGITAL) => {
+                    gap_start = Some(target_pos);
+                }
+                (None, GAP_EXTEND_DIGITAL) => {
+                    return Err(GapError::ExtendBeforeOpen).with_context(error_context)
+                }
+                (None, _) => {}
+                (Some(_), GAP_OPEN_DIGITAL) => {
+                    return Err(GapError::DoubleOpen).with_context(error_context)
+                }
+                (Some(_), GAP_EXTEND_DIGITAL) => {}
+                (Some(start), _) => {
+                    let size = target_pos - start;
+                    gaps[start..target_pos]
+                        .iter_mut()
+                        .for_each(|g| *g = size as f64);
+                    gap_start = None;
+                }
+            }
+            Ok(())
+        })?;
+
+    if gap_start.is_some() {
+        Err(GapError::EndsWithGap).with_context(error_context)
+    } else {
+        Ok(gaps)
+    }
+}
+
+#[allow(dead_code)]
+pub fn windowed_score_2(
+    alignment: &Alignment,
+    substitution_matrix: &impl AlignmentScore,
+    window_size: usize,
+    background_window_size: usize,
+) -> anyhow::Result<Vec<f64>> {
+    let target_length = alignment.target_end - alignment.target_start + 1;
+
+    let mut target_gaps = locate_target_gaps(alignment).unwrap();
+    let mut query_gaps = locate_query_gaps(alignment).unwrap();
+
+    debug_assert_eq!(target_length - 1, target_gaps.len());
+    debug_assert_eq!(target_length, query_gaps.len());
+
+    let target_gap_fn = |gap_length: &f64| {
+        if *gap_length == 0.0 {
+            0.0
+        } else {
+            substitution_matrix.gap_open() + (gap_length - 1.0) * substitution_matrix.gap_extend()
+        }
+    };
+
+    let query_gap_fn = |gap_length: &f64| {
+        if *gap_length == 0.0 {
+            0.0
+        } else {
+            (substitution_matrix.gap_open() + (gap_length - 1.0) * substitution_matrix.gap_extend())
+                / gap_length
+        }
+    };
+
+    target_gaps.iter_mut().for_each(|g| *g = target_gap_fn(g));
+    query_gaps.iter_mut().for_each(|g| *g = query_gap_fn(g));
+
+    let scores_without_gaps: Vec<f64> = alignment
+        .target_seq
+        .iter()
+        .zip(&alignment.query_seq)
+        .filter(|(&t, _)| t != GAP_OPEN_DIGITAL && t != GAP_EXTEND_DIGITAL)
+        .map(|(&t, &q)| match q {
+            GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => 0.0,
+            _ => substitution_matrix.score(t, q),
+        })
+        .collect();
+
+    let mut scores = vec![0.0; target_length];
+
+    let half_window = (window_size - 1) / 2;
+    let mut left = 0usize;
+    let mut right = (target_length - 1).min(half_window);
+
+    scores[0] = scores_without_gaps[left..=right].iter().sum::<f64>()
+        + target_gaps[left..right].iter().sum::<f64>()
+        + query_gaps[left..=right].iter().sum::<f64>();
+
+    (1..target_length).for_each(|idx| {
+        left = idx.saturating_sub(half_window);
+        right = (target_length - 1).min(idx + half_window);
+        scores[idx] = scores[idx - 1];
+
+        if left != 0 {
+            scores[idx] -= scores_without_gaps[left - 1];
+            scores[idx] -= target_gaps[left - 1];
+            scores[idx] -= query_gaps[left - 1];
+        }
+
+        if right != target_length {
+            scores[idx] += scores_without_gaps[right];
+            scores[idx] += target_gaps[right - 1];
+            scores[idx] += query_gaps[right];
+        }
+    });
+
+    Ok(scores)
 }
 
 ///
@@ -224,4 +428,86 @@ pub fn windowed_score(
                     matrix.set(row_idx, col_idx, window_score);
                 });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::substitution_matrix::SimpleSubstitutionMatrix;
+
+    #[test]
+    pub fn test_locate_target_gaps() -> anyhow::Result<()> {
+        let ali = vec![
+            format!("{}\n{}", "AAAAA", "AAAAA"),
+            format!("{}\n{}", "A-A-A-A-A", "AAAAAAAAA"),
+            format!("{}\n{}", "A-A-+++A-A", "AAAAAAAAAA"),
+            format!("{}\n{}", "A-AAAAAA-A", "AAA-+++AAA"),
+        ];
+
+        let gaps: Vec<Vec<f64>> = vec![
+            vec![0.0, 0.0, 0.0, 0.0],
+            vec![1.0, 1.0, 1.0, 1.0],
+            vec![1.0, 4.0, 1.0],
+            vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        ];
+
+        ali.iter()
+            .map(|a| (Alignment::from_str(a)))
+            .zip(gaps)
+            .try_for_each(|(a, g)| {
+                assert_eq!(locate_target_gaps(&a)?, g);
+                Ok(())
+            })
+    }
+
+    #[test]
+    pub fn test_locate_query_gaps() -> anyhow::Result<()> {
+        let ali = vec![
+            format!("{}\n{}", "AAAAA", "AAAAA"),
+            format!("{}\n{}", "AAAAAAAAA", "A-A-A-A-A",),
+            format!("{}\n{}", "AAAAAAAAAA", "A-A-+++A-A"),
+            format!("{}\n{}", "AAA-+++AAA", "A-AAAAAA-A"),
+        ];
+
+        let gaps: Vec<Vec<f64>> = vec![
+            vec![0.0, 0.0, 0.0, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
+            vec![0.0, 1.0, 0.0, 4.0, 4.0, 4.0, 4.0, 0.0, 1.0, 0.0],
+            vec![0.0, 1.0, 0.0, 0.0, 1.0, 0.0],
+        ];
+
+        ali.iter()
+            .map(|a| (Alignment::from_str(a)))
+            .zip(gaps)
+            .try_for_each(|(a, g)| {
+                assert_eq!(locate_query_gaps(&a)?, g);
+                Ok(())
+            })
+    }
+
+    #[test]
+    pub fn test_windowed_score() -> anyhow::Result<()> {
+        let s = SimpleSubstitutionMatrix {
+            match_score: 2.0,
+            sub_score: 1.0,
+            gap_open_score: -2.0,
+            gap_extend_score: -1.0,
+        };
+
+        let a = Alignment::from_str(&format!("{}\n{}", "A-AAAAAA-A", "AAA-+++AAA"));
+        let correct = vec![2.0, 0.75, -0.5, -3.75, -3.75, -0.5, 0.75, 2.0];
+        let scores = windowed_score_2(&a, &s, 3, crate::BACKGROUND_WINDOW_SIZE)?;
+        assert_eq!(scores, correct);
+
+        let correct = vec![-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0];
+        let scores = windowed_score_2(
+            &a,
+            &s,
+            crate::SCORE_WINDOW_SIZE,
+            crate::BACKGROUND_WINDOW_SIZE,
+        )?;
+        assert_eq!(scores, correct);
+
+        Ok(())
+    }
 }

@@ -4,7 +4,44 @@ use std::{
     path::Path,
 };
 
-use crate::alphabet::STR_TO_DIGITAL_NUCLEOTIDE;
+use crate::alphabet::{GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, STR_TO_DIGITAL_NUCLEOTIDE};
+
+pub trait AlignmentScore {
+    fn score(&self, target_char: u8, query_char: u8) -> f64;
+    fn gap_open(&self) -> f64;
+    fn gap_extend(&self) -> f64;
+}
+
+pub struct SimpleSubstitutionMatrix {
+    pub match_score: f64,
+    pub sub_score: f64,
+    pub gap_open_score: f64,
+    pub gap_extend_score: f64,
+}
+
+impl AlignmentScore for SimpleSubstitutionMatrix {
+    fn score(&self, target_char: u8, query_char: u8) -> f64 {
+        match (target_char, query_char) {
+            (GAP_OPEN_DIGITAL, _) | (_, GAP_OPEN_DIGITAL) => self.gap_open_score,
+            (GAP_EXTEND_DIGITAL, _) | (_, GAP_EXTEND_DIGITAL) => self.gap_extend_score,
+            _ => {
+                if target_char == query_char {
+                    self.match_score
+                } else {
+                    self.sub_score
+                }
+            }
+        }
+    }
+
+    fn gap_open(&self) -> f64 {
+        self.gap_open_score
+    }
+
+    fn gap_extend(&self) -> f64 {
+        self.gap_extend_score
+    }
+}
 
 pub struct SubstitutionMatrix {
     pub name: String,

@@ -10,6 +10,7 @@ use crate::alphabet::{
     ALIGNMENT_ALPHABET_STR, DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
     NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, UTF8_TO_DIGITAL_NUCLEOTIDE,
 };
+use crate::pipeline::StrSliceExt;
 use crate::substitution_matrix::SubstitutionMatrix;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +62,42 @@ pub struct Alignment {
     pub id: usize,
     pub query_id: usize,
     pub substitution_matrix_id: usize,
+}
+
+impl Alignment {
+    pub fn from_str(str: &str) -> Self {
+        let tokens: Vec<&str> = str.split("\n").collect();
+
+        let target = tokens[0];
+        let query = tokens[1];
+        assert_eq!(target.len(), query.len());
+
+        let target_seq = target.to_digital_nucleotides();
+        let query_seq = query.to_digital_nucleotides();
+
+        let target_len = target_seq
+            .iter()
+            .filter(|&&b| b != GAP_OPEN_DIGITAL && b != GAP_EXTEND_DIGITAL)
+            .count();
+
+        let query_len = query_seq
+            .iter()
+            .filter(|&&b| b != GAP_OPEN_DIGITAL && b != GAP_EXTEND_DIGITAL)
+            .count();
+
+        Self {
+            target_seq,
+            query_seq,
+            target_start: 1,
+            target_end: target_len,
+            query_start: 1,
+            query_end: query_len,
+            strand: Strand::Forward,
+            id: 0,
+            query_id: 0,
+            substitution_matrix_id: 0,
+        }
+    }
 }
 
 impl PartialEq for Alignment {
