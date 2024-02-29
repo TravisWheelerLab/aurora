@@ -2,9 +2,55 @@ use anyhow::Context;
 use thiserror::Error;
 
 use crate::alignment::{Alignment, TandemRepeat, VecMap};
-use crate::alphabet::{NucleotideByteUtils, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, PAD_DIGITAL};
+use crate::alphabet::{
+    NucleotideByteUtils, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, N_DIGITAL, PAD_DIGITAL,
+};
 use crate::matrix::Matrix;
 use crate::substitution_matrix::{AlignmentScore, SubstitutionMatrix};
+
+fn build_target_seq_from_alignments(
+    alignments: &[Alignment],
+    target_start: usize,
+    target_length: usize,
+) -> Vec<u8> {
+    let mut target_seq = vec![N_DIGITAL; target_length];
+
+    alignments.iter().for_each(|ali| {
+        ali.target_seq
+            .iter()
+            // skip all of the target gaps
+            .filter(|&&b| b != GAP_OPEN_DIGITAL && b != GAP_EXTEND_DIGITAL)
+            // then if we enumerate, we get indices
+            // relative to the target sequence
+            .enumerate()
+            // then we can do a little math to place those indicies
+            // relative to the target byte vector we're building
+            .map(|(idx, b)| (idx + ali.target_start - target_start, b))
+            .for_each(|(idx, &byte)| target_seq[idx] = byte);
+    });
+
+    target_seq
+}
+
+pub struct Background {
+    pub target_start: usize,
+    pub target_end: usize,
+    pub target_seq: Vec<u8>,
+    pub frequencies: Vec<[f64; 4]>,
+}
+
+impl Background {
+    pub fn from_alignments(alignments: &[Alignment]) -> Self {
+        //
+        //
+        Self {
+            target_start: todo!(),
+            target_end: todo!(),
+            target_seq: todo!(),
+            frequencies: todo!(),
+        }
+    }
+}
 
 ///
 ///
@@ -437,12 +483,15 @@ mod tests {
 
     #[test]
     pub fn test_locate_target_gaps() -> anyhow::Result<()> {
-        let ali = vec![
+        let ali: Vec<Alignment> = [
             format!("{}\n{}", "AAAAA", "AAAAA"),
             format!("{}\n{}", "A-A-A-A-A", "AAAAAAAAA"),
             format!("{}\n{}", "A-A-+++A-A", "AAAAAAAAAA"),
             format!("{}\n{}", "A-AAAAAA-A", "AAA-+++AAA"),
-        ];
+        ]
+        .iter()
+        .map(|v| Alignment::from_str(v))
+        .collect();
 
         let gaps: Vec<Vec<f64>> = vec![
             vec![0.0, 0.0, 0.0, 0.0],
@@ -451,23 +500,23 @@ mod tests {
             vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
         ];
 
-        ali.iter()
-            .map(|a| (Alignment::from_str(a)))
-            .zip(gaps)
-            .try_for_each(|(a, g)| {
-                assert_eq!(locate_target_gaps(&a)?, g);
-                Ok(())
-            })
+        ali.iter().zip(gaps).try_for_each(|(a, g)| {
+            assert_eq!(locate_target_gaps(a)?, g);
+            Ok(())
+        })
     }
 
     #[test]
     pub fn test_locate_query_gaps() -> anyhow::Result<()> {
-        let ali = vec![
+        let ali: Vec<Alignment> = [
             format!("{}\n{}", "AAAAA", "AAAAA"),
             format!("{}\n{}", "AAAAAAAAA", "A-A-A-A-A",),
             format!("{}\n{}", "AAAAAAAAAA", "A-A-+++A-A"),
             format!("{}\n{}", "AAA-+++AAA", "A-AAAAAA-A"),
-        ];
+        ]
+        .iter()
+        .map(|v| Alignment::from_str(v))
+        .collect();
 
         let gaps: Vec<Vec<f64>> = vec![
             vec![0.0, 0.0, 0.0, 0.0, 0.0],
@@ -476,13 +525,41 @@ mod tests {
             vec![0.0, 1.0, 0.0, 0.0, 1.0, 0.0],
         ];
 
-        ali.iter()
-            .map(|a| (Alignment::from_str(a)))
-            .zip(gaps)
-            .try_for_each(|(a, g)| {
-                assert_eq!(locate_query_gaps(&a)?, g);
-                Ok(())
-            })
+        ali.iter().zip(gaps).try_for_each(|(a, g)| {
+            assert_eq!(locate_query_gaps(a)?, g);
+            Ok(())
+        })
+    }
+
+    #[test]
+    pub fn test_build_target_seq_from_alignments() {
+        let mut ali: Vec<Alignment> = [
+            format!("{}\n{}", "AAAAA", "AAAAA"),
+            format!("{}\n{}", "CCCCC", "CCCCC"),
+            format!("{}\n{}", "GGGGG", "GGGGG"),
+            format!("{}\n{}", "TTTTT", "TTTTT"),
+        ]
+        .iter()
+        .map(|v| Alignment::from_str(v))
+        .collect();
+
+        let starts = [10, 20, 30, 40];
+        let ends = [14, 24, 34, 44];
+        (0..4).for_each(|i| {
+            ali[i].target_start = starts[i];
+            ali[i].target_end = ends[i];
+        });
+
+        let target_start = *starts.first().unwrap();
+        let target_end = ends.last().unwrap();
+        let target_length = target_end - target_start + 1;
+        let seq = build_target_seq_from_alignments(&ali, target_start, target_length);
+
+        let correct = [
+            0, 0, 0, 0, 0, 6, 6, 6, 6, 6, 1, 1, 1, 1, 1, 6, 6, 6, 6, 6, 2, 2, 2, 2, 2, 6, 6, 6, 6,
+            6, 3, 3, 3, 3, 3,
+        ];
+        assert_eq!(seq, correct);
     }
 
     #[test]
