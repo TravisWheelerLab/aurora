@@ -21,8 +21,7 @@ impl ScoreParams {
 
         // jumping to the skip state and then jumping back to a query sequence
         // should be the same cost as jumping between query sequences
-        let query_to_skip_score =
-            (query_jump_score / 2.0) 
+        let query_to_skip_score = (query_jump_score / 2.0) 
             // add a tiny bit of penalty to make entering and leaving asymmetrical 
             + query_jump_score / num_skip_loops_eq_to_jump as f64;
 

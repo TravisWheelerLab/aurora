@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::alignment::{Alignment, TandemRepeat, VecMap};
 use crate::alphabet::{
-    NucleotideByteUtils, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, N_DIGITAL, PAD_DIGITAL,
+    NucleotideByteUtils, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, NUCLEOTIDE_WEIGHTS, PAD_DIGITAL,
 };
 use crate::matrix::Matrix;
 use crate::substitution_matrix::{AlignmentScore, SubstitutionMatrix};
@@ -13,7 +13,7 @@ fn build_target_seq_from_alignments(
     target_start: usize,
     target_length: usize,
 ) -> Vec<u8> {
-    let mut target_seq = vec![N_DIGITAL; target_length];
+    let mut target_seq = vec![PAD_DIGITAL; target_length];
 
     alignments.iter().for_each(|ali| {
         ali.target_seq
@@ -40,14 +40,101 @@ pub struct Background {
 }
 
 impl Background {
-    pub fn from_alignments(alignments: &[Alignment]) -> Self {
-        //
-        //
+    pub fn new(
+        alignments: &[Alignment],
+        target_start: usize,
+        target_length: usize,
+        window_size: usize,
+    ) -> Self {
+        let target_seq = build_target_seq_from_alignments(alignments, target_start, target_length);
+
+        // these are the overall average frequencies
+        // in the sequence, and they get used as the
+        // frequencies for missing positions (* byte)
+        let mut avg_frequencies = [0.0; 4];
+
+        // first sum up the characters
+        target_seq.iter().map(|&b| b as usize).for_each(|b| {
+            avg_frequencies[0] += NUCLEOTIDE_WEIGHTS[b][0];
+            avg_frequencies[1] += NUCLEOTIDE_WEIGHTS[b][1];
+            avg_frequencies[2] += NUCLEOTIDE_WEIGHTS[b][2];
+            avg_frequencies[3] += NUCLEOTIDE_WEIGHTS[b][3];
+        });
+
+        // take the average of the frequencies
+        (0..4).for_each(|idx| avg_frequencies[idx] /= target_length as f64);
+
+        let target_end = target_start + target_length - 1;
+        let half_window = (window_size - 1) / 2;
+
+        // for every position in the target,
+        // this holds the frequencies within
+        // the window centered at that position
+        let mut frequencies_by_position = vec![[0.0; 4]; target_length];
+
+        // the counts of each base for the current window
+        let mut window_counts = [0.0; 4];
+
+        // indices of the left & right window bounds
+        let mut left = 0usize;
+        let mut right = (target_length - 1).min(half_window);
+        // size of the window
+        let mut size = (right - left + 1) as f64;
+
+        // fill the first window counts
+        target_seq[left..=right]
+            .iter()
+            .map(|&b| b as usize)
+            .for_each(|b| {
+                window_counts[0] += NUCLEOTIDE_WEIGHTS[b][0];
+                window_counts[1] += NUCLEOTIDE_WEIGHTS[b][1];
+                window_counts[2] += NUCLEOTIDE_WEIGHTS[b][2];
+                window_counts[3] += NUCLEOTIDE_WEIGHTS[b][3];
+            });
+
+        // fill the first position frequencies
+        (0..4).for_each(|char_idx| {
+            frequencies_by_position[0][char_idx] = window_counts[char_idx] / size
+        });
+
+        (1..target_length).for_each(|target_idx| {
+            let prev_left = left;
+            let prev_right = right;
+
+            left = target_idx.saturating_sub(half_window);
+            right = (target_length - 1).min(target_idx + half_window);
+            size = (right - left + 1) as f64;
+
+            // if we've moved far enough to the right
+            // such that our left bound changes
+            if left != prev_left {
+                let removed_byte = target_seq[left - 1] as usize;
+                window_counts[0] -= NUCLEOTIDE_WEIGHTS[removed_byte][0];
+                window_counts[1] -= NUCLEOTIDE_WEIGHTS[removed_byte][1];
+                window_counts[2] -= NUCLEOTIDE_WEIGHTS[removed_byte][2];
+                window_counts[3] -= NUCLEOTIDE_WEIGHTS[removed_byte][3];
+            }
+
+            // if we haven't moved far enough to the right
+            // such that our right bound doesn't change
+            if right != prev_right {
+                let added_byte = target_seq[right] as usize;
+                window_counts[0] += NUCLEOTIDE_WEIGHTS[added_byte][0];
+                window_counts[1] += NUCLEOTIDE_WEIGHTS[added_byte][1];
+                window_counts[2] += NUCLEOTIDE_WEIGHTS[added_byte][2];
+                window_counts[3] += NUCLEOTIDE_WEIGHTS[added_byte][3];
+            }
+
+            (0..4).for_each(|char_idx| {
+                frequencies_by_position[target_idx][char_idx] = window_counts[char_idx] / size
+            });
+        });
+
         Self {
-            target_start: todo!(),
-            target_end: todo!(),
-            target_seq: todo!(),
-            frequencies: todo!(),
+            target_start,
+            target_end,
+            target_seq,
+            frequencies: frequencies_by_position,
         }
     }
 }
@@ -301,17 +388,20 @@ pub fn windowed_score_2(
         + query_gaps[left..=right].iter().sum::<f64>();
 
     (1..target_length).for_each(|idx| {
+        let prev_left = left;
+        let prev_right = right;
+
         left = idx.saturating_sub(half_window);
         right = (target_length - 1).min(idx + half_window);
         scores[idx] = scores[idx - 1];
 
-        if left != 0 {
+        if left != prev_left {
             scores[idx] -= scores_without_gaps[left - 1];
             scores[idx] -= target_gaps[left - 1];
             scores[idx] -= query_gaps[left - 1];
         }
 
-        if right != target_length {
+        if right != prev_right {
             scores[idx] += scores_without_gaps[right];
             scores[idx] += target_gaps[right - 1];
             scores[idx] += query_gaps[right];
@@ -550,14 +640,14 @@ mod tests {
             ali[i].target_end = ends[i];
         });
 
-        let target_start = *starts.first().unwrap();
+        let target_start = starts[0];
         let target_end = ends.last().unwrap();
         let target_length = target_end - target_start + 1;
         let seq = build_target_seq_from_alignments(&ali, target_start, target_length);
 
         let correct = [
-            0, 0, 0, 0, 0, 6, 6, 6, 6, 6, 1, 1, 1, 1, 1, 6, 6, 6, 6, 6, 2, 2, 2, 2, 2, 6, 6, 6, 6,
-            6, 3, 3, 3, 3, 3,
+            0, 0, 0, 0, 0, 14, 14, 14, 14, 14, 1, 1, 1, 1, 1, 14, 14, 14, 14, 14, 2, 2, 2, 2, 2,
+            14, 14, 14, 14, 14, 3, 3, 3, 3, 3,
         ];
         assert_eq!(seq, correct);
     }
@@ -584,6 +674,103 @@ mod tests {
             crate::BACKGROUND_WINDOW_SIZE,
         )?;
         assert_eq!(scores, correct);
+
+        Ok(())
+    }
+
+    #[test]
+    pub fn test_background() -> anyhow::Result<()> {
+        let mut ali: Vec<Alignment> = [
+            format!("{}\n{}", "AAAAA", "AAAAA"),
+            format!("{}\n{}", "CCCCC", "CCCCC"),
+            format!("{}\n{}", "GGGGG", "GGGGG"),
+            format!("{}\n{}", "TTTTT", "TTTTT"),
+        ]
+        .iter()
+        .map(|v| Alignment::from_str(v))
+        .collect();
+
+        let starts = [10, 15, 20, 25];
+        let ends = [14, 19, 24, 29];
+        (0..4).for_each(|i| {
+            ali[i].target_start = starts[i];
+            ali[i].target_end = ends[i];
+        });
+
+        let target_start = starts[0] - 5;
+        let target_end = ends.last().unwrap() + 5;
+        let target_length = target_end - target_start + 1;
+
+        let background = Background::new(&ali, target_start, target_length, 5);
+
+        // *****AAAAACCCCCGGGGGTTTTT*****
+        let correct = vec![
+            // ***
+            [0.25, 0.25, 0.25, 0.25],
+            // ****
+            [0.25, 0.25, 0.25, 0.25],
+            // *****
+            [0.25, 0.25, 0.25, 0.25],
+            // ****A
+            [0.4, 0.2, 0.2, 0.2],
+            // ***AA
+            [0.55, 0.15, 0.15, 0.15],
+            // **AAA
+            [0.7, 0.1, 0.1, 0.1],
+            // *AAAA
+            [0.85, 0.05, 0.05, 0.05],
+            // AAAAA
+            [1.0, 0.0, 0.0, 0.0],
+            // AAAAC
+            [0.8, 0.2, 0.0, 0.0],
+            // AAACC
+            [0.6, 0.4, 0.0, 0.0],
+            // AACCC
+            [0.4, 0.6, 0.0, 0.0],
+            // ACCCC
+            [0.2, 0.8, 0.0, 0.0],
+            // CCCCC
+            [0.0, 1.0, 0.0, 0.0],
+            // CCCCG
+            [0.0, 0.8, 0.2, 0.0],
+            // CCCGG
+            [0.0, 0.6, 0.4, 0.0],
+            // CCGGG
+            [0.0, 0.4, 0.6, 0.0],
+            // CGGGG
+            [0.0, 0.2, 0.8, 0.0],
+            // GGGGG
+            [0.0, 0.0, 1.0, 0.0],
+            // GGGGT
+            [0.0, 0.0, 0.8, 0.2],
+            // GGGTT
+            [0.0, 0.0, 0.6, 0.4],
+            // GGTTT
+            [0.0, 0.0, 0.4, 0.6],
+            // GTTTT
+            [0.0, 0.0, 0.2, 0.8],
+            // TTTTT
+            [0.0, 0.0, 0.0, 1.0],
+            // TTTT*
+            [0.05, 0.05, 0.05, 0.85],
+            // TTT**
+            [0.1, 0.1, 0.1, 0.7],
+            // TT***
+            [0.15, 0.15, 0.15, 0.55],
+            // T****
+            [0.2, 0.2, 0.2, 0.4],
+            // *****
+            [0.25, 0.25, 0.25, 0.25],
+            // ****
+            [0.25, 0.25, 0.25, 0.25],
+            // ***
+            [0.25, 0.25, 0.25, 0.25],
+        ];
+
+        correct
+            .into_iter()
+            .zip(background.frequencies)
+            .for_each(|(a, b)| assert_eq!(a, b));
 
         Ok(())
     }

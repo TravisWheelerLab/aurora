@@ -35,6 +35,25 @@ impl NucleotideByteUtils for Vec<u8> {
     }
 }
 
+pub const NUCLEOTIDE_WEIGHTS: [[f64; 4]; 15] = [
+    //A    C    G    T
+    [1.0, 0.0, 0.0, 0.0],     // A
+    [0.0, 1.0, 0.0, 0.0],     // C
+    [0.0, 0.0, 1.0, 0.0],     // G
+    [0.0, 0.0, 0.0, 1.0],     // T
+    [0.0, 0.0, 0.5, 0.5],     // K: G | T
+    [0.5, 0.5, 0.0, 0.0],     // M: A | C
+    [0.25, 0.25, 0.25, 0.25], // N: A | C | G | T
+    [0.5, 0.0, 0.5, 0.0],     // R: A | G
+    [0.0, 0.5, 0.5, 0.0],     // S: C | G
+    [0.5, 0.0, 0.0, 0.5],     // W: A | T
+    [0.0, 0.0, 0.0, 0.0],     // X: I think this is a masked base
+    [0.0, 0.5, 0.0, 0.5],     // Y: C | T
+    [0.0, 0.0, 0.0, 0.0],     // -: gap open
+    [0.0, 0.0, 0.0, 0.0],     // -: gap extend
+    [0.25, 0.25, 0.25, 0.25], // *: A | C | G | T (this isn't a IUPAC code, just an aurora thing)
+];
+
 pub const ALIGNMENT_ALPHABET_STR: [&str; 15] = [
     "A", "C", "G", "T", "K", "M", "N", "R", "S", "W", "X", "Y", "-", "-", "*",
 ];
