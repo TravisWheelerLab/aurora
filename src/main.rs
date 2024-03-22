@@ -273,6 +273,9 @@ fn main() -> Result<()> {
 
     proximity_groups
         .par_iter()
+        // todo: need to make sure this
+        // doesn't cause performance issues
+        .panic_fuse()
         // .inspect(|g| println!("{g:?}"))
         .enumerate()
         .for_each(|(region_idx, group)| {

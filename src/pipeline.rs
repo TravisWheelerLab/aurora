@@ -47,7 +47,8 @@ pub fn run_pipeline(
         &alignment_data.substitution_matrices,
         SCORE_WINDOW_SIZE,
         BACKGROUND_WINDOW_SIZE,
-    );
+    )
+    .unwrap();
 
     confidence(&mut confidence_matrix);
 

@@ -191,28 +191,6 @@ impl SubstitutionMatrix {
         }
     }
 
-    pub fn scores_with_background(&self, background: [f64; 4]) -> [[f64; 14]; 14] {
-        let mut scores = self.scores;
-        (0..4).for_each(|target_char| {
-            (0..4).for_each(|query_char| {
-                let score = &mut scores[target_char][query_char];
-                *score = self.core_ratios[target_char][query_char] / background[target_char];
-                *score = score.ln();
-            });
-        });
-
-        scores
-            .iter()
-            .for_each(|row| row.iter().for_each(|s| debug_assert!(s.is_finite())));
-
-        scores
-    }
-
-    pub fn gap_score(&self, gap_len: usize) -> f64 {
-        let ext_len = gap_len.saturating_sub(1) as f64;
-        self.gap_open_score + ext_len * self.gap_extend_score
-    }
-
     #[allow(dead_code)]
     pub fn from_file(path: impl AsRef<Path>) -> Vec<SubstitutionMatrix> {
         let file = File::open(path).expect("failed to open matrix file");
