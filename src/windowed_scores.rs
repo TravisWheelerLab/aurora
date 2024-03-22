@@ -32,6 +32,25 @@ fn build_target_seq_from_alignments(
     target_seq
 }
 
+pub trait BackgroundFrequencies {
+    fn frequencies_at(&self, target_pos: usize) -> [f64; 4];
+}
+
+impl BackgroundFrequencies for Background {
+    fn frequencies_at(&self, target_pos: usize) -> [f64; 4] {
+        self.frequencies[target_pos - self.target_start]
+    }
+}
+
+pub struct DummyBackground {}
+
+impl BackgroundFrequencies for DummyBackground {
+    #[allow(unused_variables)]
+    fn frequencies_at(&self, target_pos: usize) -> [f64; 4] {
+        [f64::NAN, f64::NAN, f64::NAN, f64::NAN]
+    }
+}
+
 pub struct Background {
     pub target_start: usize,
     pub target_end: usize,
@@ -336,7 +355,7 @@ pub fn windowed_score_2(
     alignment: &Alignment,
     substitution_matrix: &impl AlignmentScore,
     window_size: usize,
-    background_window_size: usize,
+    background: &impl BackgroundFrequencies,
 ) -> anyhow::Result<Vec<f64>> {
     let target_length = alignment.target_end - alignment.target_start + 1;
 
@@ -346,6 +365,7 @@ pub fn windowed_score_2(
     debug_assert_eq!(target_length - 1, target_gaps.len());
     debug_assert_eq!(target_length, query_gaps.len());
 
+    // todo: turn these closures into functions
     let target_gap_fn = |gap_length: &f64| {
         if *gap_length == 0.0 {
             0.0
@@ -371,15 +391,21 @@ pub fn windowed_score_2(
         .iter()
         .zip(&alignment.query_seq)
         .filter(|(&t, _)| t != GAP_OPEN_DIGITAL && t != GAP_EXTEND_DIGITAL)
-        .map(|(&t, &q)| match q {
-            GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => 0.0,
-            _ => substitution_matrix.score(t, q),
+        .enumerate()
+        .map(|(target_idx, (&t, &q))| {
+            let target_pos = target_idx + alignment.target_start - 1;
+            let frequencies = background.frequencies_at(target_pos);
+            match q {
+                GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => 0.0,
+                _ => substitution_matrix.score_with_background(t, q, &frequencies),
+            }
         })
         .collect();
 
     let mut scores = vec![0.0; target_length];
 
     let half_window = (window_size - 1) / 2;
+
     let mut left = 0usize;
     let mut right = (target_length - 1).min(half_window);
 
@@ -661,18 +687,17 @@ mod tests {
             gap_extend_score: -1.0,
         };
 
+        // use a dummy background that
+        // won't adjust the score
+        let b = DummyBackground {};
+
         let a = Alignment::from_str(&format!("{}\n{}", "A-AAAAAA-A", "AAA-+++AAA"));
         let correct = vec![2.0, 0.75, -0.5, -3.75, -3.75, -0.5, 0.75, 2.0];
-        let scores = windowed_score_2(&a, &s, 3, crate::BACKGROUND_WINDOW_SIZE)?;
+        let scores = windowed_score_2(&a, &s, 3, &b)?;
         assert_eq!(scores, correct);
 
         let correct = vec![-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0];
-        let scores = windowed_score_2(
-            &a,
-            &s,
-            crate::SCORE_WINDOW_SIZE,
-            crate::BACKGROUND_WINDOW_SIZE,
-        )?;
+        let scores = windowed_score_2(&a, &s, crate::SCORE_WINDOW_SIZE, &b)?;
         assert_eq!(scores, correct);
 
         Ok(())

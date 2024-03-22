@@ -35,6 +35,20 @@ impl NucleotideByteUtils for Vec<u8> {
     }
 }
 
+impl NucleotideByteUtils for u8 {
+    fn to_utf8_string(&self) -> String {
+        ALIGNMENT_ALPHABET_STR[*self as usize].to_string()
+    }
+
+    fn to_debug_utf8_string(&self) -> String {
+        DEBUG_ALIGNMENT_ALPHABET_STR[*self as usize].to_string()
+    }
+
+    fn into_utf8_string(self) -> String {
+        ALIGNMENT_ALPHABET_STR[self as usize].to_string()
+    }
+}
+
 pub const NUCLEOTIDE_WEIGHTS: [[f64; 4]; 15] = [
     //A    C    G    T
     [1.0, 0.0, 0.0, 0.0],     // A
@@ -56,6 +70,10 @@ pub const NUCLEOTIDE_WEIGHTS: [[f64; 4]; 15] = [
 
 pub const ALIGNMENT_ALPHABET_STR: [&str; 15] = [
     "A", "C", "G", "T", "K", "M", "N", "R", "S", "W", "X", "Y", "-", "-", "*",
+];
+
+pub const DEBUG_ALIGNMENT_ALPHABET_STR: [&str; 15] = [
+    "A", "C", "G", "T", "K", "M", "N", "R", "S", "W", "X", "Y", "-", "+", "*",
 ];
 
 pub const ALIGNMENT_ALPHABET_UTF8: [u8; 15] = [
