@@ -65,8 +65,9 @@ pub struct Alignment {
 }
 
 impl Alignment {
+    #[allow(dead_code)]
     pub fn from_str(str: &str) -> Self {
-        let tokens: Vec<&str> = str.split("\n").collect();
+        let tokens: Vec<&str> = str.split('\n').collect();
 
         let target = tokens[0];
         let query = tokens[1];

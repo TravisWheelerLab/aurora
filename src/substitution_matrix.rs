@@ -5,8 +5,7 @@ use std::{
 };
 
 use crate::alphabet::{
-    ALIGNMENT_ALPHABET_STR, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, NUCLEOTIDE_ALPHABET_UTF8,
-    STR_TO_DIGITAL_NUCLEOTIDE,
+    ALIGNMENT_ALPHABET_STR, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, STR_TO_DIGITAL_NUCLEOTIDE,
 };
 
 pub trait AlignmentScore {
@@ -158,7 +157,6 @@ impl SubstitutionMatrix {
         lambda: f64,
         gap_open: f64,
         gap_extend: f64,
-        background_freqs_i: [f64; 4],
         target_background_frequencies: [f64; 4],
         original_scores: [[f64; 14]; 14],
     ) -> Self {
@@ -338,7 +336,6 @@ impl SubstitutionMatrix {
                         lambda,
                         gap_open,
                         gap_extend,
-                        background_freqs_i,
                         background_freqs_j,
                         scores,
                     ));
