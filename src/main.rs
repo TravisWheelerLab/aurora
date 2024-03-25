@@ -273,7 +273,7 @@ fn main() -> Result<()> {
 
     proximity_groups
         .par_iter()
-        // todo: need to make sure this
+        // TODO: need to make sure this
         // doesn't cause performance issues
         .panic_fuse()
         // .inspect(|g| println!("{g:?}"))

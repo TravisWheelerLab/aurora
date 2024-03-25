@@ -19,7 +19,11 @@ struct AssemblyStuff<'a> {
     col_start: usize,
     col_end: usize,
     row_idx: usize,
+    /// The start/end positions of the alignments in the assembly
+    /// in terms of the column indices of the matrix
     alignment_matrix_ranges: Vec<MatrixRange>,
+    /// The start/end positions of the gaps between alignments in
+    /// the assembly in terms of the column indices of the matrix
     gap_matrix_ranges: Vec<MatrixRange>,
 }
 
@@ -30,6 +34,7 @@ pub fn split_trace(
     confidence_avg_by_id: &HashMap<usize, f64>,
     args: &Args,
 ) -> (
+    // TODO: proper return type for this
     Vec<TraceSegment>,
     Vec<TraceSegment>,
     Vec<usize>,
@@ -37,6 +42,8 @@ pub fn split_trace(
     Vec<usize>,
     Vec<MatrixRange>,
 ) {
+    // for competittion, we are only going to
+    // consider the rows that are in the trace
     let rows_in_trace = trace_segments
         .iter()
         .map(|s| s.row_idx)
@@ -53,30 +60,31 @@ pub fn split_trace(
         .iter()
         .enumerate()
         // +1 to the assembly index to get the row index
-        .map(|(idx, assembly)| (idx + 1, assembly))
+        .map(|(assembly_idx, assembly)| (assembly_idx + 1, assembly))
         // include assemblies that were hit by the trace
         .filter(|(row_idx, _)| rows_in_trace.contains(row_idx))
         // include assemblies with more than one alignment
         .filter(|(_, assembly)| assembly.alignments.len() > 1)
         .collect_vec();
 
+    // TODO: rename this
     let stuff: Vec<AssemblyStuff> = assemblies_in_trace
         .iter()
         .map(|(row_idx, assembly)| {
-            let assembly_col_start = assembly.target_start - assembly_group.target_start;
-            let assembly_col_end = assembly.target_end - assembly_group.target_start;
+            let assembly_col_start_in_matrix = assembly.target_start - assembly_group.target_start;
+            let assembly_col_end_in_matrix = assembly.target_end - assembly_group.target_start;
 
             AssemblyStuff {
                 assembly,
-                col_start: assembly_col_start,
-                col_end: assembly_col_end,
+                col_start: assembly_col_start_in_matrix,
+                col_end: assembly_col_end_in_matrix,
                 row_idx: *row_idx,
                 alignment_matrix_ranges: assembly
                     .alignment_ranges
                     .iter()
                     .map(|a| MatrixRange {
-                        col_start: a.assembly_col_start + assembly_col_start,
-                        col_end: a.assembly_col_end + assembly_col_start,
+                        col_start: a.assembly_col_start + assembly_col_start_in_matrix,
+                        col_end: a.assembly_col_end + assembly_col_start_in_matrix,
                     })
                     .collect_vec(),
                 gap_matrix_ranges: assembly
@@ -84,8 +92,8 @@ pub fn split_trace(
                     .iter()
                     .zip(assembly.alignment_ranges.iter().skip(1))
                     .map(|(a, b)| MatrixRange {
-                        col_start: a.assembly_col_end + assembly_col_start,
-                        col_end: b.assembly_col_start + assembly_col_start,
+                        col_start: a.assembly_col_end + assembly_col_start_in_matrix,
+                        col_end: b.assembly_col_start + assembly_col_start_in_matrix,
                     })
                     .collect_vec(),
             }
@@ -236,63 +244,96 @@ pub fn split_trace(
             return;
         }
 
+        // always try to resolve assemblies
         if unresolved_assembly_rows.contains(&segment.row_idx) {
             ambiguous.push(segment);
             return;
         }
 
+        // get the group of unresolved assemblies that
+        // happen to overlap this current segment
         let overlapping_unresolved_assembly_parts = unresolved_assemblies
             .iter()
+            // make sure to exclude the assembly that
+            // corresponds to the current segment
             .filter(|a| a.row_idx != segment.row_idx)
+            // look at each assembly fragment individually
             .flat_map(|a| &a.alignment_matrix_ranges)
+            // check if that fragment overlaps the current segment
             .filter(|f| segment.col_start < f.col_end && segment.col_end > f.col_start)
             .collect_vec();
 
         if overlapping_unresolved_assembly_parts.is_empty() {
+            // if the current segment doesn't overlap
+            // any part of any unresolved assembly,
+            // we can just call it conclusive
             conclusive.push(segment);
         } else {
-            let min_overlap = overlapping_unresolved_assembly_parts
+            // otherwise, we need to do some slicing and dicing
+
+            // make a vector of bools where each entry indicates
+            // whether the corresponding position in this segment
+            // is covered by a member of an unresolved assembly
+            let mut covered = vec![false; segment.col_end - segment.col_start + 1];
+            overlapping_unresolved_assembly_parts
                 .iter()
-                .map(|f| f.col_start)
-                .min()
-                .unwrap_or(segment.col_start);
+                // map and clamp the assembly fragment coordinates
+                // into the coordinate space of our bool vector
+                .map(|f| {
+                    (
+                        segment.col_start.max(f.col_start) - segment.col_start,
+                        segment.col_end.min(f.col_end) - segment.col_start,
+                    )
+                })
+                .for_each(|(left, right)| {
+                    (left..=right).for_each(|i| covered[i] = true);
+                });
 
-            let max_overlap = overlapping_unresolved_assembly_parts
+            // now that we have the vector of bools, we're
+            // going to zip through it and pull out contiguous
+            // runs of "true" and "false"
+            let mut left = 0usize;
+            covered
                 .iter()
-                .map(|f| f.col_end)
-                .max()
-                .unwrap_or(segment.col_end);
+                .enumerate()
+                .zip(covered.iter().skip(1))
+                .for_each(|((right, &flag_a), &flag_b)| {
+                    if flag_a != flag_b {
+                        let range = TraceSegment {
+                            query_id: segment.query_id,
+                            ali_id: segment.ali_id,
+                            row_idx: segment.row_idx,
+                            // map the range indices back into
+                            // the matrix coordinate space
+                            col_start: left + segment.col_start,
+                            col_end: right + segment.col_start,
+                        };
+                        left = right + 1;
+                        if flag_a {
+                            // if we just completed a run of "trues",
+                            // then the region it describes is ambiguous
+                            ambiguous.push(range);
+                        } else {
+                            // otherwise, the region is conclusive
+                            conclusive.push(range);
+                        }
+                    }
+                });
 
-            let slice_start = min_overlap.max(segment.col_start);
-            let slice_end = max_overlap.min(segment.col_end);
-
-            if slice_start > segment.col_start {
-                conclusive.push(TraceSegment {
-                    query_id: segment.query_id,
-                    ali_id: segment.ali_id,
-                    row_idx: segment.row_idx,
-                    col_start: segment.col_start,
-                    col_end: slice_start - 1,
-                })
-            }
-
-            if slice_end < segment.col_end {
-                conclusive.push(TraceSegment {
-                    query_id: segment.query_id,
-                    ali_id: segment.ali_id,
-                    row_idx: segment.row_idx,
-                    col_start: slice_end + 1,
-                    col_end: segment.col_end,
-                })
-            }
-
-            ambiguous.push(TraceSegment {
+            let last_flag = *covered.last().unwrap();
+            let last_range = TraceSegment {
                 query_id: segment.query_id,
                 ali_id: segment.ali_id,
                 row_idx: segment.row_idx,
-                col_start: slice_start,
-                col_end: slice_end,
-            });
+                col_start: left + segment.col_start,
+                col_end: covered.len() - 1 + segment.col_start,
+            };
+
+            if last_flag {
+                ambiguous.push(last_range);
+            } else {
+                conclusive.push(last_range);
+            }
         }
     });
 

@@ -203,7 +203,7 @@ pub fn trace_segments(trace: &Trace) -> Vec<TraceSegment> {
                     col_start: start_step.col_idx,
                     col_end: step.col_idx,
                 });
-                start_step = &next_step;
+                start_step = next_step;
             }
         });
 
