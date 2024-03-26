@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use itertools::Itertools;
 
 use crate::{
+    alignment::Alignment,
     collapse::{Assembly, AssemblyGroup},
     viterbi::TraceSegment,
     Args,
@@ -166,22 +167,34 @@ pub fn split_trace(
 
     conflicts.iter().for_each(|(a, b)| {
         if *remaining_conflicts.get(a).unwrap() && *remaining_conflicts.get(b).unwrap() {
-            let ali_a = &stuff[*a].assembly.alignments;
-            let ali_b = &stuff[*b].assembly.alignments;
+            let alignments_a = &stuff[*a].assembly.alignments;
+            let alignments_b = &stuff[*b].assembly.alignments;
 
-            let conf_a: f64 = ali_a
-                .iter()
-                .map(|a| confidence_avg_by_id.get(&a.id).unwrap())
-                .sum::<f64>()
-                / ali_a.len() as f64;
+            // let average_conf_fn = |alignments: &Vec<&Alignment>| {
+            //     alignments
+            //         .iter()
+            //         .map(|a| confidence_avg_by_id.get(&a.id).unwrap())
+            //         .sum::<f64>()
+            //         / alignments_a.len() as f64
+            // };
+            //
+            // let conf_a = average_conf_fn(alignments_a);
+            // let conf_b = average_conf_fn(alignments_b);
 
-            let conf_b: f64 = ali_b
-                .iter()
-                .map(|a| confidence_avg_by_id.get(&a.id).unwrap())
-                .sum::<f64>()
-                / ali_b.len() as f64;
+            let viterbi_proxy_fn = |alignments: &Vec<&Alignment>| {
+                alignments
+                    .iter()
+                    .map(|a| (&a.id, (a.target_end - a.target_start + 1) as f64))
+                    .map(|(ali_id, ali_length)| {
+                        confidence_avg_by_id.get(ali_id).unwrap().ln() * ali_length
+                    })
+                    .sum::<f64>()
+            };
 
-            if conf_a >= conf_b {
+            let score_a = viterbi_proxy_fn(alignments_a);
+            let score_b = viterbi_proxy_fn(alignments_b);
+
+            if score_a >= score_b {
                 competed_assembly_rows.push(stuff[*b].row_idx);
                 remaining_conflicts.insert(*b, false);
             } else {
