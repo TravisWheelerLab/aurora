@@ -28,6 +28,7 @@ use anyhow::Result;
 use clap::Parser;
 use itertools::Itertools;
 use rayon::prelude::*;
+use viz::VizConstraint;
 
 use crate::{chunks::validate_groups, pipeline::run_pipeline};
 
@@ -124,6 +125,15 @@ pub struct Args {
     /// visualization output will be written
     #[arg(long = "viz-out", default_value = "./viz", value_name = "path")]
     pub viz_output_path: PathBuf,
+
+    /// A list of target names, starts, and ends
+    /// that will constrain the visualization output
+    #[arg(
+        long = "viz-constraint",
+        value_name = "\"target_name:start:end, ...\"",
+        value_delimiter = ','
+    )]
+    pub viz_constraint: Vec<VizConstraint>,
 
     /// Produce visualization output for potential join "assemblies"
     #[arg(long = "assembly-viz")]

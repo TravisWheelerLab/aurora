@@ -8,6 +8,7 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     io::{BufRead, BufReader},
+    num::ParseIntError,
     path::Path,
 };
 
@@ -27,6 +28,27 @@ use crate::{
     viterbi::TraceSegment,
     Args,
 };
+
+#[derive(Clone, Debug)]
+pub struct VizConstraint {
+    pub target_name: String,
+    pub target_start: usize,
+    pub target_end: usize,
+}
+
+impl std::str::FromStr for VizConstraint {
+    type Err = ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let tokens: Vec<&str> = s.split(':').collect();
+
+        Ok(VizConstraint {
+            target_name: tokens[0].to_string(),
+            target_start: tokens[1].parse()?,
+            target_end: tokens[2].parse()?,
+        })
+    }
+}
 
 pub fn write_soda_html(
     data: &impl Serialize,
