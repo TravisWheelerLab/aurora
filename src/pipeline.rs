@@ -11,10 +11,10 @@ use crate::{
     confidence::confidence,
     matrix::{Matrix, MatrixDef},
     score_params::ScoreParams,
-    split::{split_trace, MatrixRange},
+    split::split_trace,
     support::windowed_confidence,
     viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment},
-    viz::{write_soda_html, AdjudicationSodaData},
+    viz::AdjudicationSodaData,
     windowed_scores::windowed_score,
     Args, BACKGROUND_WINDOW_SIZE, SCORE_WINDOW_SIZE,
 };
@@ -82,12 +82,17 @@ pub fn run_pipeline(
 
     // the initial active cols just removes the dead space between alignments
     let mut active_cols = collapsed_confidence_matrix.initial_active_cols();
-    let mut inactive_segments: Vec<Vec<MatrixRange>> = vec![];
-    let mut trace_conclusive: Vec<Vec<TraceSegment>> = vec![];
     let mut trace_ambiguous: Vec<Vec<TraceSegment>> = vec![];
-    let mut resolved_assembly_rows: Vec<Vec<usize>> = vec![];
-    let mut unresolved_assembly_rows: Vec<Vec<usize>> = vec![];
-    let mut competed_assembly_rows: Vec<Vec<usize>> = vec![];
+    let mut trace_conclusive: Vec<Vec<TraceSegment>> = vec![];
+
+    // if we're going to produce visualizations, this will
+    // keep track of all of the data needed to do so
+    let mut soda_data = AdjudicationSodaData::new(
+        &assembly_group,
+        &collapsed_confidence_matrix,
+        alignment_data,
+        &args,
+    );
 
     while !active_cols.is_empty() {
         viterbi_collapsed(
@@ -110,7 +115,7 @@ pub fn run_pipeline(
 
         let trace_segments = trace_segments(&trace);
 
-        let (ambiguous, conclusive, resolved, unresolved, competed, inactive) = split_trace(
+        let split_results = split_trace(
             trace_segments,
             &assembly_group,
             &active_cols,
@@ -118,19 +123,22 @@ pub fn run_pipeline(
             &args,
         );
 
-        let new_active_cols = ambiguous
+        // everything that was ambiguous during trace
+        // splitting remains as an active column
+        let new_active_cols = split_results
+            .trace_ambiguous
             .iter()
             .flat_map(|s| s.col_start..=s.col_end)
             .collect_vec();
 
+        trace_conclusive.push(split_results.trace_conclusive.clone());
+        trace_ambiguous.push(split_results.trace_ambiguous.clone());
+
         debug_assert!(new_active_cols.len() <= active_cols.len());
 
-        inactive_segments.push(inactive);
-        trace_conclusive.push(conclusive);
-        trace_ambiguous.push(ambiguous);
-        resolved_assembly_rows.push(resolved);
-        unresolved_assembly_rows.push(unresolved);
-        competed_assembly_rows.push(competed);
+        if args.viz {
+            soda_data.add(split_results);
+        }
 
         if new_active_cols.len() == active_cols.len() {
             break;
@@ -142,6 +150,7 @@ pub fn run_pipeline(
     let final_ambigous = trace_ambiguous.last().expect("no ambiguous trace").to_vec();
     trace_conclusive.push(final_ambigous);
 
+    // TODO: function for this
     let mut annotations: Vec<Annotation> = trace_conclusive
         .iter()
         .flat_map(|iter_segments| {
@@ -184,34 +193,16 @@ pub fn run_pipeline(
         })
         .collect_vec();
 
+    if args.viz {
+        soda_data.set_annotations(annotations.clone());
+        let out_path = args.viz_output_path.join("index.html");
+        soda_data.write(out_path);
+    }
+
     annotations.sort_by_key(|r| r.target_start);
     annotations.retain(|r| r.query_name != "skip");
 
     Annotation::write(&annotations, &mut std::io::stdout());
-
-    if args.viz {
-        let data = AdjudicationSodaData::new(
-            &assembly_group,
-            &collapsed_confidence_matrix,
-            alignment_data,
-            &annotations,
-            trace_conclusive,
-            trace_ambiguous,
-            resolved_assembly_rows,
-            unresolved_assembly_rows,
-            competed_assembly_rows,
-            inactive_segments,
-            &args,
-        );
-
-        let mut exe_path = std::env::current_exe().expect("failed to resolve executable path");
-        exe_path.pop();
-        let template_path = exe_path.join("../../fixtures/soda/annotations.html");
-        let js_path = exe_path.join("../../fixtures/soda/annotations.js");
-        let out_path = args.viz_output_path.join("index.html");
-
-        write_soda_html(&data, template_path, js_path, out_path);
-    }
 }
 
 pub trait StrSliceExt {

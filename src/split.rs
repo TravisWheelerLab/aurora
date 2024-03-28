@@ -28,21 +28,30 @@ struct AssemblyStuff<'a> {
     gap_matrix_ranges: Vec<MatrixRange>,
 }
 
+///
+///
+///
+///
+pub struct SplitResults {
+    pub trace_ambiguous: Vec<TraceSegment>,
+    pub trace_conclusive: Vec<TraceSegment>,
+    pub resolved_assembly_rows: Vec<usize>,
+    pub unresolved_assembly_rows: Vec<usize>,
+    pub competed_assembly_rows: Vec<usize>,
+    pub inactive_col_ranges: Vec<MatrixRange>,
+}
+
+///
+///
+///
+///
 pub fn split_trace(
     trace_segments: Vec<TraceSegment>,
     assembly_group: &AssemblyGroup,
     active_cols: &[usize],
     confidence_avg_by_id: &HashMap<usize, f64>,
     args: &Args,
-) -> (
-    // TODO: proper return type for this
-    Vec<TraceSegment>,
-    Vec<TraceSegment>,
-    Vec<usize>,
-    Vec<usize>,
-    Vec<usize>,
-    Vec<MatrixRange>,
-) {
+) -> SplitResults {
     // for competittion, we are only going to
     // consider the rows that are in the trace
     let rows_in_trace = trace_segments
@@ -350,12 +359,12 @@ pub fn split_trace(
         }
     });
 
-    (
-        ambiguous,
-        conclusive,
+    SplitResults {
+        trace_ambiguous: ambiguous,
+        trace_conclusive: conclusive,
         resolved_assembly_rows,
         unresolved_assembly_rows,
         competed_assembly_rows,
         inactive_col_ranges,
-    )
+    }
 }

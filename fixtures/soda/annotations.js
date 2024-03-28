@@ -1,12 +1,13 @@
 import * as soda from "https://esm.run/@sodaviz/soda@0.13.1";
-import * as d3 from "https://esm.run/d3-scale@4";
 
 function run(data) {
-  document.querySelector('.container').addEventListener('wheel', function(event) {
-    if (event.ctrlKey) {
-      event.preventDefault();
-    }
-  });
+  document
+    .querySelector(".container")
+    .addEventListener("wheel", function (event) {
+      if (event.ctrlKey) {
+        event.preventDefault();
+      }
+    });
 
   const LABEL_WIDTH = 500;
   let brushDomain = undefined;
@@ -16,7 +17,6 @@ function run(data) {
 
   let optionTimeoutTime = 100;
   let optionTimeoutId = 0;
-
 
   let classNames = [
     "sine",
@@ -41,7 +41,7 @@ function run(data) {
     "#e377c2",
     "#7f7f7f",
     "#bcbd22",
-    "#17becf"
+    "#17becf",
   ];
 
   // this maps contain the dom
@@ -97,7 +97,13 @@ function run(data) {
   }
 
   function handleEvent(e) {
-    let toggles = ["traceAtTop", "onlySelected", "labels", "onlyTrace", "showInactive"];
+    let toggles = [
+      "traceAtTop",
+      "onlySelected",
+      "labels",
+      "onlyTrace",
+      "showInactive",
+    ];
     let numeric = ["confThresh", "aliThresh"];
     let text = ["regex"];
     let traceButtons = [];
@@ -218,7 +224,7 @@ function run(data) {
         // sneaky: rewrite the layout object's row retrieval
         //         function so that it works for the annotations
         //         that the proxy annotations correspond to
-        this.layout.row = function(d) {
+        this.layout.row = function (d) {
           let id_tokens = d.a.id.split("-");
           let id = `${id_tokens[0]}-${id_tokens[1]}`;
           let row = this.rowMap.get(id);
@@ -231,9 +237,9 @@ function run(data) {
         }
 
         function classColor(d) {
-          let firstSplit = d.a.label.split('#');
+          let firstSplit = d.a.label.split("#");
           if (firstSplit.length > 1) {
-            let c = firstSplit[1].split("/")[0].toLowerCase();;
+            let c = firstSplit[1].split("/")[0].toLowerCase();
             let i = classNames.indexOf(c);
             if (i == -1) {
               i = 9;
@@ -287,13 +293,13 @@ function run(data) {
 
     let aurora = new soda.Chart(annChartConf);
 
-    let referenceZoom = new soda.Chart(annChartConf)
+    let referenceZoom = new soda.Chart(annChartConf);
     let auroraZoom = new soda.Chart(annChartConf);
 
     let genome = new soda.Chart({
       ...chartConf,
       upperPadSize: 25,
-      updateLayout() { },
+      updateLayout() {},
       draw(params) {
         this.addAxis();
 
@@ -313,7 +319,6 @@ function run(data) {
       rowHeight: 30,
 
       updateLayout(params) {
-
         let queryIds = [...new Set(params.proxy.map((a) => a.queryId))];
         let traceQueryIds = [];
 
@@ -386,6 +391,9 @@ function run(data) {
         }
 
         // assemblies
+        // NOTE: the y bug here seems to be when
+        // the middle gap part of an assembly is
+        // in the view, but the fragments aren't
         soda.rectangle({
           chart: this,
           selector: "assembly",
@@ -493,8 +501,6 @@ function run(data) {
             fillColor: "black",
             text: (d) => [`tandem repeat(${d.a.period})`, "..."],
           });
-
-
         }
 
         if (domainWidth < state.aliThresh) {
@@ -538,9 +544,8 @@ function run(data) {
 
         soda.tooltip({
           annotations: params.ambiguousTrace.concat(params.conclusiveTrace),
-          text: (d) =>
-            `confidence: ${d.a.conf}`,
-        })
+          text: (d) => `confidence: ${d.a.conf}`,
+        });
 
         soda.tooltip({
           annotations: params.confidenceSegments,
@@ -550,7 +555,7 @@ function run(data) {
             `<br>chrom: ${d.a.start.toLocaleString()}..${d.a.end.toLocaleString()}` +
             `<br>strand: ${d.a.strand}` +
             `<br>confidence: ${d.a.conf}`,
-        })
+        });
       },
 
       postZoom() {
@@ -564,7 +569,7 @@ function run(data) {
       },
     });
 
-    alignments.render = function(params) {
+    alignments.render = function (params) {
       //this.resetTransform();
 
       let queryFilter = (a) => {
@@ -612,7 +617,8 @@ function run(data) {
         conclusiveTrace:
           params.conclusiveTrace[state.traceIteration].filter(queryFilter),
         inactiveSegments: params.inactiveSegments[state.traceIteration],
-        confidenceSegments: params.confidenceSegments[state.traceIteration].filter(queryFilter),
+        confidenceSegments:
+          params.confidenceSegments[state.traceIteration].filter(queryFilter),
       };
 
       this.renderParams = filteredParams;
@@ -629,7 +635,6 @@ function run(data) {
   }
 
   function prepareAnn(ann) {
-    let idCnt = 0;
     let proxy = [];
     let aligned = [];
     let inner = [];
@@ -895,14 +900,14 @@ function run(data) {
     let cnt = 0;
     for (let i = 0; i < data.targetSeq.length; i += 1000) {
       let start = data.targetStart + i;
-      let end = Math.min(data.targetEnd + 1, start + 1000)
-      let split = (data.targetSeq.slice(i, i + 1000));
+      let end = Math.min(data.targetEnd + 1, start + 1000);
+      let split = data.targetSeq.slice(i, i + 1000);
       genomeAnn.push({
         id: `gseq-${cnt++}`,
         start,
         end,
         sequence: split,
-      })
+      });
     }
 
     let genome = {
@@ -964,7 +969,7 @@ function run(data) {
           [0, 0],
           [chart.viewportWidthPx, chart.viewportHeightPx + 1],
         ])
-        .on("start", () => { })
+        .on("start", () => {})
         .on("brush", () => {
           let brushRange = soda.internalD3.event.selection;
           brushDomain = [
@@ -996,7 +1001,6 @@ function run(data) {
       ...coords,
     });
 
-
     charts.auroraZoom.render({
       ...params.aurora,
       ...coords,
@@ -1015,6 +1019,11 @@ function run(data) {
     initializeBrush();
 
     let zoomSync = new soda.ZoomSyncer();
-    zoomSync.add([charts.auroraZoom, charts.referenceZoom, charts.genome, charts.alignments]);
+    zoomSync.add([
+      charts.auroraZoom,
+      charts.referenceZoom,
+      charts.genome,
+      charts.alignments,
+    ]);
   }
 }

@@ -17,14 +17,11 @@ use serde::Serialize;
 
 use crate::{
     alignment::{Alignment, AlignmentData, Strand},
-    alphabet::{
-        NucleotideByteUtils, ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
-        PAD_DIGITAL, SPACE_UTF8,
-    },
+    alphabet::{ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, SPACE_UTF8},
     annotation::Annotation,
     collapse::{Assembly, AssemblyGroup},
     matrix::Matrix,
-    split::MatrixRange,
+    split::SplitResults,
     viterbi::TraceSegment,
     Args,
 };
@@ -114,87 +111,126 @@ impl Alignment {
     }
 }
 
-///
-///
-///
-///
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AdjudicationSodaData {
-    target_start: usize,
-    target_end: usize,
-    target_seq: String,
-    aurora_ann: Vec<BlockGroup>,
-    reference_ann: Vec<BlockGroup>,
-    alignment_strings: Vec<String>,
-    assembly_strings: Vec<String>,
-    tandem_repeat_strings: Vec<String>,
-    conclusive_trace_strings: Vec<String>,
-    ambiguous_trace_strings: Vec<String>,
-    resolved_assembly_rows: Vec<Vec<usize>>,
-    unresolved_assembly_rows: Vec<Vec<usize>>,
-    competed_assembly_rows: Vec<Vec<usize>>,
-    inactive_segment_strings: Vec<Vec<String>>,
-    confidence_segment_strings: Vec<Vec<String>>,
+pub struct AdjudicationSodaData<'a> {
+    group: &'a AssemblyGroup<'a>,
+    confidence_matrix: &'a Matrix<'a, f64>,
+    alignment_data: &'a AlignmentData,
+    annotations: Vec<Annotation>,
+    split_results: Vec<SplitResults>,
+    args: &'a Args,
 }
 
-impl AdjudicationSodaData {
-    // TODO: refactor these args
-    #[allow(clippy::too_many_arguments)]
+impl<'a> AdjudicationSodaData<'a> {
+    const TEMPLATE: &str = include_str!("../../fixtures/soda/annotations.html");
+    const JS: &str = include_str!("../../fixtures/soda/annotations.js");
+
     pub fn new(
-        group: &AssemblyGroup,
-        confidence_matrix: &Matrix<f64>,
-        alignment_data: &AlignmentData,
-        annotations: &[Annotation],
-        trace_conclusive: Vec<Vec<TraceSegment>>,
-        trace_ambiguous: Vec<Vec<TraceSegment>>,
-        resolved_assembly_rows: Vec<Vec<usize>>,
-        unresolved_assembly_rows: Vec<Vec<usize>>,
-        competed_assembly_rows: Vec<Vec<usize>>,
-        inactive_segments: Vec<Vec<MatrixRange>>,
-        args: &Args,
+        group: &'a AssemblyGroup,
+        confidence_matrix: &'a Matrix<'a, f64>,
+        alignment_data: &'a AlignmentData,
+        args: &'a Args,
     ) -> Self {
-        let target_start = group.target_start;
-        let target_end = group.target_end;
-        let target_length = target_end - target_start + 1;
+        Self {
+            group,
+            confidence_matrix,
+            alignment_data,
+            annotations: vec![],
+            split_results: vec![],
+            args,
+        }
+    }
 
-        let mut target_seq_digital_bytes = vec![PAD_DIGITAL; target_length];
-        group
-            .assemblies
+    pub fn write(&self, path: impl AsRef<Path>) {
+        let data = serde_json::json!({
+            "targetStart": self.target_start(),
+            "targetEnd": self.target_end(),
+            "targetSeq": self.target_seq(),
+            "auroraAnn": self.aurora_ann(),
+            "referenceAnn": self.reference_ann(),
+            "alignmentStrings": self.alignment_strings(),
+            "assemblyStrings": self.assembly_strings(),
+            "tandemRepeatStrings": self.tandem_repeat_strings(),
+            "conclusiveTraceStrings": self.conclusive_trace_strings(),
+            "ambiguousTraceStrings": self.ambiguous_trace_strings(),
+            "resolvedAssemblyRows": self.resolved_assembly_rows(),
+            "unresolvedAssemblyRows": self.unresolved_assembly_rows(),
+            "competedAssemblyRows": self.competed_assembly_rows(),
+            "inactiveSegmentStrings": self.inactive_segment_strings(),
+            "confidenceSegmentStrings": self.confidence_segment_strings(),
+        });
+
+        let mut viz_html = Self::TEMPLATE.replace(
+            "DATA_TARGET",
+            &serde_json::to_string(&data).expect("failed to serialize JSON data"),
+        );
+
+        viz_html = viz_html.replace("JS_TARGET", Self::JS);
+
+        let mut file = std::fs::File::create(path).expect("failed to create file");
+
+        std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
+    }
+
+    pub fn add(&mut self, results: SplitResults) {
+        self.split_results.push(results);
+    }
+
+    pub fn set_annotations(&mut self, annotations: Vec<Annotation>) {
+        self.annotations = annotations;
+    }
+
+    fn target_start(&self) -> usize {
+        self.group.target_start
+    }
+
+    fn target_end(&self) -> usize {
+        self.group.target_end
+    }
+
+    fn target_length(&self) -> usize {
+        self.target_end() - self.target_start() + 1
+    }
+
+    fn target_seq(&self) -> String {
+        "*".repeat(self.target_length())
+    }
+
+    fn aurora_ann(&self) -> Vec<BlockGroup> {
+        assert!(!self.annotations.is_empty());
+
+        let unique_join_ids: Vec<usize> = self
+            .annotations
             .iter()
-            .flat_map(|assembly| &assembly.alignments)
-            .flat_map(|a| {
-                a.target_seq
-                    .iter()
-                    .filter(|&&c| c != GAP_OPEN_DIGITAL && c != GAP_EXTEND_DIGITAL)
-                    .enumerate()
-                    .map(|(idx, c)| (idx + a.target_start - target_start, c))
-            })
-            .for_each(|(col_idx, &char)| target_seq_digital_bytes[col_idx] = char);
+            .map(|a| a.join_id)
+            .unique()
+            .collect();
 
-        let target_seq = target_seq_digital_bytes.into_utf8_string();
-
-        let unique_join_ids: Vec<usize> = annotations.iter().map(|a| a.join_id).unique().collect();
-
-        let aurora_ann: Vec<BlockGroup> = unique_join_ids
+        unique_join_ids
             .iter()
             .map(|&id| {
                 BlockGroup::from_joined_annotations(
-                    &mut annotations
+                    &mut self
+                        .annotations
                         .iter()
                         .filter(|&a| a.join_id == id)
                         .collect::<Vec<&Annotation>>(),
-                    &alignment_data.query_lengths,
+                    &self.alignment_data.query_lengths,
                 )
             })
-            .collect();
+            .collect()
+    }
 
+    fn reference_ann(&self) -> Vec<BlockGroup> {
         let mut overlapping_bed = vec![];
 
-        let target_name = alignment_data.target_name_map.get(group.target_id);
+        let target_name = self
+            .alignment_data
+            .target_name_map
+            .get(self.group.target_id);
+
         if let (Some(path), Some(&offset)) = (
-            &args.viz_reference_bed_path,
-            args.viz_reference_bed_index.get(target_name),
+            &self.args.viz_reference_bed_path,
+            self.args.viz_reference_bed_index.get(target_name),
         ) {
             let file = File::open(path).expect("failed to open reference bed");
             let reader = BufReader::new(file);
@@ -212,29 +248,33 @@ impl AdjudicationSodaData {
 
                     let thick_start = tokens[6].parse::<usize>().expect("failed to parse usize");
                     let thick_end = tokens[7].parse::<usize>().expect("failed to parse usize");
-                    if thick_start < target_end && thick_end > target_start {
+                    if thick_start < self.target_end() && thick_end > self.target_start() {
                         overlapping_bed.push(BedRecord::from_tokens(&tokens));
                     }
                 });
         }
 
-        let reference_ann = overlapping_bed
+        overlapping_bed
             .iter()
             .map(BlockGroup::from_bed_record)
-            .collect_vec();
+            .collect()
+    }
 
-        let alignment_strings = group
+    fn alignment_strings(&self) -> Vec<String> {
+        self.group
             .assemblies
             .iter()
             .enumerate()
             .flat_map(|(idx, assembly)| {
                 assembly.alignments.iter().map(move |a| {
-                    a.soda_string(idx + 1, alignment_data.query_name_map.get(a.query_id))
+                    a.soda_string(idx + 1, self.alignment_data.query_name_map.get(a.query_id))
                 })
             })
-            .collect_vec();
+            .collect()
+    }
 
-        let assembly_strings = group
+    fn assembly_strings(&self) -> Vec<String> {
+        self.group
             .assemblies
             .iter()
             .enumerate()
@@ -248,9 +288,11 @@ impl AdjudicationSodaData {
                     assembly_idx + 1,
                 )
             })
-            .collect_vec();
+            .collect()
+    }
 
-        let tandem_repeat_strings = group
+    fn tandem_repeat_strings(&self) -> Vec<String> {
+        self.group
             .tandem_repeats
             .iter()
             .enumerate()
@@ -261,64 +303,109 @@ impl AdjudicationSodaData {
                     repeat.target_end,
                     repeat.consensus_pattern,
                     repeat.period,
-                    repeat_idx + group.assemblies.len() + 1,
+                    repeat_idx + self.group.assemblies.len() + 1,
                 )
             })
-            .collect_vec();
+            .collect()
+    }
 
-        let trace_string_fn = |seg: &TraceSegment| {
-            let mut conf = 0.0;
-            (seg.col_start..=seg.col_end)
-                .for_each(|col_idx| conf += confidence_matrix.get(seg.row_idx, col_idx));
-            conf /= (seg.col_end - seg.col_start + 1) as f64;
-            format!(
-                "{},{},{},{},{:3.2}",
-                seg.col_start, seg.col_end, seg.query_id, seg.row_idx, conf
-            )
-        };
+    fn trace_string(&self, seg: &TraceSegment) -> String {
+        let mut conf = 0.0;
+        (seg.col_start..=seg.col_end)
+            .for_each(|col_idx| conf += self.confidence_matrix.get(seg.row_idx, col_idx));
 
-        let conclusive_trace_strings = trace_conclusive
+        conf /= (seg.col_end - seg.col_start + 1) as f64;
+
+        format!(
+            "{},{},{},{},{:3.2}",
+            seg.col_start, seg.col_end, seg.query_id, seg.row_idx, conf
+        )
+    }
+
+    fn conclusive_trace_strings(&self) -> Vec<String> {
+        self.split_results
             .iter()
-            .map(|t| t.iter().map(trace_string_fn).join("|"))
-            .collect_vec();
+            .map(|r| {
+                r.trace_conclusive
+                    .iter()
+                    .map(|seg| self.trace_string(seg))
+                    .join("|")
+            })
+            .collect()
+    }
 
-        let ambiguous_trace_strings = trace_ambiguous
+    fn ambiguous_trace_strings(&self) -> Vec<String> {
+        self.split_results
             .iter()
-            .map(|t| t.iter().map(trace_string_fn).join("|"))
-            .collect_vec();
+            .map(|r| {
+                r.trace_ambiguous
+                    .iter()
+                    .map(|seg| self.trace_string(seg))
+                    .join("|")
+            })
+            .collect()
+    }
 
-        let inactive_segment_strings = inactive_segments
+    fn resolved_assembly_rows(&self) -> Vec<Vec<usize>> {
+        self.split_results
             .iter()
-            .map(|segs| {
-                segs.iter()
+            .map(|r| r.resolved_assembly_rows.clone())
+            .collect()
+    }
+
+    fn unresolved_assembly_rows(&self) -> Vec<Vec<usize>> {
+        self.split_results
+            .iter()
+            .map(|r| r.unresolved_assembly_rows.clone())
+            .collect()
+    }
+
+    fn competed_assembly_rows(&self) -> Vec<Vec<usize>> {
+        self.split_results
+            .iter()
+            .map(|r| r.competed_assembly_rows.clone())
+            .collect()
+    }
+
+    fn inactive_segment_strings(&self) -> Vec<Vec<String>> {
+        self.split_results
+            .iter()
+            .map(|r| {
+                r.inactive_col_ranges
+                    .iter()
                     .map(|s| {
                         format!(
                             "{},{}",
-                            s.col_start + group.target_start,
-                            s.col_end + group.target_start
+                            s.col_start + self.target_start(),
+                            s.col_end + self.target_start()
                         )
                     })
                     .collect_vec()
             })
-            .collect_vec();
+            .collect()
+    }
 
-        let confidence_segment_strings = trace_ambiguous
+    fn confidence_segment_strings(&self) -> Vec<Vec<String>> {
+        self.split_results
             .iter()
-            .zip(trace_conclusive.iter())
-            .map(|(a, c)| {
-                a.iter()
-                    .chain(c)
+            .map(|r| {
+                r.trace_ambiguous
+                    .iter()
+                    .chain(r.trace_conclusive.iter())
+                    // map each trace segment to
+                    // target start & end coordinates
                     .map(|seg| {
                         (
-                            seg.col_start + group.target_start,
-                            seg.col_end + group.target_start,
+                            seg.col_start + self.target_start(),
+                            seg.col_end + self.target_start(),
                         )
                     })
                     .flat_map(|(seg_target_start, seg_target_end)| {
-                        group
+                        self.group
                             .assemblies
                             .iter()
                             .enumerate()
+                            // get the row idx of the assembly
                             .map(|(i, a)| (i + 1, a))
                             .flat_map(move |(row_idx, assembly)| {
                                 assembly
@@ -333,14 +420,15 @@ impl AdjudicationSodaData {
                                             row_idx,
                                             ali,
                                             seg_target_start.max(ali.target_start)
-                                                - group.target_start,
-                                            seg_target_end.min(ali.target_end) - group.target_start,
+                                                - self.target_start(),
+                                            seg_target_end.min(ali.target_end)
+                                                - self.target_start(),
                                         )
                                     })
                                     .map(move |(row_idx, ali, col_start, col_end)| {
                                         let mut conf = 0.0;
                                         (col_start..=col_end).for_each(|col_idx| {
-                                            conf += confidence_matrix.get(row_idx, col_idx)
+                                            conf += self.confidence_matrix.get(row_idx, col_idx)
                                         });
                                         conf /= (col_end - col_start + 1) as f64;
                                         format!(
@@ -349,40 +437,23 @@ impl AdjudicationSodaData {
                                             seg_target_end.min(ali.target_end),
                                             row_idx,
                                             conf,
-                                            confidence_matrix
+                                            self.confidence_matrix
                                                 .consensus_position(row_idx, col_start),
-                                            confidence_matrix.consensus_position(row_idx, col_end),
-                                            alignment_data
+                                            self.confidence_matrix
+                                                .consensus_position(row_idx, col_end),
+                                            self.alignment_data
                                                 .query_lengths
                                                 .get(&ali.query_id)
                                                 .unwrap(),
-                                            confidence_matrix.strand_of_row(row_idx),
-                                            alignment_data.query_name_map.get(ali.query_id),
+                                            self.confidence_matrix.strand_of_row(row_idx),
+                                            self.alignment_data.query_name_map.get(ali.query_id),
                                         )
                                     })
                             })
                     })
                     .collect_vec()
             })
-            .collect_vec();
-
-        Self {
-            target_start,
-            target_end,
-            target_seq,
-            aurora_ann,
-            reference_ann,
-            alignment_strings,
-            assembly_strings,
-            tandem_repeat_strings,
-            conclusive_trace_strings,
-            ambiguous_trace_strings,
-            resolved_assembly_rows,
-            unresolved_assembly_rows,
-            competed_assembly_rows,
-            inactive_segment_strings,
-            confidence_segment_strings,
-        }
+            .collect()
     }
 }
 

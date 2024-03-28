@@ -1,5 +1,6 @@
 use crate::alignment::Strand;
 
+#[derive(Clone)]
 pub struct Annotation {
     pub target_name: String,
     pub target_start: usize,
