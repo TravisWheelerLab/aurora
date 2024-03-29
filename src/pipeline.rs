@@ -246,7 +246,7 @@ pub fn run_pipeline(
     annotations.sort_by_key(|r| r.target_start);
     annotations.retain(|r| r.query_name != "skip");
 
-    // Annotation::write(&annotations, &mut std::io::stdout());
+    Annotation::write(&annotations, &mut std::io::stdout());
 }
 
 // TODO: move this elsewhere
