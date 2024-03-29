@@ -133,7 +133,7 @@ pub struct Args {
         value_name = "\"target_name:start:end, ...\"",
         value_delimiter = ','
     )]
-    pub viz_constraint: Vec<VizConstraint>,
+    pub viz_constraints: Vec<VizConstraint>,
 
     /// Produce visualization output for potential join "assemblies"
     #[arg(long = "assembly-viz")]
@@ -257,6 +257,24 @@ fn main() -> Result<()> {
         let index_file = File::create(args.viz_output_path.join("index.html")).unwrap();
         let mut index_writer = BufWriter::new(index_file);
 
+        args.viz_constraints
+            .iter()
+            .enumerate()
+            .for_each(|(idx, c)| {
+                writeln!(
+                    &mut index_writer,
+                    "<a href={}-{}-{}.html>slice {} | {} {}:{}</a><br>",
+                    c.target_name,
+                    c.target_start,
+                    c.target_end,
+                    idx,
+                    c.target_name,
+                    c.target_start,
+                    c.target_end,
+                )
+                .expect("failed to write to index.html");
+            });
+
         proximity_groups.iter().enumerate().for_each(|(idx, g)| {
             writeln!(
                 &mut index_writer,
@@ -283,8 +301,8 @@ fn main() -> Result<()> {
 
     proximity_groups
         .par_iter()
-        // TODO: need to make sure this
-        // doesn't cause performance issues
+        // TODO: need to make sure this doesn't
+        //       cause performance issues
         .panic_fuse()
         // .inspect(|g| println!("{g:?}"))
         .enumerate()

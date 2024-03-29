@@ -15,7 +15,7 @@ use crate::{
     support::windowed_confidence,
     viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment},
     viz::AdjudicationSodaData,
-    windowed_scores::windowed_score,
+    windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
     Args, BACKGROUND_WINDOW_SIZE, SCORE_WINDOW_SIZE,
 };
 
@@ -27,7 +27,6 @@ pub fn run_pipeline(
 ) {
     if args.viz {
         args.viz_output_path.push(format!("{}", region_idx));
-
         fs::create_dir_all(&args.viz_output_path).unwrap();
     }
 
@@ -40,13 +39,27 @@ pub fn run_pipeline(
     let matrix_def = MatrixDef::from_proximity_group(proximity_group);
     let mut confidence_matrix = Matrix::<f64>::new(&matrix_def);
 
+    let target_start = proximity_group.target_start;
+    let target_end = proximity_group.target_end;
+    let target_length = target_end - target_start + 1;
+
+    let target_seq =
+        build_target_seq_from_alignments(proximity_group.alignments, target_start, target_end);
+
+    let background = Background::new(
+        &target_seq,
+        target_start,
+        target_length,
+        BACKGROUND_WINDOW_SIZE,
+    );
+
     windowed_score(
         &mut confidence_matrix,
         proximity_group.alignments,
         proximity_group.tandem_repeats,
         &alignment_data.substitution_matrices,
+        &background,
         SCORE_WINDOW_SIZE,
-        BACKGROUND_WINDOW_SIZE,
     )
     .unwrap();
 
@@ -91,6 +104,7 @@ pub fn run_pipeline(
         &assembly_group,
         &collapsed_confidence_matrix,
         alignment_data,
+        &target_seq,
         &args,
     );
 
@@ -131,9 +145,11 @@ pub fn run_pipeline(
             .flat_map(|s| s.col_start..=s.col_end)
             .collect_vec();
 
+        // TODO: refactor this stuff, it's a remnant of the previous approach
         trace_conclusive.push(split_results.trace_conclusive.clone());
         trace_ambiguous.push(split_results.trace_ambiguous.clone());
 
+        // we should absolutely never end up increasing our column count
         debug_assert!(new_active_cols.len() <= active_cols.len());
 
         if args.viz {
@@ -194,17 +210,46 @@ pub fn run_pipeline(
         .collect_vec();
 
     if args.viz {
+        // TODO: this is kind of awkward
         soda_data.set_annotations(annotations.clone());
+
         let out_path = args.viz_output_path.join("index.html");
         soda_data.write(out_path);
+    }
+
+    if !args.viz_constraints.is_empty() {
+        let target_name = alignment_data
+            .target_name_map
+            .get(proximity_group.target_id)
+            .clone();
+
+        let target_start = proximity_group.target_start;
+        let target_end = proximity_group.target_end;
+
+        let constraints = args
+            .viz_constraints
+            .iter()
+            .filter(|c| c.target_name == target_name)
+            .filter(|c| c.target_start < target_end && c.target_end > target_start)
+            .collect_vec();
+
+        constraints.iter().for_each(|constraint| {
+            let out_path = args.viz_output_path.parent().unwrap().join(format!(
+                "{}-{}-{}.html",
+                constraint.target_name, constraint.target_start, constraint.target_end
+            ));
+            soda_data.constrain(constraint);
+            soda_data.write(out_path);
+        });
     }
 
     annotations.sort_by_key(|r| r.target_start);
     annotations.retain(|r| r.query_name != "skip");
 
-    Annotation::write(&annotations, &mut std::io::stdout());
+    // Annotation::write(&annotations, &mut std::io::stdout());
 }
 
+// TODO: move this elsewhere
 pub trait StrSliceExt {
     fn to_digital_nucleotides(self) -> Vec<u8>;
 }

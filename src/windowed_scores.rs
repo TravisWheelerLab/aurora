@@ -8,7 +8,7 @@ use crate::alphabet::{
 use crate::matrix::Matrix;
 use crate::substitution_matrix::{AlignmentScore, SubstitutionMatrix};
 
-fn build_target_seq_from_alignments(
+pub fn build_target_seq_from_alignments(
     alignments: &[Alignment],
     target_start: usize,
     target_length: usize,
@@ -36,7 +36,7 @@ pub trait BackgroundFrequencies {
     fn frequencies_at(&self, target_pos: usize) -> [f64; 4];
 }
 
-impl BackgroundFrequencies for Background {
+impl<'a> BackgroundFrequencies for Background<'a> {
     fn frequencies_at(&self, target_pos: usize) -> [f64; 4] {
         debug_assert!(target_pos >= self.target_start);
 
@@ -53,23 +53,21 @@ impl BackgroundFrequencies for DummyBackground {
     }
 }
 
-// todo: move to a new file
-pub struct Background {
+// TODO: move to a new file
+pub struct Background<'a> {
     pub target_start: usize,
     pub target_end: usize,
-    pub target_seq: Vec<u8>,
+    pub target_seq: &'a [u8],
     pub frequencies: Vec<[f64; 4]>,
 }
 
-impl Background {
+impl<'a> Background<'a> {
     pub fn new(
-        alignments: &[Alignment],
+        target_seq: &'a [u8],
         target_start: usize,
         target_length: usize,
         window_size: usize,
     ) -> Self {
-        let target_seq = build_target_seq_from_alignments(alignments, target_start, target_length);
-
         // these are the overall average frequencies
         // in the sequence, and they get used as the
         // frequencies for missing positions (* byte)
@@ -290,18 +288,10 @@ pub fn windowed_score(
     alignments: &[Alignment],
     tandem_repeats: &[TandemRepeat],
     substitution_matrices: &VecMap<SubstitutionMatrix>,
+    background: &impl BackgroundFrequencies,
     window_size: usize,
-    background_window_size: usize,
 ) -> anyhow::Result<()> {
     let target_start = matrix.target_start();
-    let target_length = matrix.num_cols();
-
-    let background = Background::new(
-        alignments,
-        target_start,
-        target_length,
-        background_window_size,
-    );
 
     for (row_idx, ali, sub_matrix) in alignments
         .iter()
@@ -310,7 +300,7 @@ pub fn windowed_score(
         // map the vec enumeration index to a row index
         .map(|(ali_idx, a, m)| (ali_idx + 1, a, m))
     {
-        let windowed_score = windowed_score_alignment(ali, sub_matrix, window_size, &background)?;
+        let windowed_score = windowed_score_alignment(ali, sub_matrix, window_size, background)?;
 
         windowed_score
             .iter()
@@ -598,7 +588,8 @@ mod tests {
         let target_end = ends.last().unwrap() + 5;
         let target_length = target_end - target_start + 1;
 
-        let background = Background::new(&ali, target_start, target_length, 5);
+        let target_seq = build_target_seq_from_alignments(&ali, target_start, target_length);
+        let background = Background::new(&target_seq, target_start, target_length, 5);
 
         // *****AAAAACCCCCGGGGGTTTTT*****
         let correct = vec![

@@ -346,7 +346,7 @@ mod tests {
     use crate::{
         alignment::Alignment,
         alphabet::NucleotideByteUtils,
-        windowed_scores::{Background, BackgroundFrequencies},
+        windowed_scores::{build_target_seq_from_alignments, Background, BackgroundFrequencies},
     };
 
     use super::*;
@@ -589,7 +589,8 @@ mod tests {
         let target_end = ends.last().unwrap() + 5;
         let target_length = target_end - target_start + 1;
 
-        let background = Background::new(&ali, target_start, target_length, 5);
+        let target_seq = build_target_seq_from_alignments(&ali, target_start, target_length);
+        let background = Background::new(&target_seq, target_start, target_length, 5);
 
         let correct: [[f64; 5]; 4] = [
             // A-A     A-C      A-G      A-T     A-A

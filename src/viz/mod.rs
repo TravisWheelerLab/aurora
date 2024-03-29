@@ -17,7 +17,10 @@ use serde::Serialize;
 
 use crate::{
     alignment::{Alignment, AlignmentData, Strand},
-    alphabet::{ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, SPACE_UTF8},
+    alphabet::{
+        NucleotideByteUtils, ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
+        SPACE_UTF8,
+    },
     annotation::Annotation,
     collapse::{Assembly, AssemblyGroup},
     matrix::Matrix,
@@ -115,8 +118,10 @@ pub struct AdjudicationSodaData<'a> {
     group: &'a AssemblyGroup<'a>,
     confidence_matrix: &'a Matrix<'a, f64>,
     alignment_data: &'a AlignmentData,
+    target_seq: &'a [u8],
     annotations: Vec<Annotation>,
     split_results: Vec<SplitResults>,
+    maybe_constraint: Option<&'a VizConstraint>,
     args: &'a Args,
 }
 
@@ -128,23 +133,42 @@ impl<'a> AdjudicationSodaData<'a> {
         group: &'a AssemblyGroup,
         confidence_matrix: &'a Matrix<'a, f64>,
         alignment_data: &'a AlignmentData,
+        target_seq: &'a [u8],
         args: &'a Args,
     ) -> Self {
         Self {
             group,
             confidence_matrix,
             alignment_data,
+            target_seq,
             annotations: vec![],
             split_results: vec![],
+            maybe_constraint: None,
             args,
+        }
+    }
+
+    pub fn constrain(&mut self, constraint: &'a VizConstraint) {
+        self.maybe_constraint = Some(constraint);
+    }
+
+    fn constraint(&self) -> VizConstraint {
+        match self.maybe_constraint {
+            Some(constraint) => constraint.clone(),
+            None => VizConstraint {
+                target_name: String::default(),
+                target_start: 0,
+                target_end: usize::MAX,
+            },
         }
     }
 
     pub fn write(&self, path: impl AsRef<Path>) {
         let data = serde_json::json!({
-            "targetStart": self.target_start(),
-            "targetEnd": self.target_end(),
+            "targetStart": self.constrained_target_start(),
+            "targetEnd": self.constrained_target_end(),
             "targetSeq": self.target_seq(),
+            "numQueries": self.num_queries(),
             "auroraAnn": self.aurora_ann(),
             "referenceAnn": self.reference_ann(),
             "alignmentStrings": self.alignment_strings(),
@@ -187,20 +211,33 @@ impl<'a> AdjudicationSodaData<'a> {
         self.group.target_end
     }
 
-    fn target_length(&self) -> usize {
-        self.target_end() - self.target_start() + 1
+    fn constrained_target_start(&self) -> usize {
+        self.group.target_start.max(self.constraint().target_start)
+    }
+
+    fn constrained_target_end(&self) -> usize {
+        self.group.target_end.min(self.constraint().target_end)
+    }
+
+    fn num_queries(&self) -> usize {
+        self.group.assemblies.len()
     }
 
     fn target_seq(&self) -> String {
-        "*".repeat(self.target_length())
+        let start_idx = self.constrained_target_start() - self.target_start();
+        let end_idx = self.constrained_target_end() - self.target_start();
+        self.target_seq[start_idx..=end_idx].to_utf8_string()
     }
 
     fn aurora_ann(&self) -> Vec<BlockGroup> {
-        assert!(!self.annotations.is_empty());
-
         let unique_join_ids: Vec<usize> = self
             .annotations
             .iter()
+            // constraint filter
+            .filter(|a| {
+                a.target_start <= self.constrained_target_end()
+                    && a.target_end >= self.constrained_target_start()
+            })
             .map(|a| a.join_id)
             .unique()
             .collect();
@@ -256,6 +293,11 @@ impl<'a> AdjudicationSodaData<'a> {
 
         overlapping_bed
             .iter()
+            // constraint filter
+            .filter(|b| {
+                b.chrom_start <= self.constrained_target_end()
+                    && b.chrom_end >= self.constrained_target_start()
+            })
             .map(BlockGroup::from_bed_record)
             .collect()
     }
@@ -265,6 +307,11 @@ impl<'a> AdjudicationSodaData<'a> {
             .assemblies
             .iter()
             .enumerate()
+            // constraint filter
+            .filter(|(_, a)| {
+                a.target_start <= self.constrained_target_end()
+                    && a.target_end >= self.constrained_target_start()
+            })
             .flat_map(|(idx, assembly)| {
                 assembly.alignments.iter().map(move |a| {
                     a.soda_string(idx + 1, self.alignment_data.query_name_map.get(a.query_id))
@@ -278,6 +325,11 @@ impl<'a> AdjudicationSodaData<'a> {
             .assemblies
             .iter()
             .enumerate()
+            // constraint filter
+            .filter(|(_, a)| {
+                a.target_start <= self.constrained_target_end()
+                    && a.target_end >= self.constrained_target_start()
+            })
             .map(|(assembly_idx, assembly)| {
                 format!(
                     "{},{},{},{},{}",
@@ -296,6 +348,11 @@ impl<'a> AdjudicationSodaData<'a> {
             .tandem_repeats
             .iter()
             .enumerate()
+            // constraint filter
+            .filter(|(_, r)| {
+                r.target_start <= self.constrained_target_end()
+                    && r.target_end >= self.constrained_target_start()
+            })
             .map(|(repeat_idx, repeat)| {
                 format!(
                     "{},{},{},{},{}",
@@ -328,6 +385,11 @@ impl<'a> AdjudicationSodaData<'a> {
             .map(|r| {
                 r.trace_conclusive
                     .iter()
+                    // constraint filter
+                    .filter(|s| {
+                        s.col_start + self.target_start() <= self.constrained_target_end()
+                            && s.col_end + self.target_start() >= self.constrained_target_start()
+                    })
                     .map(|seg| self.trace_string(seg))
                     .join("|")
             })
@@ -340,6 +402,11 @@ impl<'a> AdjudicationSodaData<'a> {
             .map(|r| {
                 r.trace_ambiguous
                     .iter()
+                    // constraint filter
+                    .filter(|s| {
+                        s.col_start + self.target_start() <= self.constrained_target_end()
+                            && s.col_end + self.target_start() >= self.constrained_target_start()
+                    })
                     .map(|seg| self.trace_string(seg))
                     .join("|")
             })
@@ -405,6 +472,11 @@ impl<'a> AdjudicationSodaData<'a> {
                             .assemblies
                             .iter()
                             .enumerate()
+                            // constraint filter
+                            .filter(|(_, a)| {
+                                a.target_start <= self.constrained_target_end()
+                                    && a.target_end >= self.constrained_target_start()
+                            })
                             // get the row idx of the assembly
                             .map(|(i, a)| (i + 1, a))
                             .flat_map(move |(row_idx, assembly)| {

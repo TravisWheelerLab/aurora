@@ -301,14 +301,23 @@ function run(data) {
       upperPadSize: 25,
       updateLayout() {},
       draw(params) {
+        this.clear();
         this.addAxis();
 
-        soda.sequence({
-          chart: this,
-          selector: "genome",
-          annotations: params.annotations,
-          row: 0,
-        });
+        let domainFilter = (ann) =>
+          ann.filter((a) => a.start < this.domain[1] && a.end > this.domain[0]);
+
+        let domainWidth = this.domain[1] - this.domain[0];
+
+        if (domainWidth < state.aliThresh) {
+          let annotations = domainFilter(params.annotations);
+          soda.sequence({
+            chart: this,
+            selector: "genome",
+            annotations,
+            row: 0,
+          });
+        }
       },
     });
 
@@ -565,6 +574,11 @@ function run(data) {
             ...this.renderParams,
             updateDomain: false,
           });
+
+          genome.draw({
+            ...genome.renderParams,
+            updateDomain: false,
+          });
         }, timeoutTime);
       },
     });
@@ -578,7 +592,8 @@ function run(data) {
           return true;
         }
 
-        if (a.row > rowToQuery.length - 1) {
+        // this should prevent filtering TRs
+        if (a.row > params.numQueries) {
           return true;
         }
 
@@ -594,9 +609,8 @@ function run(data) {
           }
         }
 
-        let query = rowToQuery[a.row].toLowerCase();
-
         if (state.regex != undefined) {
+          let query = rowToQuery[a.row].toLowerCase();
           return state.regex.test(query);
         }
 
@@ -882,7 +896,7 @@ function run(data) {
   function prepareData() {
     let coords = {
       start: data.targetStart - LABEL_WIDTH,
-      end: data.targetEnd,
+      end: data.targetEnd + LABEL_WIDTH,
     };
 
     let aurora = {
@@ -917,6 +931,7 @@ function run(data) {
 
     let alignments = {
       ...coords,
+      numQueries: data.numQueries,
       ...prepareAli(data.alignmentStrings),
       ...prepareAssemblies(data.assemblyStrings),
       ...prepareTandemRepeats(data.tandemRepeatStrings),

@@ -3,7 +3,6 @@ use phf::phf_map;
 pub trait NucleotideByteUtils {
     fn to_utf8_string(&self) -> String;
     fn to_debug_utf8_string(&self) -> String;
-    fn into_utf8_string(self) -> String;
 }
 
 impl NucleotideByteUtils for Vec<u8> {
@@ -24,11 +23,22 @@ impl NucleotideByteUtils for Vec<u8> {
         )
         .expect("failed to convert digital nucleotide byte vector to utf8 string")
     }
+}
 
-    fn into_utf8_string(self) -> String {
+impl NucleotideByteUtils for [u8] {
+    fn to_utf8_string(&self) -> String {
         String::from_utf8(
-            self.into_iter()
-                .map(|b| ALIGNMENT_ALPHABET_UTF8[b as usize])
+            self.iter()
+                .map(|&b| ALIGNMENT_ALPHABET_UTF8[b as usize])
+                .collect::<Vec<u8>>(),
+        )
+        .expect("failed to convert digital nucleotide byte vector to utf8 string")
+    }
+
+    fn to_debug_utf8_string(&self) -> String {
+        String::from_utf8(
+            self.iter()
+                .map(|&b| DEBUG_ALIGNMENT_ALPHABET_UTF8[b as usize])
                 .collect::<Vec<u8>>(),
         )
         .expect("failed to convert digital nucleotide byte vector to utf8 string")
@@ -42,10 +52,6 @@ impl NucleotideByteUtils for u8 {
 
     fn to_debug_utf8_string(&self) -> String {
         DEBUG_ALIGNMENT_ALPHABET_STR[*self as usize].to_string()
-    }
-
-    fn into_utf8_string(self) -> String {
-        ALIGNMENT_ALPHABET_STR[self as usize].to_string()
     }
 }
 
