@@ -90,7 +90,13 @@ pub fn assembly<'a>(
     confidence_by_id: &HashMap<usize, Vec<f64>>,
 ) -> Vec<Assembly<'a>> {
     // take all indices of the remaining alignment tuples
-    let mut remaining: Vec<&Alignment> = graph.keys().copied().collect_vec();
+    let mut remaining: Vec<&Alignment> = graph
+        .keys()
+        // since HashMap::keys() is non-deterministic, we have
+        // to sort here or we're going to have a bad time
+        .sorted_by(|a, b| a.id.cmp(&b.id))
+        .copied()
+        .collect_vec();
 
     // sort the edge lists by edge weight
     graph
