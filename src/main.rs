@@ -10,6 +10,7 @@ mod score_params;
 mod split;
 mod substitution_matrix;
 mod support;
+mod util;
 mod viterbi;
 mod viz;
 mod windowed_scores;

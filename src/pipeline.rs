@@ -4,7 +4,6 @@ use itertools::Itertools;
 
 use crate::{
     alignment::AlignmentData,
-    alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE,
     annotation::Annotation,
     chunks::ProximityGroup,
     collapse::AssemblyGroup,
@@ -250,19 +249,3 @@ pub fn run_pipeline(
 }
 
 // TODO: move this elsewhere
-pub trait StrSliceExt {
-    fn to_digital_nucleotides(self) -> Vec<u8>;
-}
-
-impl StrSliceExt for &str {
-    fn to_digital_nucleotides(self) -> Vec<u8> {
-        self.as_bytes()
-            .iter()
-            .map(|byte| {
-                *UTF8_TO_DIGITAL_NUCLEOTIDE
-                    .get(byte)
-                    .unwrap_or_else(|| panic!("unknown byte: {byte}"))
-            })
-            .collect()
-    }
-}

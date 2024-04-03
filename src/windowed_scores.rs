@@ -1,12 +1,13 @@
 use anyhow::Context;
 use thiserror::Error;
 
-use crate::alignment::{Alignment, TandemRepeat, VecMap};
+use crate::alignment::{Alignment, TandemRepeat};
 use crate::alphabet::{
     NucleotideByteUtils, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, NUCLEOTIDE_WEIGHTS, PAD_DIGITAL,
 };
 use crate::matrix::Matrix;
 use crate::substitution_matrix::{AlignmentScore, SubstitutionMatrix};
+use crate::util::VecMap;
 use crate::SKIP_STATE_SCORE;
 
 pub fn build_target_seq_from_alignments(
