@@ -7,6 +7,7 @@ use crate::alphabet::{
 };
 use crate::matrix::Matrix;
 use crate::substitution_matrix::{AlignmentScore, SubstitutionMatrix};
+use crate::SKIP_STATE_SCORE;
 
 pub fn build_target_seq_from_alignments(
     alignments: &[Alignment],
@@ -292,6 +293,11 @@ pub fn windowed_score(
     window_size: usize,
 ) -> anyhow::Result<()> {
     let target_start = matrix.target_start();
+
+    // set the skip score uniformly
+    (0..matrix.num_cols()).for_each(|col_idx| {
+        matrix.set_skip(col_idx, SKIP_STATE_SCORE);
+    });
 
     for (row_idx, ali, sub_matrix) in alignments
         .iter()

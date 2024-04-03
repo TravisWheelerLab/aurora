@@ -158,6 +158,7 @@ pub struct Args {
 
 pub const SCORE_WINDOW_SIZE: usize = 31;
 pub const BACKGROUND_WINDOW_SIZE: usize = 61;
+pub const SKIP_STATE_SCORE: f64 = 10.0;
 
 fn main() -> Result<()> {
     let mut args = Args::parse();

@@ -126,8 +126,8 @@ pub struct AdjudicationSodaData<'a> {
 }
 
 impl<'a> AdjudicationSodaData<'a> {
-    const TEMPLATE: &str = include_str!("../../fixtures/soda/annotations.html");
-    const JS: &str = include_str!("../../fixtures/soda/annotations.js");
+    const TEMPLATE: &'static str = include_str!("../../fixtures/soda/annotations.html");
+    const JS: &'static str = include_str!("../../fixtures/soda/annotations.js");
 
     pub fn new(
         group: &'a AssemblyGroup,
