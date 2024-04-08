@@ -285,6 +285,8 @@ pub fn caf_str_to_digital_nucleotides(caf_str: &str) -> (Vec<u8>, Vec<u8>) {
 
         prev_state = new_state;
     }
+    target_bytes_digital.shrink_to_fit();
+    query_bytes_digital.shrink_to_fit();
     (target_bytes_digital, query_bytes_digital)
 }
 
@@ -524,6 +526,30 @@ impl AlignmentData {
             query_lengths,
             substitution_matrices,
         })
+    }
+
+    pub fn allocation_size(&self) -> usize {
+        self.target_groups
+            .iter()
+            .flat_map(|g| &g.alignments)
+            .map(|a| {
+                a.target_seq.capacity() + a.query_seq.capacity() + std::mem::size_of::<Alignment>()
+            })
+            .sum::<usize>()
+            + self.substitution_matrices.capacity() * std::mem::size_of::<SubstitutionMatrix>()
+            + self.query_lengths.capacity() * std::mem::size_of::<usize>()
+            + self.query_name_map.capacity() * std::mem::size_of::<String>()
+            + self
+                .query_name_map
+                .values()
+                .map(|s| s.capacity())
+                .sum::<usize>()
+            + self.target_name_map.capacity() * std::mem::size_of::<String>()
+            + self
+                .target_name_map
+                .values()
+                .map(|s| s.capacity())
+                .sum::<usize>()
     }
 }
 

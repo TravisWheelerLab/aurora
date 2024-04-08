@@ -1,133 +1,4 @@
-use crate::{
-    alignment::{Alignment, AlignmentData, TandemRepeat, TargetGroup},
-    alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE,
-    chunks::ProximityGroup,
-    substitution_matrix::SubstitutionMatrix,
-};
-
-/// This is a silly function that can extract a type and return it's size in bytes.
-///
-/// The alternative would be to use `std::mem::size_of_val(&val)`, but that won't
-/// always work in every case. For example, say we have a `Vec<T>` of length `0`.
-/// We would not be able to get the size of T because we can't actually produce
-/// a reference to an element in the vector, since it's empty.
-///
-/// Instead, this function expects a typed closure which is never actually invoked,
-/// but we are able to extract the type we want and call `std::mem::size_of()` on it.
-fn get_size_of_return_type<F, T, U>(_f: F) -> usize
-where
-    F: FnOnce(T) -> U,
-{
-    std::mem::size_of::<U>()
-}
-
-pub trait AllocationSize: Sized {
-    fn heap_size(&self) -> usize;
-    fn total_size(&self) -> usize {
-        self.heap_size() + std::mem::size_of::<Self>()
-    }
-}
-
-impl<T> AllocationSize for Vec<T>
-where
-    T: AllocationSize,
-{
-    fn heap_size(&self) -> usize {
-        self.iter().map(|x| x.total_size()).sum()
-    }
-}
-
-impl AllocationSize for usize {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-
-impl AllocationSize for u8 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-
-impl AllocationSize for f32 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-
-impl AllocationSize for f64 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-
-impl<K, V> AllocationSize for std::collections::HashMap<K, V>
-where
-    K: AllocationSize,
-    V: AllocationSize,
-{
-    fn heap_size(&self) -> usize {
-        self.values().map(|v| v.total_size()).sum::<usize>()
-            + self.keys().map(|k| k.total_size()).sum::<usize>()
-    }
-}
-
-impl AllocationSize for String {
-    fn heap_size(&self) -> usize {
-        self.capacity() * 8
-    }
-}
-
-impl AllocationSize for Alignment {
-    fn heap_size(&self) -> usize {
-        let size = get_size_of_return_type(|x: Self| x.query_seq[0]);
-        self.query_seq.len() * size + self.target_seq.len() * size
-    }
-}
-
-impl AllocationSize for TandemRepeat {
-    fn heap_size(&self) -> usize {
-        let size = get_size_of_return_type(|x: Self| x.scores[0]);
-        self.scores.len() * size + self.consensus_pattern.heap_size()
-    }
-}
-
-impl AllocationSize for TargetGroup {
-    fn heap_size(&self) -> usize {
-        self.alignments.heap_size() + self.tandem_repeats.heap_size()
-    }
-}
-
-impl<T> AllocationSize for VecMap<T>
-where
-    T: AllocationSize + PartialEq,
-{
-    fn heap_size(&self) -> usize {
-        self.values().map(|v| v.total_size()).sum()
-    }
-}
-
-impl AllocationSize for SubstitutionMatrix {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-
-impl AllocationSize for AlignmentData {
-    fn heap_size(&self) -> usize {
-        self.target_groups.heap_size()
-            + self.target_name_map.heap_size()
-            + self.query_name_map.heap_size()
-            + self.query_lengths.heap_size()
-            + self.substitution_matrices.heap_size()
-    }
-}
-
-impl<'a> AllocationSize for ProximityGroup<'a> {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
+use crate::alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE;
 
 /// A simple Vec-based map that facilitates mapping
 /// between usize keys and type <T> values
@@ -171,6 +42,10 @@ impl<T: std::cmp::PartialEq> VecMap<T> {
 
     pub fn size(&self) -> usize {
         self.values.len()
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.values.capacity()
     }
 
     /// Get the key associated with the value.

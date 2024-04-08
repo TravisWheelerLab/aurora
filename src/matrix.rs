@@ -49,6 +49,29 @@ pub struct MatrixDef {
 }
 
 impl MatrixDef {
+    pub fn allocation_size(&self) -> usize {
+        self.active_rows_by_col
+            .iter()
+            .map(|v| v.capacity())
+            .sum::<usize>()
+            * std::mem::size_of::<usize>()
+            + self
+                .consensus_positions_by_col
+                .iter()
+                .map(|v| v.capacity())
+                .sum::<usize>()
+                * std::mem::size_of::<usize>()
+            + self
+                .ali_ids_by_col
+                .iter()
+                .map(|v| v.capacity())
+                .sum::<usize>()
+                * std::mem::size_of::<usize>()
+            + self.col_range_by_logical_row.capacity() * std::mem::size_of::<(usize, usize)>()
+            + self.query_id_by_logical_row.capacity() * std::mem::size_of::<usize>()
+            + self.strand_by_logical_row.capacity() * std::mem::size_of::<Strand>()
+    }
+
     pub fn from_assembly_group(group: &AssemblyGroup) -> Self {
         // +1 for the skip state
         let num_rows = group.assemblies.len() + group.tandem_repeats.len() + 1;

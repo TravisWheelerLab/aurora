@@ -290,6 +290,18 @@ fn main() -> Result<()> {
             .expect("failed to write to index.html");
         });
     }
+    panic!();
+    // let pid = std::process::id();
+
+    // let mut sys = sysinfo::System::new_all();
+    // sys.refresh_all();
+
+    // let process = sys.process(sysinfo::Pid::from_u32(pid)).unwrap();
+
+    // let mem = process.memory() as f32;
+
+    // let a = alignment_data.allocation_size() as f32;
+    // let b = proximity_groups.len() * std::mem::size_of::<ProximityGroup>();
 
     debug_assert!(validate_groups(
         &proximity_groups,

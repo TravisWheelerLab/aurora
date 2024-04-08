@@ -3,7 +3,7 @@ use std::fs;
 use itertools::Itertools;
 
 use crate::{
-    alignment::AlignmentData,
+    alignment::{AlignmentData, Strand},
     annotation::Annotation,
     chunks::ProximityGroup,
     collapse::AssemblyGroup,
@@ -36,6 +36,7 @@ pub fn run_pipeline(
     );
 
     let matrix_def = MatrixDef::from_proximity_group(proximity_group);
+
     let mut confidence_matrix = Matrix::<f64>::new(&matrix_def);
 
     let target_start = proximity_group.target_start;
