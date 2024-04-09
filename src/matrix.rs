@@ -439,9 +439,14 @@ impl<'a, T> Matrix<'a, T>
 where
     T: Clone + Copy + Default + std::fmt::Display,
 {
+    pub fn allocation_size(&self) -> usize {
+        self.data.iter().map(|col| col.capacity()).sum::<usize>() * std::mem::size_of::<T>()
+            + self.data.capacity() * std::mem::size_of::<Vec<T>>()
+    }
+
     /// Create a new Matrix from a MatrixDef.
     pub fn new(def: &'a MatrixDef) -> Self {
-        let mut data = vec![];
+        let mut data = Vec::with_capacity(def.active_rows_by_col.len());
 
         def.active_rows_by_col
             .iter()
