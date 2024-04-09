@@ -20,8 +20,6 @@ use std::{
     fs::{self, create_dir_all, File},
     io::{BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
-    sync::{Arc, Mutex},
-    thread::ThreadId,
 };
 
 use alignment::AlignmentData;
@@ -170,47 +168,6 @@ pub const SCORE_WINDOW_SIZE: usize = 31;
 pub const BACKGROUND_WINDOW_SIZE: usize = 61;
 pub const SKIP_STATE_SCORE: f64 = 10.0;
 
-struct ThreadMemory {
-    data: HashMap<ThreadId, usize>,
-}
-
-impl ThreadMemory {
-    pub fn new() -> Self {
-        Self {
-            data: HashMap::new(),
-        }
-    }
-
-    pub fn report(&self) {
-        let pid = std::process::id();
-        let mut sys = sysinfo::System::new_all();
-        sys.refresh_all();
-        let process = sys.process(sysinfo::Pid::from_u32(pid)).unwrap();
-        let total_mem = process.memory() as f32;
-
-        let mut thread_sum = 0;
-
-        // self.data.values().sorted().for_each(|s| {
-        self.data.keys().for_each(|k| {
-            let s = self.data.get(k).unwrap();
-            thread_sum += s;
-            println!("{k:?}: {:.2}mb", *s as f32 / 1e6)
-        });
-
-        println!(
-            "{:.2} / {:.2}mb",
-            thread_sum as f32 / 1e6,
-            total_mem as f32 / 1e6
-        );
-        println!("{:2}", thread_sum as f32 / total_mem as f32);
-        println!();
-    }
-
-    pub fn update(&mut self, id: ThreadId, n: usize) {
-        self.data.entry(id).and_modify(|v| *v = n).or_insert(n);
-    }
-}
-
 fn main() -> Result<()> {
     let mut args = Args::parse();
 
@@ -275,7 +232,7 @@ fn main() -> Result<()> {
     let alignment_data =
         AlignmentData::from_caf_and_ultra_and_matrices(alignments_file, ultra_file, matrices_file)?;
 
-    let mut proximity_groups =
+    let proximity_groups =
         ProximityGroup::from_alignment_data(&alignment_data, args.target_join_distance)
             .into_iter()
             .filter(|g| {
@@ -351,37 +308,14 @@ fn main() -> Result<()> {
         .build_global()
         .unwrap();
 
-    let thread_memory: Arc<Mutex<ThreadMemory>> = Arc::new(Mutex::new(ThreadMemory::new()));
-
-    {
-        let id = std::thread::current().id();
-        let mut mem = thread_memory.lock().unwrap();
-
-        let a = alignment_data.allocation_size();
-        let b = proximity_groups.len() * std::mem::size_of::<ProximityGroup>();
-
-        mem.update(id, a + b);
-        mem.report();
-    }
-
-    proximity_groups.sort_by_key(|g| g.alignments.len());
-    proximity_groups.reverse();
-
     proximity_groups
         .par_iter()
-        // TODO: need to make sure this doesn't
-        //       cause performance issues
         .panic_fuse()
-        .inspect(|g| println!("{g:?}"))
+        // .inspect(|g| println!("{g:?}"))
         .enumerate()
         .for_each(|(region_idx, group)| {
-            run_pipeline(
-                group,
-                &alignment_data,
-                region_idx,
-                args.clone(),
-                thread_memory.clone(),
-            );
+            run_pipeline(group, &alignment_data, region_idx, args.clone());
         });
+
     Ok(())
 }

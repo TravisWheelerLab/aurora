@@ -528,6 +528,7 @@ impl AlignmentData {
         })
     }
 
+    #[allow(dead_code)]
     pub fn allocation_size(&self) -> usize {
         self.target_groups
             .iter()

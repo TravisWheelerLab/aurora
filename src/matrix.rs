@@ -49,29 +49,6 @@ pub struct MatrixDef {
 }
 
 impl MatrixDef {
-    pub fn allocation_size(&self) -> usize {
-        self.active_rows_by_col
-            .iter()
-            .map(|v| v.capacity())
-            .sum::<usize>()
-            * std::mem::size_of::<usize>()
-            + self
-                .consensus_positions_by_col
-                .iter()
-                .map(|v| v.capacity())
-                .sum::<usize>()
-                * std::mem::size_of::<usize>()
-            + self
-                .ali_ids_by_col
-                .iter()
-                .map(|v| v.capacity())
-                .sum::<usize>()
-                * std::mem::size_of::<usize>()
-            + self.col_range_by_logical_row.capacity() * std::mem::size_of::<(usize, usize)>()
-            + self.query_id_by_logical_row.capacity() * std::mem::size_of::<usize>()
-            + self.strand_by_logical_row.capacity() * std::mem::size_of::<Strand>()
-    }
-
     pub fn from_assembly_group(group: &AssemblyGroup) -> Self {
         // +1 for the skip state
         let num_rows = group.assemblies.len() + group.tandem_repeats.len() + 1;
@@ -425,6 +402,30 @@ impl MatrixDef {
             strand_by_logical_row,
         }
     }
+
+    #[allow(dead_code)]
+    pub fn allocation_size(&self) -> usize {
+        self.active_rows_by_col
+            .iter()
+            .map(|v| v.capacity())
+            .sum::<usize>()
+            * std::mem::size_of::<usize>()
+            + self
+                .consensus_positions_by_col
+                .iter()
+                .map(|v| v.capacity())
+                .sum::<usize>()
+                * std::mem::size_of::<usize>()
+            + self
+                .ali_ids_by_col
+                .iter()
+                .map(|v| v.capacity())
+                .sum::<usize>()
+                * std::mem::size_of::<usize>()
+            + self.col_range_by_logical_row.capacity() * std::mem::size_of::<(usize, usize)>()
+            + self.query_id_by_logical_row.capacity() * std::mem::size_of::<usize>()
+            + self.strand_by_logical_row.capacity() * std::mem::size_of::<Strand>()
+    }
 }
 
 pub struct Matrix<'a, T>
@@ -439,11 +440,6 @@ impl<'a, T> Matrix<'a, T>
 where
     T: Clone + Copy + Default + std::fmt::Display,
 {
-    pub fn allocation_size(&self) -> usize {
-        self.data.iter().map(|col| col.capacity()).sum::<usize>() * std::mem::size_of::<T>()
-            + self.data.capacity() * std::mem::size_of::<Vec<T>>()
-    }
-
     /// Create a new Matrix from a MatrixDef.
     pub fn new(def: &'a MatrixDef) -> Self {
         let mut data = Vec::with_capacity(def.active_rows_by_col.len());
@@ -475,6 +471,12 @@ where
                 self.set_sparse(sparse_row, col, *value)
             })
         });
+    }
+
+    #[allow(dead_code)]
+    pub fn allocation_size(&self) -> usize {
+        self.data.iter().map(|col| col.capacity()).sum::<usize>() * std::mem::size_of::<T>()
+            + self.data.capacity() * std::mem::size_of::<Vec<T>>()
     }
 
     // -----------

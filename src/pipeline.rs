@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    sync::{Arc, Mutex},
-};
+use std::fs;
 
 use itertools::Itertools;
 
@@ -18,7 +15,7 @@ use crate::{
     viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment},
     viz::AdjudicationSodaData,
     windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
-    Args, ThreadMemory, BACKGROUND_WINDOW_SIZE, SCORE_WINDOW_SIZE,
+    Args, BACKGROUND_WINDOW_SIZE, SCORE_WINDOW_SIZE,
 };
 
 pub fn run_pipeline(
@@ -26,7 +23,6 @@ pub fn run_pipeline(
     alignment_data: &AlignmentData,
     region_idx: usize,
     mut args: Args,
-    thread_memory: Arc<Mutex<ThreadMemory>>,
 ) {
     if args.viz {
         args.viz_output_path.push(format!("{}", region_idx));
@@ -111,21 +107,6 @@ pub fn run_pipeline(
         &target_seq,
         &args,
     );
-
-    {
-        let thread_id = std::thread::current().id();
-        let mut mem = thread_memory.lock().unwrap();
-        mem.update(
-            thread_id,
-            matrix_def.allocation_size()
-                + collapsed_matrix_def.allocation_size()
-                + confidence_matrix.allocation_size()
-                + collapsed_confidence_matrix.allocation_size()
-                + viterbi_matrix.allocation_size()
-                + sources_matrix.allocation_size(),
-        );
-        mem.report();
-    }
 
     while !active_cols.is_empty() {
         viterbi_collapsed(
@@ -265,14 +246,5 @@ pub fn run_pipeline(
     annotations.sort_by_key(|r| r.target_start);
     annotations.retain(|r| r.query_name != "skip");
 
-    // Annotation::write(&annotations, &mut std::io::stdout());
-
-    {
-        let thread_id = std::thread::current().id();
-        let mut mem = thread_memory.lock().unwrap();
-        mem.update(thread_id, 0);
-        mem.report();
-    }
+    Annotation::write(&annotations, &mut std::io::stdout());
 }
-
-// TODO: move this elsewhere
