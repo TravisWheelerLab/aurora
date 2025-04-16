@@ -23,7 +23,7 @@ pub fn run_pipeline(
 
     let score_params = ScoreParams::new(
         proximity_group.alignments.len(),
-        annot_args.query_jump_probability,
+        annot_args.query_jump_penalty,
         annot_args.num_skip_loops_eq_to_jump,
     );
 
@@ -47,7 +47,7 @@ pub fn run_pipeline(
 
     let skip_state_score = approximnate_ideal_skip_state_score(
         annot_args.num_skip_loops_eq_to_jump as f64,
-        annot_args.query_jump_probability,
+        annot_args.query_jump_penalty,
         annot_args.skip_state_score_shift
     );
 
@@ -68,7 +68,7 @@ pub fn run_pipeline(
 
     // adjust the skip state to include skip-loop penalty
     let skip_adjust = annot_args
-        .query_jump_probability
+        .query_jump_penalty.exp()
         .powf(1.0 / annot_args.num_skip_loops_eq_to_jump as f64);
 
     (0..confidence_matrix.num_cols()).for_each(|col_idx| {

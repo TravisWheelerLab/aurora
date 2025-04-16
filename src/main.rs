@@ -89,14 +89,14 @@ pub struct PerformanceArgs {
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct AnnotationArgs {
-    /// The probability of jumping between query models
+    /// The penalty of jumping between query models
     #[arg(
         short = 'J',
         long = "query-jump",
-        default_value = "1e-55",
+        default_value = "-126.64",
         value_name = "f"
     )]
-    pub query_jump_probability: f64,
+    pub query_jump_penalty: f64,
 
     /// The number of skip loops that are
     /// equal to a jump between query models
