@@ -134,6 +134,8 @@ impl AlignmentScore for SubstitutionMatrix {
         if t < 4 && q < 4 {
             (self.core_ratios[t][q] / frequencies[t]).ln()
         } else {
+            // TODO: Why did jack do this?
+            // this may not be in the same base (bits instead of nats), and also might be scaled by the lambda.
             self.scores[t][q]
         }
     }
