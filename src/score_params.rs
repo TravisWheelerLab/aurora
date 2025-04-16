@@ -9,21 +9,21 @@ pub struct ScoreParams {
     pub skip_loop_score: f64,
 }
 
-pub fn approximnate_ideal_skip_state_score(
+pub fn approximate_ideal_skip_state_score(
     num_skip_loops_match_jump: f64,
-    query_jump_penalty_nits: f64,
+    query_jump_penalty_nats: f64,
     penalty_shift: f64
 ) -> f64 {
-    return penalty_shift - ((1.0 / num_skip_loops_match_jump) * query_jump_penalty_nits);
+    return -(query_jump_penalty_nats/ num_skip_loops_match_jump) + penalty_shift;
 }
 
 impl ScoreParams {
     pub fn new(
         num_alignments: usize,
-        query_jump_penalty_nits: f64,
+        query_jump_penalty_nats: f64,
         num_skip_loops_eq_to_jump: usize,
     ) -> Self {
-        let query_jump_score = query_jump_penalty_nits - (num_alignments as f64).ln();
+        let query_jump_score = query_jump_penalty_nats - (num_alignments as f64).ln();
         // jumping to the skip state and then jumping back to a query sequence
         // should be the same cost as jumping between query sequences
         let query_to_skip_score = (query_jump_score / 2.0) 

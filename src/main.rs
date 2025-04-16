@@ -93,7 +93,7 @@ pub struct AnnotationArgs {
     #[arg(
         short = 'J',
         long = "query-jump",
-        default_value = "-126.64",
+        default_value = "-127.0",
         value_name = "f"
     )]
     pub query_jump_penalty: f64,

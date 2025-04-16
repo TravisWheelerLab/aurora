@@ -3,7 +3,7 @@ use std::fs;
 use itertools::Itertools;
 
 use crate::{
-    alignment::AlignmentData, annotation::Annotation, chunks::ProximityGroup, collapse::AssemblyGroup, confidence::confidence, matrix::{Matrix, MatrixDef}, score_params::{approximnate_ideal_skip_state_score, ScoreParams}, split::split_trace, support::windowed_confidence, viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment}, viz::AdjudicationSodaData, windowed_scores::{build_target_seq_from_alignments, windowed_score, Background}, AuroraArgs
+    alignment::AlignmentData, annotation::Annotation, chunks::ProximityGroup, collapse::AssemblyGroup, confidence::confidence, matrix::{Matrix, MatrixDef}, score_params::{approximate_ideal_skip_state_score, ScoreParams}, split::split_trace, support::windowed_confidence, viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment}, viz::AdjudicationSodaData, windowed_scores::{build_target_seq_from_alignments, windowed_score, Background}, AuroraArgs
 };
 
 pub fn run_pipeline(
@@ -45,7 +45,7 @@ pub fn run_pipeline(
         args.annotation_args.background_window_size,
     );
 
-    let skip_state_score = approximnate_ideal_skip_state_score(
+    let skip_state_score = approximate_ideal_skip_state_score(
         annot_args.num_skip_loops_eq_to_jump as f64,
         annot_args.query_jump_penalty,
         annot_args.skip_state_score_shift
