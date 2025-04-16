@@ -3,10 +3,7 @@ use std::collections::HashMap;
 use itertools::Itertools;
 
 use crate::{
-    alignment::{Alignment, Strand, TandemRepeat},
-    chunks::ProximityGroup,
-    viz::{write_soda_html, AssemblySodaData},
-    Args,
+    alignment::{Alignment, Strand, TandemRepeat}, chunks::ProximityGroup, viz::{write_soda_html, AssemblySodaData}, AuroraArgs, AnnotationArgs
 };
 
 ///
@@ -28,7 +25,7 @@ pub struct Edge<'a> {
 
 pub fn assembly_graph<'a>(
     alignments: &[&'a Alignment],
-    args: &Args,
+    args: &AnnotationArgs,
 ) -> HashMap<&'a Alignment, Vec<Edge<'a>>> {
     // this relies on the alignments being sorted by target start
     alignments
@@ -414,7 +411,7 @@ impl<'a> AssemblyGroup<'a> {
         group: &ProximityGroup<'a>,
         confidence_avg_by_id: &HashMap<usize, f64>,
         confidence_by_id: &HashMap<usize, Vec<f64>>,
-        args: &Args,
+        args: &AuroraArgs,
     ) -> Self {
         let mut assemblies: Vec<Assembly> = vec![];
 
@@ -437,15 +434,17 @@ impl<'a> AssemblyGroup<'a> {
                     .into_iter()
                     .partition(|a| a.strand == Strand::Forward);
 
-                let mut fwd_graph = assembly_graph(&fwd_ali, args);
-                let mut rev_graph = assembly_graph(&rev_ali, args);
+                let mut fwd_graph = assembly_graph(&fwd_ali, &args.annotation_args);
+                let mut rev_graph = assembly_graph(&rev_ali, &args.annotation_args);
 
                 // if we are going to generate soda output
                 // for the assemblies, we need to store the
                 // links before we start messing with the graph
                 let mut fwd_links = vec![];
                 let mut rev_links = vec![];
-                if args.assembly_viz {
+                let vis_args = &args.visualization_args;
+
+                if vis_args.assembly_viz {
                     fwd_links = fwd_graph
                         .iter()
                         .flat_map(|(ali_from, edges)| {
@@ -493,7 +492,7 @@ impl<'a> AssemblyGroup<'a> {
                     rev_ali.len() == cnt
                 });
 
-                if args.assembly_viz {
+                if vis_args.assembly_viz {
                     if !fwd_ali.is_empty() {
                         let fwd_data = AssemblySodaData::new(
                             &fwd_assemblies,
@@ -502,7 +501,7 @@ impl<'a> AssemblyGroup<'a> {
                             confidence_avg_by_id,
                         );
 
-                        let fwd_path = args.viz_output_path.join(format!("{}-fwd.html", query_id));
+                        let fwd_path = vis_args.viz_output_path.join(format!("{}-fwd.html", query_id));
 
                         write_soda_html(
                             &fwd_data,
@@ -520,7 +519,7 @@ impl<'a> AssemblyGroup<'a> {
                             confidence_avg_by_id,
                         );
 
-                        let rev_path = args.viz_output_path.join(format!("{}-rev.html", query_id));
+                        let rev_path = vis_args.viz_output_path.join(format!("{}-rev.html", query_id));
 
                         write_soda_html(
                             &rev_data,

@@ -6,7 +6,7 @@ use crate::{
     alignment::Alignment,
     collapse::{Assembly, AssemblyGroup},
     viterbi::TraceSegment,
-    Args,
+    AuroraArgs,
 };
 
 #[derive(Debug)]
@@ -50,8 +50,9 @@ pub fn split_trace(
     assembly_group: &AssemblyGroup,
     active_cols: &[usize],
     confidence_avg_by_id: &HashMap<usize, f64>,
-    args: &Args,
+    args: &AuroraArgs,
 ) -> SplitResults {
+    let annot_args = &args.annotation_args;
     // for competittion, we are only going to
     // consider the rows that are in the trace
     let rows_in_trace = trace_segments
@@ -120,8 +121,8 @@ pub fn split_trace(
             .for_each(|(idx_b, stuff_b)| {
                 // first check if B happens to be properly contained in a gap of A
                 let b_in_a = stuff_a.gap_matrix_ranges.iter().any(|gap| {
-                    stuff_b.col_start >= gap.col_start - args.fudge_distance
-                        && stuff_b.col_end <= gap.col_end + args.fudge_distance
+                    stuff_b.col_start >= gap.col_start - annot_args.fudge_distance
+                        && stuff_b.col_end <= gap.col_end + annot_args.fudge_distance
                 });
 
                 if b_in_a {
@@ -130,9 +131,9 @@ pub fn split_trace(
 
                 // now check if A happens to be properly contained in a gap of B
                 let a_in_b = stuff_b.gap_matrix_ranges.iter().any(|gap| {
-                    stuff_a.col_start + args.fudge_distance >= gap.col_start - args.fudge_distance
-                        && stuff_a.col_end - args.fudge_distance
-                            <= gap.col_end + args.fudge_distance
+                    stuff_a.col_start + annot_args.fudge_distance >= gap.col_start - annot_args.fudge_distance
+                        && stuff_a.col_end - annot_args.fudge_distance
+                            <= gap.col_end + annot_args.fudge_distance
                 });
 
                 if a_in_b {
@@ -142,8 +143,8 @@ pub fn split_trace(
                 // now check if any fragment of B is inside a gap in A
                 let conflict_a = stuff_a.gap_matrix_ranges.iter().any(|gap| {
                     stuff_b.alignment_matrix_ranges.iter().any(|frag| {
-                        frag.col_start < gap.col_end - args.fudge_distance
-                            && frag.col_end > gap.col_start + args.fudge_distance
+                        frag.col_start < gap.col_end - annot_args.fudge_distance
+                            && frag.col_end > gap.col_start + annot_args.fudge_distance
                     })
                 });
 
@@ -155,8 +156,8 @@ pub fn split_trace(
                 // now check if any fragment of A is inside a gap in B
                 let conflict_b = stuff_b.gap_matrix_ranges.iter().any(|gap| {
                     stuff_a.alignment_matrix_ranges.iter().any(|frag| {
-                        frag.col_start < gap.col_end - args.fudge_distance
-                            && frag.col_end > gap.col_start + args.fudge_distance
+                        frag.col_start < gap.col_end - annot_args.fudge_distance
+                            && frag.col_end > gap.col_start + annot_args.fudge_distance
                     })
                 });
 
@@ -238,13 +239,13 @@ pub fn split_trace(
             // if for ALL of the gaps in the assembly
             stuff.gap_matrix_ranges.iter().all(|assembly_gap| {
                 // if the gap is smaller than the fudge distance
-                if assembly_gap.col_end - assembly_gap.col_start <= args.fudge_distance {
+                if assembly_gap.col_end - assembly_gap.col_start <= annot_args.fudge_distance {
                     return true;
                 }
                 // or if the gap is contained in ANY inactive column range
                 inactive_col_ranges.iter().any(|range| {
-                    assembly_gap.col_start >= range.col_start.saturating_sub(args.fudge_distance)
-                        && assembly_gap.col_end <= range.col_end + args.fudge_distance
+                    assembly_gap.col_start >= range.col_start.saturating_sub(annot_args.fudge_distance)
+                        && assembly_gap.col_end <= range.col_end + annot_args.fudge_distance
                 })
             })
         });

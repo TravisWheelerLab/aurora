@@ -3,36 +3,28 @@ use std::fs;
 use itertools::Itertools;
 
 use crate::{
-    alignment::AlignmentData,
-    annotation::Annotation,
-    chunks::ProximityGroup,
-    collapse::AssemblyGroup,
-    confidence::confidence,
-    matrix::{Matrix, MatrixDef},
-    score_params::ScoreParams,
-    split::split_trace,
-    support::windowed_confidence,
-    viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment},
-    viz::AdjudicationSodaData,
-    windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
-    Args, BACKGROUND_WINDOW_SIZE, SCORE_WINDOW_SIZE,
+    alignment::AlignmentData, annotation::Annotation, chunks::ProximityGroup, collapse::AssemblyGroup, confidence::confidence, matrix::{Matrix, MatrixDef}, score_params::{approximnate_ideal_skip_state_score, ScoreParams}, split::split_trace, support::windowed_confidence, viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment}, viz::AdjudicationSodaData, windowed_scores::{build_target_seq_from_alignments, windowed_score, Background}, AuroraArgs
 };
 
 pub fn run_pipeline(
     proximity_group: &ProximityGroup,
     alignment_data: &AlignmentData,
     region_idx: usize,
-    mut args: Args,
+    mut args: AuroraArgs,
 ) {
-    if args.viz {
-        args.viz_output_path.push(format!("{}", region_idx));
-        fs::create_dir_all(&args.viz_output_path).unwrap();
+    let annot_args = &args.annotation_args;
+
+    if args.visualization_args.viz {
+        args.visualization_args.viz_output_path.push(format!("{}", region_idx));
+        fs::create_dir_all(&args.visualization_args.viz_output_path).unwrap();
     }
+
+    let vis_args = &args.visualization_args;
 
     let score_params = ScoreParams::new(
         proximity_group.alignments.len(),
-        args.query_jump_probability,
-        args.num_skip_loops_eq_to_jump,
+        annot_args.query_jump_probability,
+        annot_args.num_skip_loops_eq_to_jump,
     );
 
     let matrix_def = MatrixDef::from_proximity_group(proximity_group);
@@ -50,7 +42,13 @@ pub fn run_pipeline(
         &target_seq,
         target_start,
         target_length,
-        BACKGROUND_WINDOW_SIZE,
+        args.annotation_args.background_window_size,
+    );
+
+    let skip_state_score = approximnate_ideal_skip_state_score(
+        annot_args.num_skip_loops_eq_to_jump as f64,
+        annot_args.query_jump_probability,
+        annot_args.skip_state_score_shift
     );
 
     windowed_score(
@@ -59,7 +57,8 @@ pub fn run_pipeline(
         proximity_group.tandem_repeats,
         &alignment_data.substitution_matrices,
         &background,
-        SCORE_WINDOW_SIZE,
+        args.annotation_args.score_window_size,
+        skip_state_score
     )
     .unwrap();
 
@@ -68,9 +67,9 @@ pub fn run_pipeline(
     let (confidence_avg_by_id, confidence_by_id) = windowed_confidence(&mut confidence_matrix);
 
     // adjust the skip state to include skip-loop penalty
-    let skip_adjust = args
+    let skip_adjust = annot_args
         .query_jump_probability
-        .powf(1.0 / args.num_skip_loops_eq_to_jump as f64);
+        .powf(1.0 / annot_args.num_skip_loops_eq_to_jump as f64);
 
     (0..confidence_matrix.num_cols()).for_each(|col_idx| {
         confidence_matrix.set_skip(col_idx, confidence_matrix.get_skip(col_idx) * skip_adjust);
@@ -152,7 +151,7 @@ pub fn run_pipeline(
         // we should absolutely never end up increasing our column count
         debug_assert!(new_active_cols.len() <= active_cols.len());
 
-        if args.viz {
+        if vis_args.viz {
             soda_data.add(split_results);
         }
 
@@ -209,15 +208,15 @@ pub fn run_pipeline(
         })
         .collect_vec();
 
-    if args.viz {
+    if vis_args.viz {
         // TODO: this is kind of awkward
         soda_data.set_annotations(annotations.clone());
 
-        let out_path = args.viz_output_path.join("index.html");
+        let out_path = vis_args.viz_output_path.join("index.html");
         soda_data.write(out_path);
     }
 
-    if !args.viz_constraints.is_empty() {
+    if !vis_args.viz_constraints.is_empty() {
         let target_name = alignment_data
             .target_name_map
             .get(proximity_group.target_id)
@@ -226,7 +225,7 @@ pub fn run_pipeline(
         let target_start = proximity_group.target_start;
         let target_end = proximity_group.target_end;
 
-        let constraints = args
+        let constraints = vis_args
             .viz_constraints
             .iter()
             .filter(|c| c.target_name == target_name)
@@ -234,7 +233,7 @@ pub fn run_pipeline(
             .collect_vec();
 
         constraints.iter().for_each(|constraint| {
-            let out_path = args.viz_output_path.parent().unwrap().join(format!(
+            let out_path = vis_args.viz_output_path.parent().unwrap().join(format!(
                 "{}-{}-{}.html",
                 constraint.target_name, constraint.target_start, constraint.target_end
             ));

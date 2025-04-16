@@ -9,6 +9,14 @@ pub struct ScoreParams {
     pub skip_loop_score: f64,
 }
 
+pub fn approximnate_ideal_skip_state_score(
+    num_skip_loops_match_jump: f64,
+    query_jump_penalty: f64,
+    penalty_shift: f64
+) -> f64 {
+    return penalty_shift - (1.0 / num_skip_loops_match_jump) * query_jump_penalty.log2();
+}
+
 impl ScoreParams {
     pub fn new(
         num_alignments: usize,
