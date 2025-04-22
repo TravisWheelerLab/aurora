@@ -3,7 +3,19 @@ use std::fs;
 use itertools::Itertools;
 
 use crate::{
-    alignment::AlignmentData, annotation::Annotation, chunks::ProximityGroup, collapse::AssemblyGroup, confidence::confidence, matrix::{Matrix, MatrixDef}, score_params::{approximate_ideal_skip_state_score, ScoreParams}, split::split_trace, support::windowed_confidence, viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment}, viz::AdjudicationSodaData, windowed_scores::{build_target_seq_from_alignments, windowed_score, Background}, AuroraArgs
+    alignment::AlignmentData,
+    annotation::Annotation,
+    chunks::ProximityGroup,
+    collapse::AssemblyGroup,
+    confidence::confidence,
+    matrix::{Matrix, MatrixDef},
+    score_params::{approximate_ideal_skip_state_score, ScoreParams},
+    split::split_trace,
+    support::windowed_confidence,
+    viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment},
+    viz::AdjudicationSodaData,
+    windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
+    AuroraArgs,
 };
 
 pub fn run_pipeline(
@@ -15,7 +27,9 @@ pub fn run_pipeline(
     let annot_args = &args.annotation_args;
 
     if args.visualization_args.viz {
-        args.visualization_args.viz_output_path.push(format!("{}", region_idx));
+        args.visualization_args
+            .viz_output_path
+            .push(format!("{}", region_idx));
         fs::create_dir_all(&args.visualization_args.viz_output_path).unwrap();
     }
 
@@ -48,7 +62,7 @@ pub fn run_pipeline(
     let skip_state_score = approximate_ideal_skip_state_score(
         annot_args.num_skip_loops_eq_to_jump as f64,
         annot_args.query_jump_penalty,
-        annot_args.skip_state_score_shift
+        annot_args.skip_state_score_shift,
     );
 
     windowed_score(
@@ -58,7 +72,7 @@ pub fn run_pipeline(
         &alignment_data.substitution_matrices,
         &background,
         args.annotation_args.score_window_size,
-        skip_state_score
+        skip_state_score,
     )
     .unwrap();
 
@@ -68,7 +82,8 @@ pub fn run_pipeline(
 
     // adjust the skip state to include skip-loop penalty
     let skip_adjust = annot_args
-        .query_jump_penalty.exp()
+        .query_jump_penalty
+        .exp()
         .powf(1.0 / annot_args.num_skip_loops_eq_to_jump as f64);
 
     (0..confidence_matrix.num_cols()).for_each(|col_idx| {

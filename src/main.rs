@@ -53,26 +53,25 @@ pub struct AuroraArgs {
     matrices: String,
 
     #[command(flatten)]
-    #[clap(next_help_heading="Annotation options")]
+    #[clap(next_help_heading = "Annotation options")]
     pub annotation_args: AnnotationArgs,
 
     #[command(flatten)]
-    #[clap(next_help_heading="Performance options")]
+    #[clap(next_help_heading = "Performance options")]
     pub performance_args: PerformanceArgs,
 
     #[command(flatten)]
-    #[clap(next_help_heading="File I/O options")]
+    #[clap(next_help_heading = "File I/O options")]
     pub io_args: IoArgs,
 
     #[command(flatten)]
-    #[clap(next_help_heading="Ultra options")]
+    #[clap(next_help_heading = "Ultra options")]
     pub ultra_args: UltraArgs,
 
     #[command(flatten)]
-    #[clap(next_help_heading="Visualization options")]
+    #[clap(next_help_heading = "Visualization options")]
     pub visualization_args: VisualizationArgs,
 }
-
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct PerformanceArgs {
@@ -85,7 +84,6 @@ pub struct PerformanceArgs {
     )]
     pub num_threads: usize,
 }
-
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct AnnotationArgs {
@@ -178,14 +176,12 @@ pub struct AnnotationArgs {
     pub skip_state_score_shift: f64,
 }
 
-
 #[derive(Args, Debug, Clone, Default)]
 pub struct IoArgs {
     /// Produce a file that describes the regions
     #[arg(long = "regions", value_name = "path")]
     pub regions_path: Option<PathBuf>,
 }
-
 
 #[derive(Args, Debug, Clone)]
 pub struct UltraArgs {
@@ -197,7 +193,6 @@ pub struct UltraArgs {
     #[arg(short = 'X', long = "exclude-isolated-tr")]
     pub exclude_isolated_tandem_repeats: bool,
 }
-
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct VisualizationArgs {
@@ -230,16 +225,11 @@ pub struct VisualizationArgs {
 
     #[clap(skip)]
     pub viz_reference_bed_index: HashMap<String, usize>,
-
 }
-
-//pub const SCORE_WINDOW_SIZE: usize = 31;
-//pub const BACKGROUND_WINDOW_SIZE: usize = 61;
-//pub const SKIP_STATE_SCORE: f64 = 10.0;
 
 fn main() -> Result<()> {
     let mut args = AuroraArgs::parse();
-    let vis_args = & mut args.visualization_args;
+    let vis_args = &mut args.visualization_args;
 
     if vis_args.viz {
         if let Ok(metadata) = fs::metadata(&vis_args.viz_output_path) {
@@ -302,17 +292,19 @@ fn main() -> Result<()> {
     let alignment_data =
         AlignmentData::from_caf_and_ultra_and_matrices(alignments_file, ultra_file, matrices_file)?;
 
-    let proximity_groups =
-        ProximityGroup::from_alignment_data(&alignment_data, args.annotation_args.target_join_distance)
-            .into_iter()
-            .filter(|g| {
-                if args.ultra_args.exclude_isolated_tandem_repeats {
-                    !g.alignments.is_empty()
-                } else {
-                    true
-                }
-            })
-            .collect_vec();
+    let proximity_groups = ProximityGroup::from_alignment_data(
+        &alignment_data,
+        args.annotation_args.target_join_distance,
+    )
+    .into_iter()
+    .filter(|g| {
+        if args.ultra_args.exclude_isolated_tandem_repeats {
+            !g.alignments.is_empty()
+        } else {
+            true
+        }
+    })
+    .collect_vec();
 
     if let Some(path) = &args.io_args.regions_path {
         let regions_file = File::create(path).unwrap();
@@ -336,7 +328,8 @@ fn main() -> Result<()> {
         let index_file = File::create(vis_args.viz_output_path.join("index.html")).unwrap();
         let mut index_writer = BufWriter::new(index_file);
 
-        vis_args.viz_constraints
+        vis_args
+            .viz_constraints
             .iter()
             .enumerate()
             .for_each(|(idx, c)| {
