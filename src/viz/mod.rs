@@ -29,6 +29,8 @@ use crate::{
     AuroraArgs,
 };
 
+const SODA_JS: &str = include_str!("../../fixtures/soda/soda.js");
+
 #[derive(Clone, Debug)]
 pub struct VizConstraint {
     pub target_name: String,
@@ -183,12 +185,13 @@ impl<'a> AdjudicationSodaData<'a> {
             "confidenceSegmentStrings": self.confidence_segment_strings(),
         });
 
-        let mut viz_html = Self::TEMPLATE.replace(
-            "DATA_TARGET",
-            &serde_json::to_string(&data).expect("failed to serialize JSON data"),
-        );
-
-        viz_html = viz_html.replace("JS_TARGET", Self::JS);
+        let viz_html = Self::TEMPLATE
+            .replace("SODA_TARGET", SODA_JS)
+            .replace(
+                "DATA_TARGET",
+                &serde_json::to_string(&data).expect("failed to serialize JSON data"),
+            )
+            .replace("JS_TARGET", Self::JS);
 
         let mut file = std::fs::File::create(path).expect("failed to create file");
 
@@ -267,7 +270,10 @@ impl<'a> AdjudicationSodaData<'a> {
 
         if let (Some(path), Some(&offset)) = (
             &self.args.visualization_args.viz_reference_bed_path,
-            self.args.visualization_args.viz_reference_bed_index.get(target_name),
+            self.args
+                .visualization_args
+                .viz_reference_bed_index
+                .get(target_name),
         ) {
             let file = File::open(path).expect("failed to open reference bed");
             let reader = BufReader::new(file);
@@ -551,6 +557,9 @@ pub struct AssemblySodaData {
 }
 
 impl AssemblySodaData {
+    const TEMPLATE: &'static str = include_str!("../../fixtures/soda/assembly.html");
+    const JS: &'static str = include_str!("../../fixtures/soda/assembly.js");
+
     pub fn new(
         assemblies: &[Assembly],
         query_ids: &[usize],
@@ -670,5 +679,19 @@ impl AssemblySodaData {
             next,
             suffix,
         }
+    }
+
+    pub fn write(&self, path: impl AsRef<Path>) {
+        let viz_html = Self::TEMPLATE
+            .replace("SODA_TARGET", SODA_JS)
+            .replace(
+                "DATA_TARGET",
+                &serde_json::to_string(&self).expect("failed to serialize JSON data"),
+            )
+            .replace("JS_TARGET", Self::JS);
+
+        let mut file = std::fs::File::create(path).expect("failed to create file");
+
+        std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
     }
 }

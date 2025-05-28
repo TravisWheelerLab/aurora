@@ -451,9 +451,9 @@ impl<'a> AssemblyGroup<'a> {
                 // links before we start messing with the graph
                 let mut fwd_links = vec![];
                 let mut rev_links = vec![];
-                let vis_args = &args.visualization_args;
+                let viz_args = &args.visualization_args;
 
-                if vis_args.assembly_viz {
+                if viz_args.assembly_viz {
                     fwd_links = fwd_graph
                         .iter()
                         .flat_map(|(ali_from, edges)| {
@@ -501,44 +501,32 @@ impl<'a> AssemblyGroup<'a> {
                     rev_ali.len() == cnt
                 });
 
-                if vis_args.assembly_viz {
+                if viz_args.assembly_viz {
                     if !fwd_ali.is_empty() {
-                        let fwd_data = AssemblySodaData::new(
+                        AssemblySodaData::new(
                             &fwd_assemblies,
                             &query_ids,
                             fwd_links,
                             confidence_avg_by_id,
-                        );
-
-                        let fwd_path = vis_args
-                            .viz_output_path
-                            .join(format!("{}-fwd.html", query_id));
-
-                        write_soda_html(
-                            &fwd_data,
-                            "./fixtures/soda/assembly-template.html",
-                            "./fixtures/soda/assembly.js",
-                            fwd_path,
+                        )
+                        .write(
+                            viz_args
+                                .viz_output_path
+                                .join(format!("{}-fwd.html", query_id)),
                         );
                     }
 
                     if !rev_ali.is_empty() {
-                        let rev_data = AssemblySodaData::new(
+                        AssemblySodaData::new(
                             &rev_assemblies,
                             &query_ids,
                             rev_links,
                             confidence_avg_by_id,
-                        );
-
-                        let rev_path = vis_args
-                            .viz_output_path
-                            .join(format!("{}-rev.html", query_id));
-
-                        write_soda_html(
-                            &rev_data,
-                            "./fixtures/soda/assembly-template.html",
-                            "./fixtures/soda/assembly.js",
-                            rev_path,
+                        )
+                        .write(
+                            viz_args
+                                .viz_output_path
+                                .join(format!("{}-rev.html", query_id)),
                         );
                     }
                 }

@@ -1,5 +1,3 @@
-import * as soda from "https://esm.run/@sodaviz/soda@0.13.1";
-
 function run(data) {
   document
     .querySelector(".container")
