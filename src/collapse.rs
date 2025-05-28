@@ -6,13 +6,12 @@ use crate::{
     alignment::{Alignment, Strand, TandemRepeat},
     chunks::ProximityGroup,
     viz::{write_soda_html, AssemblySodaData},
-    Args,
+    AnnotationArgs, AuroraArgs,
 };
 
-///
-///
-///
-///
+/// The direction of an `Edge` in terms of where
+/// `&Alignment` B (value) is in relation to `&Alignment` A (key)
+/// in the coordinate space of the chromosome
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum Direction {
     Left,
@@ -28,9 +27,10 @@ pub struct Edge<'a> {
 
 pub fn assembly_graph<'a>(
     alignments: &[&'a Alignment],
-    args: &Args,
+    args: &AnnotationArgs,
 ) -> HashMap<&'a Alignment, Vec<Edge<'a>>> {
     // this relies on the alignments being sorted by target start
+    // note: this assertion iter will only run in debug mode
     alignments
         .iter()
         .zip(alignments.iter().skip(1))
@@ -43,6 +43,8 @@ pub fn assembly_graph<'a>(
 
     alignments.iter().enumerate().for_each(|(a_idx, &a)| {
         alignments[a_idx + 1..].iter().for_each(|&b| {
+            // TODO: this is highly suspect, as this should never happen
+            //       ?????
             if a == b {
                 return;
             }
@@ -101,6 +103,8 @@ pub fn assembly<'a>(
     // sort the edge lists by edge weight
     graph
         .values_mut()
+        // TODO: this could use more graceful error handling
+        //       in the off chance that we get a NaN
         .for_each(|edge_list| edge_list.sort_by(|a, b| a.weight.partial_cmp(&b.weight).unwrap()));
 
     // sort the remaining alignments by their minimum edge weights
@@ -115,6 +119,8 @@ pub fn assembly<'a>(
             None => f64::INFINITY,
         };
 
+        // TODO: this could use more graceful error handling
+        //       in the off chance that we get a NaN
         x.partial_cmp(&y).unwrap()
     });
 
@@ -314,8 +320,8 @@ impl<'a> Assembly<'a> {
                     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
                     .expect("mini dp matrix has an empty column");
 
-                let skip_loop_score = matrix[col_idx - 1][0] + (1e55f64).ln() / 30.0;
-                let query_to_skip_score = max_score_in_prev_col + (1e55f64).ln() / 2.0;
+                let skip_loop_score = matrix[col_idx - 1][0] + (1e-55f64).ln() / 30.0;
+                let query_to_skip_score = max_score_in_prev_col + (1e-55f64).ln() / 2.0;
 
                 if skip_loop_score > query_to_skip_score {
                     matrix[col_idx][0] += skip_loop_score;
@@ -414,7 +420,7 @@ impl<'a> AssemblyGroup<'a> {
         group: &ProximityGroup<'a>,
         confidence_avg_by_id: &HashMap<usize, f64>,
         confidence_by_id: &HashMap<usize, Vec<f64>>,
-        args: &Args,
+        args: &AuroraArgs,
     ) -> Self {
         let mut assemblies: Vec<Assembly> = vec![];
 
@@ -437,15 +443,17 @@ impl<'a> AssemblyGroup<'a> {
                     .into_iter()
                     .partition(|a| a.strand == Strand::Forward);
 
-                let mut fwd_graph = assembly_graph(&fwd_ali, args);
-                let mut rev_graph = assembly_graph(&rev_ali, args);
+                let mut fwd_graph = assembly_graph(&fwd_ali, &args.annotation_args);
+                let mut rev_graph = assembly_graph(&rev_ali, &args.annotation_args);
 
                 // if we are going to generate soda output
                 // for the assemblies, we need to store the
                 // links before we start messing with the graph
                 let mut fwd_links = vec![];
                 let mut rev_links = vec![];
-                if args.assembly_viz {
+                let vis_args = &args.visualization_args;
+
+                if vis_args.assembly_viz {
                     fwd_links = fwd_graph
                         .iter()
                         .flat_map(|(ali_from, edges)| {
@@ -493,7 +501,7 @@ impl<'a> AssemblyGroup<'a> {
                     rev_ali.len() == cnt
                 });
 
-                if args.assembly_viz {
+                if vis_args.assembly_viz {
                     if !fwd_ali.is_empty() {
                         let fwd_data = AssemblySodaData::new(
                             &fwd_assemblies,
@@ -502,7 +510,9 @@ impl<'a> AssemblyGroup<'a> {
                             confidence_avg_by_id,
                         );
 
-                        let fwd_path = args.viz_output_path.join(format!("{}-fwd.html", query_id));
+                        let fwd_path = vis_args
+                            .viz_output_path
+                            .join(format!("{}-fwd.html", query_id));
 
                         write_soda_html(
                             &fwd_data,
@@ -520,7 +530,9 @@ impl<'a> AssemblyGroup<'a> {
                             confidence_avg_by_id,
                         );
 
-                        let rev_path = args.viz_output_path.join(format!("{}-rev.html", query_id));
+                        let rev_path = vis_args
+                            .viz_output_path
+                            .join(format!("{}-rev.html", query_id));
 
                         write_soda_html(
                             &rev_data,

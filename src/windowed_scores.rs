@@ -8,7 +8,6 @@ use crate::alphabet::{
 use crate::matrix::Matrix;
 use crate::substitution_matrix::{AlignmentScore, SubstitutionMatrix};
 use crate::util::VecMap;
-use crate::SKIP_STATE_SCORE;
 
 pub fn build_target_seq_from_alignments(
     alignments: &[Alignment],
@@ -292,12 +291,13 @@ pub fn windowed_score(
     substitution_matrices: &VecMap<SubstitutionMatrix>,
     background: &impl BackgroundFrequencies,
     window_size: usize,
+    skip_state_score: f64
 ) -> anyhow::Result<()> {
     let target_start = matrix.target_start();
 
     // set the skip score uniformly
     (0..matrix.num_cols()).for_each(|col_idx| {
-        matrix.set_skip(col_idx, SKIP_STATE_SCORE);
+        matrix.set_skip(col_idx, skip_state_score);
     });
 
     for (row_idx, ali, sub_matrix) in alignments
@@ -566,7 +566,7 @@ mod tests {
         assert_eq!(scores, correct);
 
         let correct = vec![-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0];
-        let scores = windowed_score_alignment(&a, &s, crate::SCORE_WINDOW_SIZE, &b)?;
+        let scores = windowed_score_alignment(&a, &s, 31, &b)?;
         assert_eq!(scores, correct);
 
         Ok(())

@@ -26,7 +26,7 @@ use alignment::AlignmentData;
 use chunks::ProximityGroup;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Args, Parser};
 use itertools::Itertools;
 use rayon::prelude::*;
 use viz::VizConstraint;
@@ -43,7 +43,7 @@ static GLOBAL: Jemalloc = Jemalloc;
 #[derive(Debug, Parser, Clone)]
 #[command(name = "aurora")]
 #[command(about = "stuff")]
-pub struct Args {
+pub struct AuroraArgs {
     /// The path to CAF formatted alignments
     #[arg()]
     alignments: String,
@@ -52,6 +52,30 @@ pub struct Args {
     #[arg()]
     matrices: String,
 
+    #[command(flatten)]
+    #[clap(next_help_heading = "Annotation options")]
+    pub annotation_args: AnnotationArgs,
+
+    #[command(flatten)]
+    #[clap(next_help_heading = "Performance options")]
+    pub performance_args: PerformanceArgs,
+
+    #[command(flatten)]
+    #[clap(next_help_heading = "File I/O options")]
+    pub io_args: IoArgs,
+
+    #[command(flatten)]
+    #[clap(next_help_heading = "Ultra options")]
+    pub ultra_args: UltraArgs,
+
+    #[command(flatten)]
+    #[clap(next_help_heading = "Visualization options")]
+    pub visualization_args: VisualizationArgs,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct PerformanceArgs {
+    /// Number of threads to use durring processing.
     #[arg(
         short = 't',
         long = "threads",
@@ -59,15 +83,18 @@ pub struct Args {
         value_name = "n"
     )]
     pub num_threads: usize,
+}
 
-    /// The probability of jumping between query models
+#[derive(Args, Debug, Clone, Default)]
+pub struct AnnotationArgs {
+    /// The penalty of jumping between query models
     #[arg(
         short = 'J',
         long = "query-jump",
-        default_value = "1e-55",
+        default_value = "-127.0",
         value_name = "f"
     )]
-    pub query_jump_probability: f64,
+    pub query_jump_penalty: f64,
 
     /// The number of skip loops that are
     /// equal to a jump between query models
@@ -121,10 +148,54 @@ pub struct Args {
     )]
     pub fudge_distance: usize,
 
+    /// The size of the window looked at to determine a single alignment score in nucleotides.
+    #[arg(
+        short = 'W',
+        long = "window-size",
+        default_value = "31",
+        value_name = "n"
+    )]
+    pub score_window_size: usize,
+
+    /// The size of the window looked at to determine alignment score of the background refrence score in nucleotides.
+    #[arg(
+        short = 'B',
+        long = "background-window-size",
+        default_value = "61",
+        value_name = "n"
+    )]
+    pub background_window_size: usize,
+
+    /// Apply an additional penalty to the skip state score.
+    #[arg(
+        short = 'S',
+        long = "skip-state-penalty",
+        default_value = "0.0",
+        value_name = "f"
+    )]
+    pub skip_state_score_shift: f64,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct IoArgs {
+    /// Produce a file that describes the regions
+    #[arg(long = "regions", value_name = "path")]
+    pub regions_path: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct UltraArgs {
     /// The path to ULTRA output
     #[arg(short = 'U', long = "ultra-file", value_name = "path")]
     pub ultra_file_path: Option<PathBuf>,
 
+    /// Don't adjudicate regions that are only made up of tandem repeats
+    #[arg(short = 'X', long = "exclude-isolated-tr")]
+    pub exclude_isolated_tandem_repeats: bool,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct VisualizationArgs {
     /// Produce visualization output for annotations
     #[arg(short = 'V', long = "viz")]
     pub viz: bool,
@@ -133,6 +204,10 @@ pub struct Args {
     /// visualization output will be written
     #[arg(long = "viz-out", default_value = "./viz", value_name = "path")]
     pub viz_output_path: PathBuf,
+
+    /// Produce visualization output for potential join "assemblies"
+    #[arg(long = "assembly-viz")]
+    pub assembly_viz: bool,
 
     /// A list of target names, starts, and ends
     /// that will constrain the visualization output
@@ -143,18 +218,6 @@ pub struct Args {
     )]
     pub viz_constraints: Vec<VizConstraint>,
 
-    /// Produce visualization output for potential join "assemblies"
-    #[arg(long = "assembly-viz")]
-    pub assembly_viz: bool,
-
-    /// Produce a file that describes the regions
-    #[arg(long = "regions", value_name = "path")]
-    pub regions_path: Option<PathBuf>,
-
-    /// Don't adjudicate regions that are only made up of tandem repeats
-    #[arg(short = 'X', long = "exclude-isolated-tr")]
-    pub exclude_isolated_tandem_repeats: bool,
-
     /// The path to the BED file that contains
     /// reference annotations for visualization
     #[arg(short = 'R', long = "viz-ref-bed", value_name = "path")]
@@ -164,28 +227,25 @@ pub struct Args {
     pub viz_reference_bed_index: HashMap<String, usize>,
 }
 
-pub const SCORE_WINDOW_SIZE: usize = 31;
-pub const BACKGROUND_WINDOW_SIZE: usize = 61;
-pub const SKIP_STATE_SCORE: f64 = 10.0;
-
 fn main() -> Result<()> {
-    let mut args = Args::parse();
+    let mut args = AuroraArgs::parse();
+    let vis_args = &mut args.visualization_args;
 
-    if args.viz {
-        if let Ok(metadata) = fs::metadata(&args.viz_output_path) {
+    if vis_args.viz {
+        if let Ok(metadata) = fs::metadata(&vis_args.viz_output_path) {
             if metadata.is_dir() {
                 // TODO: real error
                 panic!(
                     "directory: {} already exists",
-                    args.viz_output_path.to_str().unwrap()
+                    vis_args.viz_output_path.to_str().unwrap()
                 )
             }
         }
 
-        create_dir_all(&args.viz_output_path)?;
-        args.viz_output_path = args.viz_output_path.canonicalize()?;
+        create_dir_all(&vis_args.viz_output_path)?;
+        vis_args.viz_output_path = vis_args.viz_output_path.canonicalize()?;
 
-        if let Some(path) = &args.viz_reference_bed_path {
+        if let Some(path) = &vis_args.viz_reference_bed_path {
             let file = File::open(path).expect("failed to open viz reference bed file");
             let reader = BufReader::new(file);
 
@@ -217,14 +277,14 @@ fn main() -> Result<()> {
                     prev_start = start;
                 });
 
-            args.viz_reference_bed_index = index;
+            vis_args.viz_reference_bed_index = index;
         }
     }
 
     let alignments_file = File::open(&args.alignments)?;
     let matrices_file = File::open(&args.matrices)?;
 
-    let ultra_file = match args.ultra_file_path {
+    let ultra_file = match args.ultra_args.ultra_file_path {
         Some(ref path) => Some(File::open(path)?),
         None => None,
     };
@@ -232,19 +292,21 @@ fn main() -> Result<()> {
     let alignment_data =
         AlignmentData::from_caf_and_ultra_and_matrices(alignments_file, ultra_file, matrices_file)?;
 
-    let proximity_groups =
-        ProximityGroup::from_alignment_data(&alignment_data, args.target_join_distance)
-            .into_iter()
-            .filter(|g| {
-                if args.exclude_isolated_tandem_repeats {
-                    !g.alignments.is_empty()
-                } else {
-                    true
-                }
-            })
-            .collect_vec();
+    let proximity_groups = ProximityGroup::from_alignment_data(
+        &alignment_data,
+        args.annotation_args.target_join_distance,
+    )
+    .into_iter()
+    .filter(|g| {
+        if args.ultra_args.exclude_isolated_tandem_repeats {
+            !g.alignments.is_empty()
+        } else {
+            true
+        }
+    })
+    .collect_vec();
 
-    if let Some(path) = &args.regions_path {
+    if let Some(path) = &args.io_args.regions_path {
         let regions_file = File::create(path).unwrap();
         let mut regions_writer = BufWriter::new(regions_file);
         proximity_groups.iter().enumerate().for_each(|(idx, g)| {
@@ -262,11 +324,12 @@ fn main() -> Result<()> {
         });
     }
 
-    if args.viz {
-        let index_file = File::create(args.viz_output_path.join("index.html")).unwrap();
+    if vis_args.viz {
+        let index_file = File::create(vis_args.viz_output_path.join("index.html")).unwrap();
         let mut index_writer = BufWriter::new(index_file);
 
-        args.viz_constraints
+        vis_args
+            .viz_constraints
             .iter()
             .enumerate()
             .for_each(|(idx, c)| {
@@ -300,11 +363,11 @@ fn main() -> Result<()> {
 
     debug_assert!(validate_groups(
         &proximity_groups,
-        args.target_join_distance
+        args.annotation_args.target_join_distance
     ));
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(args.num_threads)
+        .num_threads(args.performance_args.num_threads)
         .build_global()
         .unwrap();
 

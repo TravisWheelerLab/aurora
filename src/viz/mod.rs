@@ -26,7 +26,7 @@ use crate::{
     matrix::Matrix,
     split::SplitResults,
     viterbi::TraceSegment,
-    Args,
+    AuroraArgs,
 };
 
 #[derive(Clone, Debug)]
@@ -122,7 +122,7 @@ pub struct AdjudicationSodaData<'a> {
     annotations: Vec<Annotation>,
     split_results: Vec<SplitResults>,
     maybe_constraint: Option<&'a VizConstraint>,
-    args: &'a Args,
+    args: &'a AuroraArgs,
 }
 
 impl<'a> AdjudicationSodaData<'a> {
@@ -134,7 +134,7 @@ impl<'a> AdjudicationSodaData<'a> {
         confidence_matrix: &'a Matrix<'a, f64>,
         alignment_data: &'a AlignmentData,
         target_seq: &'a [u8],
-        args: &'a Args,
+        args: &'a AuroraArgs,
     ) -> Self {
         Self {
             group,
@@ -266,8 +266,8 @@ impl<'a> AdjudicationSodaData<'a> {
             .get(self.group.target_id);
 
         if let (Some(path), Some(&offset)) = (
-            &self.args.viz_reference_bed_path,
-            self.args.viz_reference_bed_index.get(target_name),
+            &self.args.visualization_args.viz_reference_bed_path,
+            self.args.visualization_args.viz_reference_bed_index.get(target_name),
         ) {
             let file = File::open(path).expect("failed to open reference bed");
             let reader = BufReader::new(file);
