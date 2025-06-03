@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    alignment::Strand,
+    alignment::{AlignmentData, Strand},
     alphabet::{GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL},
     chunks::ProximityGroup,
     collapse::AssemblyGroup,
@@ -428,6 +428,7 @@ impl MatrixDef {
     }
 }
 
+
 pub struct Matrix<'a, T>
 where
     T: Clone + Copy + Default + std::fmt::Display,
@@ -605,7 +606,43 @@ where
     pub fn print(&self) {
         (0..self.num_rows()).for_each(|row_idx| {
             (0..self.num_cols()).for_each(|col_idx| {
+                if self.def.target_start + col_idx < 42_890_000 {
+                    return
+                }
+                if self.def.target_start + col_idx > 42_891_000 {
+                    return
+                }
                 //
+                if self.contains_cell(row_idx, col_idx) {
+                    print!("{:8.3} ", self.get(row_idx, col_idx));
+                } else {
+                    print!("{:>8.3} ", "x");
+                }
+            });
+            println!();
+        });
+    }
+
+    #[allow(dead_code)]
+    pub fn fancy_print(&self, target_start: usize, target_end: usize, alignment_data: &AlignmentData) {
+        let col_start = (target_start - self.def.target_start).max(0).min(self.def.num_cols);
+        let col_end = (target_end - self.def.target_start).max(0).min(self.def.num_cols);
+
+        let valid_rows: Vec<usize> = (0..self.num_rows()).filter(|&row_idx| {
+            !(col_start..col_end).all(|col_idx| {
+                self.def.target_start + col_idx < target_start || self.def.target_start + col_idx >= target_end || !self.contains_cell(row_idx, col_idx)
+            })
+        }).collect();
+
+        let longest_alignment_length = valid_rows.iter().map(|&row_idx| alignment_data.query_name_map.get(row_idx).len()).max().unwrap();
+
+        valid_rows.iter().for_each(|&row_idx| {
+            // Skip rows with no data....
+            
+            print!("{:>10}", row_idx);
+            print!("{:>width$}", alignment_data.query_name_map.get(row_idx), width=longest_alignment_length);
+
+            (col_start..col_end).for_each(|col_idx| {
                 if self.contains_cell(row_idx, col_idx) {
                     print!("{:8.3} ", self.get(row_idx, col_idx));
                 } else {

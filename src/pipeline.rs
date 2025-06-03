@@ -107,6 +107,9 @@ pub fn run_pipeline(
 
     collapsed_confidence_matrix.copy_fill(&confidence_matrix);
 
+    collapsed_confidence_matrix.fancy_print(42_890_000, 42_891_000, alignment_data);
+    panic!();
+
     // the initial active cols just removes the dead space between alignments
     let mut active_cols = collapsed_confidence_matrix.initial_active_cols();
     let mut trace_ambiguous: Vec<Vec<TraceSegment>> = vec![];
