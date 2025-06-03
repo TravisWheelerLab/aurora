@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, io::stdout};
 
 use itertools::Itertools;
 
@@ -105,9 +105,21 @@ pub fn run_pipeline(
     let mut viterbi_matrix = Matrix::<f64>::new(&collapsed_matrix_def);
     let mut sources_matrix = Matrix::<usize>::new(&collapsed_matrix_def);
 
+    proximity_group
+        .dump_alignments(&mut fs::File::create("group.ali").unwrap())
+        .unwrap();
+
     collapsed_confidence_matrix.copy_fill(&confidence_matrix);
 
-    collapsed_confidence_matrix.fancy_print(42_890_000, 42_891_000, alignment_data);
+    collapsed_confidence_matrix
+        .fancy_print(
+            42_890_000,
+            42_891_000,
+            alignment_data,
+            &mut fs::File::create("conf.txt").unwrap(),
+        )
+        .unwrap();
+
     panic!();
 
     // the initial active cols just removes the dead space between alignments

@@ -1,3 +1,5 @@
+use anyhow::Context;
+
 use crate::alignment::{Alignment, AlignmentData, TandemRepeat};
 
 #[derive(Copy, Clone)]
@@ -26,7 +28,7 @@ pub struct ProximityGroup<'a> {
     pub line_end: usize,
 }
 
-impl<'a> std::fmt::Debug for ProximityGroup<'a> {
+impl std::fmt::Debug for ProximityGroup<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -186,6 +188,16 @@ impl<'a> ProximityGroup<'a> {
                 })
             })
             .collect()
+    }
+
+    pub fn dump_alignments<W>(&self, out: &mut W) -> anyhow::Result<()>
+    where
+        W: std::io::Write,
+    {
+        self.alignments
+            .iter()
+            .try_for_each(|a| write!(out, "{a}"))
+            .context("failed to write alignment")
     }
 }
 
