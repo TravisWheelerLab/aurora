@@ -9,7 +9,7 @@ use itertools::Itertools;
 use crate::{
     alignment::{Alignment, AlignmentData, Strand, TandemRepeat},
     chunks::ProximityGroup,
-    viz::{write_soda_html, AssemblySodaData},
+    viz::AssemblySodaData,
     AnnotationArgs, AuroraArgs,
 };
 

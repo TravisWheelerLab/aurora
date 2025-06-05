@@ -319,6 +319,7 @@ struct UltraRecord {
 
 /// A group of alignments that share
 /// the same target sequence
+#[allow(dead_code)]
 pub struct TargetGroup {
     pub target_id: usize,
     pub target_start: usize,

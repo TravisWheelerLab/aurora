@@ -26,7 +26,7 @@ use alignment::AlignmentData;
 use chunks::ProximityGroup;
 
 use anyhow::Result;
-use clap::{error, Args, Parser};
+use clap::{Args, Parser};
 use itertools::Itertools;
 use rayon::prelude::*;
 use viz::VizConstraint;

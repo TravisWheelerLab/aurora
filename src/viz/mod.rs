@@ -6,7 +6,7 @@ use block::*;
 
 use std::{
     collections::HashMap,
-    fs::{self, File},
+    fs::File,
     io::{BufRead, BufReader},
     num::ParseIntError,
     path::Path,
@@ -50,27 +50,6 @@ impl std::str::FromStr for VizConstraint {
             target_end: tokens[2].parse()?,
         })
     }
-}
-
-pub fn write_soda_html(
-    data: &impl Serialize,
-    template_path: impl AsRef<Path>,
-    js_path: impl AsRef<Path>,
-    out_path: impl AsRef<Path>,
-) {
-    let template = fs::read_to_string(template_path).expect("failed to read template");
-    let js = fs::read_to_string(js_path).expect("failed to read js");
-
-    let mut viz_html = template.replace(
-        "DATA_TARGET",
-        &serde_json::to_string(data).expect("failed to serialize JSON data"),
-    );
-
-    viz_html = viz_html.replace("JS_TARGET", &js);
-
-    let mut file = std::fs::File::create(out_path).expect("failed to create file");
-
-    std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
 }
 
 impl Alignment {
