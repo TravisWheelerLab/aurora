@@ -542,6 +542,8 @@ impl<'a> AdjudicationSodaData<'a> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssemblySodaData {
+    query_id: usize,
+    query_name: String,
     target_start: usize,
     target_end: usize,
     consensus_start: usize,
@@ -551,8 +553,6 @@ pub struct AssemblySodaData {
     consensus_assembly_strings: Vec<Vec<String>>,
     target_assembly_strings: Vec<Vec<String>>,
     links: Vec<String>,
-    prev: usize,
-    next: usize,
     suffix: String,
 }
 
@@ -562,12 +562,13 @@ impl AssemblySodaData {
 
     pub fn new(
         assemblies: &[Assembly],
-        query_ids: &[usize],
         links: Vec<String>,
         confidence: &HashMap<usize, f64>,
+        alignment_data: &AlignmentData,
     ) -> Self {
         let query_id = assemblies[0].query_id;
         let strand = assemblies[0].strand;
+        let query_name = alignment_data.query_name_map.get(query_id).clone();
 
         let target_assembly_strings = assemblies
             .iter()
@@ -623,26 +624,6 @@ impl AssemblySodaData {
             .cloned()
             .collect();
 
-        let query_id_idx = query_ids
-            .iter()
-            .position(|id| *id == query_id)
-            .expect("failed to find query_id");
-
-        let next_idx = query_id_idx + 1;
-
-        let next = if next_idx < query_ids.len() {
-            query_ids[next_idx]
-        } else {
-            query_ids[0]
-        };
-
-        let prev_idx = query_id_idx as isize - 1;
-        let prev = if prev_idx > 0 {
-            query_ids[prev_idx as usize]
-        } else {
-            query_ids[query_ids.len() - 1]
-        };
-
         let suffix = match strand {
             Strand::Forward => "fwd".to_string(),
             Strand::Reverse => "rev".to_string(),
@@ -666,6 +647,8 @@ impl AssemblySodaData {
         };
 
         Self {
+            query_id,
+            query_name,
             target_start,
             target_end,
             consensus_start,
@@ -675,8 +658,6 @@ impl AssemblySodaData {
             consensus_assembly_strings,
             target_assembly_strings,
             links,
-            prev,
-            next,
             suffix,
         }
     }

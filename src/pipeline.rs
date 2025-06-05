@@ -96,6 +96,7 @@ pub fn run_pipeline(
         &confidence_avg_by_id,
         &confidence_by_id,
         &args,
+        alignment_data,
     );
 
     // initialize the collpased DP matrices

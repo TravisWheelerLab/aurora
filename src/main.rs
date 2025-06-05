@@ -26,7 +26,7 @@ use alignment::AlignmentData;
 use chunks::ProximityGroup;
 
 use anyhow::Result;
-use clap::{Args, Parser};
+use clap::{error, Args, Parser};
 use itertools::Itertools;
 use rayon::prelude::*;
 use viz::VizConstraint;
@@ -324,40 +324,62 @@ fn main() -> Result<()> {
         });
     }
 
-    if vis_args.viz {
+    if vis_args.viz || vis_args.assembly_viz {
+        let error_msg = "failed to write to index.html";
         let index_file = File::create(vis_args.viz_output_path.join("index.html")).unwrap();
         let mut index_writer = BufWriter::new(index_file);
 
-        vis_args
-            .viz_constraints
-            .iter()
-            .enumerate()
-            .for_each(|(idx, c)| {
-                writeln!(
-                    &mut index_writer,
-                    "<a href={}-{}-{}.html>slice {} | {} {}:{}</a><br>",
-                    c.target_name,
-                    c.target_start,
-                    c.target_end,
-                    idx,
-                    c.target_name,
-                    c.target_start,
-                    c.target_end,
-                )
-                .expect("failed to write to index.html");
-            });
+        if vis_args.viz {
+            vis_args
+                .viz_constraints
+                .iter()
+                .enumerate()
+                .for_each(|(idx, c)| {
+                    writeln!(
+                        &mut index_writer,
+                        "<a href={}-{}-{}.html>slice {} | {} {}:{}</a><br>",
+                        c.target_name,
+                        c.target_start,
+                        c.target_end,
+                        idx,
+                        c.target_name,
+                        c.target_start,
+                        c.target_end,
+                    )
+                    .expect(error_msg);
+                });
+        }
 
         proximity_groups.iter().enumerate().for_each(|(idx, g)| {
             writeln!(
                 &mut index_writer,
-                "<a href={}/index.html>region {} | {} {}:{}</a><br>",
-                idx,
+                "<h3>region {} | {} {}:{}</h3>\n<ul>",
                 idx,
                 alignment_data.target_name_map.get(g.target_id),
                 g.target_start,
                 g.target_end,
             )
-            .expect("failed to write to index.html");
+            .expect(error_msg);
+
+            if vis_args.viz {
+                writeln!(
+                    &mut index_writer,
+                    "    <li><a href={}/index.html>Annotations</a></li>",
+                    idx,
+                )
+                .expect(error_msg);
+            }
+
+            if vis_args.assembly_viz {
+                writeln!(
+                    &mut index_writer,
+                    "    <li><a href={}/assembly_index.html>Assemblies</a></li>",
+                    idx,
+                )
+                .expect(error_msg);
+            }
+
+            writeln!(&mut index_writer, "</ul>").expect(error_msg);
         });
     }
 
