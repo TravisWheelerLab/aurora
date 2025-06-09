@@ -1,7 +1,7 @@
 function run(data) {
   document
     .querySelector(".container")
-    .addEventListener("wheel", function (event) {
+    .addEventListener("wheel", function(event) {
       if (event.ctrlKey) {
         event.preventDefault();
       }
@@ -222,7 +222,7 @@ function run(data) {
         // sneaky: rewrite the layout object's row retrieval
         //         function so that it works for the annotations
         //         that the proxy annotations correspond to
-        this.layout.row = function (d) {
+        this.layout.row = function(d) {
           let id_tokens = d.a.id.split("-");
           let id = `${id_tokens[0]}-${id_tokens[1]}`;
           let row = this.rowMap.get(id);
@@ -297,7 +297,7 @@ function run(data) {
     let genome = new soda.Chart({
       ...chartConf,
       upperPadSize: 25,
-      updateLayout() {},
+      updateLayout() { },
       draw(params) {
         this.clear();
         this.addAxis();
@@ -516,9 +516,18 @@ function run(data) {
             chart: this,
             selector: "ali-seq",
             annotations,
-            y,
+            y: (d) => y(d) + 1,
             fillColor: (d) =>
               d.a.id[0] == "m" ? "green" : d.a.id[0] == "s" ? "orange" : "red",
+          });
+
+          annotations = domainFilter(params.gaps);
+          soda.sequence({
+            chart: this,
+            selector: "ali-gaps",
+            annotations,
+            y: (d) => y(d) - 11,
+            fillColor: "red",
           });
         }
 
@@ -561,7 +570,8 @@ function run(data) {
             `${d.a.queryStart.toLocaleString()}..${d.a.queryEnd.toLocaleString()} / ${d.a.queryLength.toLocaleString()}` +
             `<br>chrom: ${d.a.start.toLocaleString()}..${d.a.end.toLocaleString()}` +
             `<br>strand: ${d.a.strand}` +
-            `<br>confidence: ${d.a.conf}`,
+            `<br>confidence: ${d.a.conf}` +
+            `<br>ali: ${d.a.ali_id}`,
         });
       },
 
@@ -581,7 +591,7 @@ function run(data) {
       },
     });
 
-    alignments.render = function (params) {
+    alignments.render = function(params) {
       //this.resetTransform();
 
       let queryFilter = (a) => {
@@ -624,6 +634,7 @@ function run(data) {
         assemblies: params.assemblies.filter(queryFilter),
         proxy: params.proxy.filter(queryFilter),
         sequences: params.sequences.filter(queryFilter),
+        gaps: params.gaps.filter(queryFilter),
         ambiguousTrace:
           params.ambiguousTrace[state.traceIteration].filter(queryFilter),
         conclusiveTrace:
@@ -728,16 +739,29 @@ function run(data) {
     let labelMap = new Map();
     let id = 0;
     let blank = "\u2000";
+    let gaps = []
     for (const a of ali) {
       let tokens = a.split(",");
       let green = tokens[0].replace(/ /g, blank);
       let orange = tokens[1].replace(/ /g, blank);
-      let start = parseInt(tokens[2]);
-      let end = parseInt(tokens[3]);
-      let query = tokens[4];
-      let row = parseInt(tokens[5]);
-      let queryId = parseInt(tokens[6]);
-      let strand = tokens[7];
+      let ali_gaps = []
+      if (tokens[2] != "") {
+        ali_gaps = tokens[2].split("|").map((s) => {
+          let [seq, start] = s.split(":");
+          start = parseInt(start)
+          return {
+            start,
+            end: start + seq.length,
+            sequence: seq
+          }
+        });
+      }
+      let start = parseInt(tokens[3]);
+      let end = parseInt(tokens[4]);
+      let query = tokens[5];
+      let row = parseInt(tokens[6]);
+      let queryId = parseInt(tokens[7]);
+      let strand = tokens[8];
 
       labelMap.set(query, row);
       let common = { query, start, end, row, queryId, strand };
@@ -759,9 +783,19 @@ function run(data) {
         ...common,
       });
 
+      let i = 0;
+      for (let g of ali_gaps) {
+        gaps.push({
+          id: `g-${id}-${i++}`,
+          row,
+          queryId,
+          ...g,
+        });
+      }
+
       id++;
     }
-    return { sequences, proxy };
+    return { sequences, gaps, proxy };
   }
 
   function prepareTrace(traceStrings, targetStart) {
@@ -872,6 +906,7 @@ function run(data) {
         let queryLength = parseInt(tokens[6]);
         let strand = tokens[7];
         let query = tokens[8];
+        let ali_id = tokens[9];
 
         iterSegs.push({
           id: `cs-${iter}-${idx}`,
@@ -884,6 +919,7 @@ function run(data) {
           queryLength,
           strand,
           query,
+          ali_id,
         });
       }
       confidenceSegments.push(iterSegs);
@@ -982,7 +1018,7 @@ function run(data) {
           [0, 0],
           [chart.viewportWidthPx, chart.viewportHeightPx + 1],
         ])
-        .on("start", () => {})
+        .on("start", () => { })
         .on("brush", () => {
           let brushRange = soda.internalD3.event.selection;
           brushDomain = [
