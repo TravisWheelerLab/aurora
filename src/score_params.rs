@@ -14,7 +14,7 @@ pub fn approximate_ideal_skip_state_score(
     query_jump_penalty_nats: f64,
     penalty_shift: f64,
 ) -> f64 {
-    return -(query_jump_penalty_nats / num_skip_loops_match_jump) + penalty_shift;
+    -(query_jump_penalty_nats / num_skip_loops_match_jump) + penalty_shift
 }
 
 impl ScoreParams {

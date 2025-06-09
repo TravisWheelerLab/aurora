@@ -80,16 +80,6 @@ pub fn run_pipeline(
 
     let (confidence_avg_by_id, confidence_by_id) = windowed_confidence(&mut confidence_matrix);
 
-    // adjust the skip state to include skip-loop penalty
-    let skip_adjust = annot_args
-        .query_jump_penalty
-        .exp()
-        .powf(1.0 / annot_args.num_skip_loops_eq_to_jump as f64);
-
-    (0..confidence_matrix.num_cols()).for_each(|col_idx| {
-        confidence_matrix.set_skip(col_idx, confidence_matrix.get_skip(col_idx) * skip_adjust);
-    });
-
     // convert the ProximityGroup into an AssemblyGroup
     let assembly_group = AssemblyGroup::new(
         proximity_group,
