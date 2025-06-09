@@ -542,7 +542,7 @@ impl<'a> AssemblyGroup<'a> {
             });
 
         if args.visualization_args.assembly_viz {
-            let error_msg = "Unable to write assembly index file!";
+            let error_msg = "failed to write to assembly index file";
             let viz_args = &args.visualization_args;
 
             let asm_index_file =
