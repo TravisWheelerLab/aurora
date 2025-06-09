@@ -77,35 +77,65 @@ impl Alignment {
     pub fn soda_string(&self, row: usize, query_name: &str) -> String {
         let mut green_bytes: Vec<u8> = vec![];
         let mut orange_bytes: Vec<u8> = vec![];
+        let mut red_bytes: Vec<Vec<u8>> = vec![];
+        let mut red_starts: Vec<usize> = vec![];
+
+        let mut t_pos = self.target_start;
+        let mut in_target_gap = false;
+        let mut current_red_bytes: Vec<u8> = vec![];
+        let mut target_gap_start = 0;
 
         self.target_seq
             .iter()
             .zip(&self.query_seq)
-            .for_each(|(&t, &q)| {
-                match t {
-                    GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
-                        //
+            // .enumerate()
+            // .map(move |(ali_idx, c)| (ali_idx + target_pos, c))
+            // .for_each(|(t_idx, (&t, &q))| match t {
+            .for_each(|(&t, &q)| match t {
+                GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
+                    if in_target_gap {
+                        current_red_bytes.push(ALIGNMENT_ALPHABET_UTF8[q as usize]);
+                    } else {
+                        in_target_gap = true;
+                        target_gap_start = t_pos;
+                        current_red_bytes = vec![ALIGNMENT_ALPHABET_UTF8[q as usize]]
                     }
-                    _ => {
-                        if t == q {
-                            green_bytes.push(ALIGNMENT_ALPHABET_UTF8[q as usize]);
-                            orange_bytes.push(SPACE_UTF8);
-                        } else {
-                            green_bytes.push(SPACE_UTF8);
-                            orange_bytes.push(ALIGNMENT_ALPHABET_UTF8[q as usize]);
-                        }
+                }
+                _ => {
+                    t_pos += 1;
+                    if in_target_gap {
+                        red_bytes.push(current_red_bytes.clone());
+                        red_starts.push(target_gap_start);
+                    }
+                    in_target_gap = false;
+                    if t == q {
+                        green_bytes.push(ALIGNMENT_ALPHABET_UTF8[q as usize]);
+                        orange_bytes.push(SPACE_UTF8);
+                    } else {
+                        green_bytes.push(SPACE_UTF8);
+                        orange_bytes.push(ALIGNMENT_ALPHABET_UTF8[q as usize]);
                     }
                 }
             });
 
         let green_string = String::from_utf8(green_bytes).unwrap();
         let orange_string = String::from_utf8(orange_bytes).unwrap();
+        let mut red_string = red_bytes
+            .into_iter()
+            .zip(red_starts)
+            .fold("".to_string(), |acc, (b, s)| {
+                format!("{acc}{}:{s}|", String::from_utf8(b).unwrap())
+            });
+
+        red_string.pop();
+
         debug_assert_eq!(self.target_end - self.target_start + 1, green_string.len());
 
         format!(
-            "{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{}",
             green_string,
             orange_string,
+            red_string,
             self.target_start,
             self.target_end + 1,
             query_name,
@@ -510,7 +540,7 @@ impl<'a> AdjudicationSodaData<'a> {
                                         });
                                         conf /= (col_end - col_start + 1) as f64;
                                         format!(
-                                            "{},{},{},{:3.2},{},{},{},{},{}",
+                                            "{},{},{},{:3.2},{},{},{},{},{},{}",
                                             seg_target_start.max(ali.target_start),
                                             seg_target_end.min(ali.target_end),
                                             row_idx,
@@ -525,6 +555,7 @@ impl<'a> AdjudicationSodaData<'a> {
                                                 .unwrap(),
                                             self.confidence_matrix.strand_of_row(row_idx),
                                             self.alignment_data.query_name_map.get(ali.query_id),
+                                            ali.id,
                                         )
                                     })
                             })
