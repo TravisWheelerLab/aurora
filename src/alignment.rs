@@ -7,8 +7,8 @@ use std::{fmt, hash};
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::alphabet::{
-    ALIGNMENT_ALPHABET_STR, DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
-    NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, UTF8_TO_DIGITAL_NUCLEOTIDE,
+    NucleotideByteUtils, ALIGNMENT_ALPHABET_STR, DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL,
+    GAP_OPEN_DIGITAL, NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, UTF8_TO_DIGITAL_NUCLEOTIDE,
 };
 use crate::substitution_matrix::SubstitutionMatrix;
 use crate::util::{StrSliceExt, VecMap};
@@ -50,7 +50,7 @@ impl fmt::Display for Strand {
     }
 }
 
-#[derive(Default, Debug, Eq)]
+#[derive(Default, Eq)]
 pub struct Alignment {
     pub target_seq: Vec<u8>,
     pub query_seq: Vec<u8>,
@@ -113,13 +113,31 @@ impl hash::Hash for Alignment {
     }
 }
 
-impl fmt::Display for Alignment {
+impl fmt::Debug for Alignment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "{}: T|{}-{} Q|{}-{}",
             self.query_id, self.target_start, self.target_end, self.query_start, self.query_end
         )
+    }
+}
+
+impl fmt::Display for Alignment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "#{}", self.id)?;
+        writeln!(f, "#T {}..={}", self.target_start, self.target_end)?;
+        writeln!(f, "#Q {}..={}", self.query_start, self.query_end)?;
+        let mid_line: String = self
+            .target_seq
+            .iter()
+            .zip(self.query_seq.iter())
+            .map(|(a, b)| if a == b { "|" } else { " " })
+            .collect();
+
+        writeln!(f, "{}", self.target_seq.to_utf8_string())?;
+        writeln!(f, "{mid_line}")?;
+        writeln!(f, "{}", self.query_seq.to_utf8_string())
     }
 }
 

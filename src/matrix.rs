@@ -1,7 +1,9 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, io::Write};
+
+use anyhow::Context;
 
 use crate::{
-    alignment::Strand,
+    alignment::{AlignmentData, Strand},
     alphabet::{GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL},
     chunks::ProximityGroup,
     collapse::AssemblyGroup,
@@ -605,7 +607,6 @@ where
     pub fn print(&self) {
         (0..self.num_rows()).for_each(|row_idx| {
             (0..self.num_cols()).for_each(|col_idx| {
-                //
                 if self.contains_cell(row_idx, col_idx) {
                     print!("{:8.3} ", self.get(row_idx, col_idx));
                 } else {
@@ -614,5 +615,98 @@ where
             });
             println!();
         });
+    }
+
+    #[allow(dead_code)]
+    pub fn fancy_print<W>(
+        &self,
+        target_start: usize,
+        target_end: usize,
+        alignment_data: &AlignmentData,
+        out: &mut W,
+    ) -> anyhow::Result<()>
+    where
+        W: Write,
+    {
+        let col_start = (target_start - self.def.target_start)
+            .max(0)
+            .min(self.def.num_cols);
+        let col_end = (target_end - self.def.target_start)
+            .max(0)
+            .min(self.def.num_cols);
+
+        let rows_in_col_range: Vec<usize> = (0..self.num_rows())
+            .filter(|&row_idx| {
+                !(col_start..col_end).all(|col_idx| {
+                    self.def.target_start + col_idx < target_start
+                        || self.def.target_start + col_idx >= target_end
+                        || !self.contains_cell(row_idx, col_idx)
+                })
+            })
+            .collect();
+
+        let max_name_len = rows_in_col_range
+            .iter()
+            .map(|&row_idx| self.def.query_id_by_logical_row[row_idx])
+            .map(|query_id| alignment_data.query_name_map.get(query_id).len())
+            .max()
+            .unwrap();
+
+        let max_int_len = rows_in_col_range
+            .clone()
+            .into_iter()
+            .chain(
+                rows_in_col_range
+                    .iter()
+                    .map(|row_idx| self.def.query_id_by_logical_row[*row_idx]),
+            )
+            .map(|i| i.to_string().len())
+            .max()
+            .unwrap();
+
+        rows_in_col_range
+            .iter()
+            .map(|row_idx| (row_idx, self.def.query_id_by_logical_row[*row_idx]))
+            .try_for_each(|(&row_idx, query_id)| {
+                write!(
+                    out,
+                    "r{:<W1$} : q{:<W1$} | {:>W2$}",
+                    row_idx,
+                    query_id,
+                    alignment_data.query_name_map.get(query_id),
+                    W1 = max_int_len,
+                    W2 = max_name_len
+                )?;
+
+                (col_start..col_end).try_for_each(|col_idx| {
+                    if self.contains_cell(row_idx, col_idx) {
+                        write!(out, "{:8.3} ", self.get(row_idx, col_idx))
+                    } else {
+                        write!(out, "{:>8.3} ", "x")
+                    }
+                })?;
+                writeln!(out)?;
+
+                write!(out, "{}", " ".repeat(max_int_len * 2 + max_name_len + 8))?;
+
+                (col_start..col_end).try_for_each(|col_idx| {
+                    if self.contains_cell(row_idx, col_idx) {
+                        write!(
+                            out,
+                            "{:>8} ",
+                            format!(
+                                "a{}",
+                                self.def.ali_ids_by_col[col_idx]
+                                    [self.logical_to_sparse_row_idx(row_idx, col_idx)]
+                            )
+                        )
+                    } else {
+                        write!(out, "{:>8.3} ", "x")
+                    }
+                })?;
+                writeln!(out)?;
+                writeln!(out)
+            })
+            .context("failed to write matrix")
     }
 }
