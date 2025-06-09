@@ -229,23 +229,23 @@ pub struct VisualizationArgs {
 
 fn main() -> Result<()> {
     let mut args = AuroraArgs::parse();
-    let vis_args = &mut args.visualization_args;
+    let viz_args = &mut args.visualization_args;
 
-    if vis_args.viz {
-        if let Ok(metadata) = fs::metadata(&vis_args.viz_output_path) {
+    if viz_args.viz {
+        if let Ok(metadata) = fs::metadata(&viz_args.viz_output_path) {
             if metadata.is_dir() {
                 // TODO: real error
                 panic!(
                     "directory: {} already exists",
-                    vis_args.viz_output_path.to_str().unwrap()
+                    viz_args.viz_output_path.to_str().unwrap()
                 )
             }
         }
 
-        create_dir_all(&vis_args.viz_output_path)?;
-        vis_args.viz_output_path = vis_args.viz_output_path.canonicalize()?;
+        create_dir_all(&viz_args.viz_output_path)?;
+        viz_args.viz_output_path = viz_args.viz_output_path.canonicalize()?;
 
-        if let Some(path) = &vis_args.viz_reference_bed_path {
+        if let Some(path) = &viz_args.viz_reference_bed_path {
             let file = File::open(path).expect("failed to open viz reference bed file");
             let reader = BufReader::new(file);
 
@@ -277,7 +277,7 @@ fn main() -> Result<()> {
                     prev_start = start;
                 });
 
-            vis_args.viz_reference_bed_index = index;
+            viz_args.viz_reference_bed_index = index;
         }
     }
 
@@ -324,13 +324,13 @@ fn main() -> Result<()> {
         });
     }
 
-    if vis_args.viz || vis_args.assembly_viz {
+    if viz_args.viz || viz_args.assembly_viz {
         let error_msg = "failed to write to index.html";
-        let index_file = File::create(vis_args.viz_output_path.join("index.html")).unwrap();
+        let index_file = File::create(viz_args.viz_output_path.join("index.html")).unwrap();
         let mut index_writer = BufWriter::new(index_file);
 
-        if vis_args.viz {
-            vis_args
+        if viz_args.viz {
+            viz_args
                 .viz_constraints
                 .iter()
                 .enumerate()
@@ -361,7 +361,7 @@ fn main() -> Result<()> {
             )
             .expect(error_msg);
 
-            if vis_args.viz {
+            if viz_args.viz {
                 writeln!(
                     &mut index_writer,
                     "    <li><a href={}/index.html>Annotations</a></li>",
@@ -370,7 +370,7 @@ fn main() -> Result<()> {
                 .expect(error_msg);
             }
 
-            if vis_args.assembly_viz {
+            if viz_args.assembly_viz {
                 writeln!(
                     &mut index_writer,
                     "    <li><a href={}/assembly_index.html>Assemblies</a></li>",
