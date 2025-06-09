@@ -131,7 +131,8 @@ pub fn split_trace(
 
                 // now check if A happens to be properly contained in a gap of B
                 let a_in_b = stuff_b.gap_matrix_ranges.iter().any(|gap| {
-                    stuff_a.col_start + annot_args.fudge_distance >= gap.col_start - annot_args.fudge_distance
+                    stuff_a.col_start + annot_args.fudge_distance
+                        >= gap.col_start - annot_args.fudge_distance
                         && stuff_a.col_end - annot_args.fudge_distance
                             <= gap.col_end + annot_args.fudge_distance
                 });
@@ -244,7 +245,8 @@ pub fn split_trace(
                 }
                 // or if the gap is contained in ANY inactive column range
                 inactive_col_ranges.iter().any(|range| {
-                    assembly_gap.col_start >= range.col_start.saturating_sub(annot_args.fudge_distance)
+                    assembly_gap.col_start
+                        >= range.col_start.saturating_sub(annot_args.fudge_distance)
                         && assembly_gap.col_end <= range.col_end + annot_args.fudge_distance
                 })
             })

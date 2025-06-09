@@ -229,23 +229,23 @@ pub struct VisualizationArgs {
 
 fn main() -> Result<()> {
     let mut args = AuroraArgs::parse();
-    let vis_args = &mut args.visualization_args;
+    let viz_args = &mut args.visualization_args;
 
-    if vis_args.viz {
-        if let Ok(metadata) = fs::metadata(&vis_args.viz_output_path) {
+    if viz_args.viz {
+        if let Ok(metadata) = fs::metadata(&viz_args.viz_output_path) {
             if metadata.is_dir() {
                 // TODO: real error
                 panic!(
                     "directory: {} already exists",
-                    vis_args.viz_output_path.to_str().unwrap()
+                    viz_args.viz_output_path.to_str().unwrap()
                 )
             }
         }
 
-        create_dir_all(&vis_args.viz_output_path)?;
-        vis_args.viz_output_path = vis_args.viz_output_path.canonicalize()?;
+        create_dir_all(&viz_args.viz_output_path)?;
+        viz_args.viz_output_path = viz_args.viz_output_path.canonicalize()?;
 
-        if let Some(path) = &vis_args.viz_reference_bed_path {
+        if let Some(path) = &viz_args.viz_reference_bed_path {
             let file = File::open(path).expect("failed to open viz reference bed file");
             let reader = BufReader::new(file);
 
@@ -277,7 +277,7 @@ fn main() -> Result<()> {
                     prev_start = start;
                 });
 
-            vis_args.viz_reference_bed_index = index;
+            viz_args.viz_reference_bed_index = index;
         }
     }
 
@@ -324,40 +324,62 @@ fn main() -> Result<()> {
         });
     }
 
-    if vis_args.viz {
-        let index_file = File::create(vis_args.viz_output_path.join("index.html")).unwrap();
+    if viz_args.viz || viz_args.assembly_viz {
+        let error_msg = "failed to write to index.html";
+        let index_file = File::create(viz_args.viz_output_path.join("index.html")).unwrap();
         let mut index_writer = BufWriter::new(index_file);
 
-        vis_args
-            .viz_constraints
-            .iter()
-            .enumerate()
-            .for_each(|(idx, c)| {
-                writeln!(
-                    &mut index_writer,
-                    "<a href={}-{}-{}.html>slice {} | {} {}:{}</a><br>",
-                    c.target_name,
-                    c.target_start,
-                    c.target_end,
-                    idx,
-                    c.target_name,
-                    c.target_start,
-                    c.target_end,
-                )
-                .expect("failed to write to index.html");
-            });
+        if viz_args.viz {
+            viz_args
+                .viz_constraints
+                .iter()
+                .enumerate()
+                .for_each(|(idx, c)| {
+                    writeln!(
+                        &mut index_writer,
+                        "<a href={}-{}-{}.html>slice {} | {} {}:{}</a><br>",
+                        c.target_name,
+                        c.target_start,
+                        c.target_end,
+                        idx,
+                        c.target_name,
+                        c.target_start,
+                        c.target_end,
+                    )
+                    .expect(error_msg);
+                });
+        }
 
         proximity_groups.iter().enumerate().for_each(|(idx, g)| {
             writeln!(
                 &mut index_writer,
-                "<a href={}/index.html>region {} | {} {}:{}</a><br>",
-                idx,
+                "<h3>region {} | {} {}:{}</h3>\n<ul>",
                 idx,
                 alignment_data.target_name_map.get(g.target_id),
                 g.target_start,
                 g.target_end,
             )
-            .expect("failed to write to index.html");
+            .expect(error_msg);
+
+            if viz_args.viz {
+                writeln!(
+                    &mut index_writer,
+                    "    <li><a href={}/index.html>annotations</a></li>",
+                    idx,
+                )
+                .expect(error_msg);
+            }
+
+            if viz_args.assembly_viz {
+                writeln!(
+                    &mut index_writer,
+                    "    <li><a href={}/assembly_index.html>assemblies</a></li>",
+                    idx,
+                )
+                .expect(error_msg);
+            }
+
+            writeln!(&mut index_writer, "</ul>").expect(error_msg);
         });
     }
 

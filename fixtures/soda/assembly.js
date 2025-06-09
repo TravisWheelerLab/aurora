@@ -55,7 +55,7 @@ export function run(data) {
       soda.tooltip({
         chart: this,
         annotations: params.annotations,
-        text: (d) => `${d.a.conf.toFixed(4)}`,
+        text: (d) => `id: ${d.a.id}<br>conf: ${d.a.conf.toFixed(4)}`,
       });
     },
   });
@@ -64,7 +64,7 @@ export function run(data) {
     selector: "div.container",
     zoomable: true,
     resizable: true,
-    rowHeight: 10,
+    rowHeight: 20,
     draw(params) {
       this.addAxis();
 
@@ -77,20 +77,50 @@ export function run(data) {
         annotations: params.annotations,
       });
 
+      soda.dynamicText({
+        chart: this,
+        annotations: params.annotations,
+        text: (d) => [`a${d.a.id}`, "..."],
+        fillColor: (d) => {
+          let c = colors[parseInt(d.a.id) % colors.length];
+          let r = Math.pow(parseInt(c.substring(1, 3), 16) / 255, 1/2.2);
+          let g = Math.pow(parseInt(c.substring(3, 5), 16) / 255, 1/2.2);
+          let b = Math.pow(parseInt(c.substring(5, 7), 16) / 255, 1/2.2);
+          let brightness = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          return (brightness < 0.5)? "white": "black";
+        },
+        fontWeight: 700,
+        fontSize: 14,
+        y: (d) => {
+          return d.c.yScale(d.c.layout.row(d)) + 4;
+        }
+      });
+
       soda.hoverBehavior({
         annotations: params.annotations,
         mouseover: (s, d) => {
           let glyphs = soda.queryGlyphMap({ annotations: [d.a] });
-          glyphs.forEach((g) => g.style("stroke", "cyan"));
+          glyphs.forEach((g) => {
+            if(g.node().nodeName == "rect") g.style("stroke", "cyan");
+          });
         },
         mouseout: (s, d) => {
           let glyphs = soda.queryGlyphMap({ annotations: [d.a] });
-          glyphs.forEach((g) =>
-            g.style("stroke", colors[parseInt(d.a.id) % colors.length]),
-          );
+          glyphs.forEach((g) => {
+            if(g.node().nodeName == "rect") g.style("stroke", colors[parseInt(d.a.id) % colors.length]);
+          });
         },
       });
+
+      soda.tooltip({
+        chart: this,
+        annotations: params.annotations,
+        text: (d) => `id: ${d.a.id}<br>conf: ${d.a.conf.toFixed(4)}`,
+      });
     },
+    postRender(params) {
+      
+    }
   });
 
   let assemblyTargetConf = {
@@ -108,6 +138,11 @@ export function run(data) {
         selector: "target",
         annotations: params.annotations,
       });
+      soda.tooltip({
+        chart: this,
+        annotations: params.annotations,
+        text: (d) => `id: ${d.a.id}<br>conf: ${d.a.conf.toFixed(4)}`,
+      });
     },
   };
 
@@ -115,7 +150,7 @@ export function run(data) {
     selector: "div.container",
     zoomable: true,
     resizable: true,
-    rowHeight: 10,
+    rowHeight: 20,
     divOutline: "1px solid black",
     draw(params) {
       soda.rectangle({
@@ -125,6 +160,31 @@ export function run(data) {
         fillColor: (d) => colors[parseInt(d.a.id) % colors.length],
         selector: "consensus",
         annotations: params.annotations,
+      });
+
+      soda.dynamicText({
+        chart: this,
+        annotations: params.annotations,
+        text: (d) => [`Alignment ${d.a.id}`, `a${d.a.id}`, "..."],
+        fillColor: (d) => {
+          let c = colors[parseInt(d.a.id) % colors.length];
+          let r = Math.pow(parseInt(c.substring(1, 3), 16) / 255, 1/2.2);
+          let g = Math.pow(parseInt(c.substring(3, 5), 16) / 255, 1/2.2);
+          let b = Math.pow(parseInt(c.substring(5, 7), 16) / 255, 1/2.2);
+          let brightness = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          return (brightness < 0.5)? "white": "black";
+        },
+        fontWeight: 700,
+        fontSize: 14,
+        y: (d) => {
+          return d.c.yScale(d.c.layout.row(d)) + 4;
+        }
+      });
+
+      soda.tooltip({
+        chart: this,
+        annotations: params.annotations,
+        text: (d) => `id: ${d.a.id}<br>conf: ${d.a.conf.toFixed(4)}`,
       });
     },
   };

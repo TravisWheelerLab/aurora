@@ -1,11 +1,15 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{BufWriter, Write},
+};
 
 use itertools::Itertools;
 
 use crate::{
-    alignment::{Alignment, Strand, TandemRepeat},
+    alignment::{Alignment, AlignmentData, Strand, TandemRepeat},
     chunks::ProximityGroup,
-    viz::{write_soda_html, AssemblySodaData},
+    viz::AssemblySodaData,
     AnnotationArgs, AuroraArgs,
 };
 
@@ -421,6 +425,7 @@ impl<'a> AssemblyGroup<'a> {
         confidence_avg_by_id: &HashMap<usize, f64>,
         confidence_by_id: &HashMap<usize, Vec<f64>>,
         args: &AuroraArgs,
+        alignment_data: &AlignmentData,
     ) -> Self {
         let mut assemblies: Vec<Assembly> = vec![];
 
@@ -432,6 +437,9 @@ impl<'a> AssemblyGroup<'a> {
             .collect();
 
         query_ids.sort();
+        let mut query_files: Vec<String> = vec![];
+        let mut file_query_ids: Vec<usize> = vec![];
+        let mut file_strand: Vec<bool> = vec![];
 
         query_ids
             .iter()
@@ -503,37 +511,64 @@ impl<'a> AssemblyGroup<'a> {
 
                 if viz_args.assembly_viz {
                     if !fwd_ali.is_empty() {
+                        query_files.push(format!("{}-fwd.html", query_id));
+                        file_query_ids.push(*query_id);
+                        file_strand.push(true);
                         AssemblySodaData::new(
                             &fwd_assemblies,
-                            &query_ids,
                             fwd_links,
                             confidence_avg_by_id,
+                            alignment_data,
                         )
-                        .write(
-                            viz_args
-                                .viz_output_path
-                                .join(format!("{}-fwd.html", query_id)),
-                        );
+                        .write(viz_args.viz_output_path.join(query_files.last().unwrap()));
                     }
 
                     if !rev_ali.is_empty() {
+                        query_files.push(format!("{}-rev.html", query_id));
+                        file_query_ids.push(*query_id);
+                        file_strand.push(false);
                         AssemblySodaData::new(
                             &rev_assemblies,
-                            &query_ids,
                             rev_links,
                             confidence_avg_by_id,
+                            alignment_data,
                         )
-                        .write(
-                            viz_args
-                                .viz_output_path
-                                .join(format!("{}-rev.html", query_id)),
-                        );
+                        .write(viz_args.viz_output_path.join(query_files.last().unwrap()));
                     }
                 }
 
                 assemblies.append(&mut fwd_assemblies);
                 assemblies.append(&mut rev_assemblies);
             });
+
+        if args.visualization_args.assembly_viz {
+            let error_msg = "failed to write to assembly index file";
+            let viz_args = &args.visualization_args;
+
+            let asm_index_file =
+                File::create(viz_args.viz_output_path.join("assembly_index.html")).unwrap();
+            let mut asm_index_writer = BufWriter::new(asm_index_file);
+
+            writeln!(&mut asm_index_writer, "<!doctype html>\n<html>\n<body>\n<ul>\n<a href=\"../index.html\">Back</a><br>\n<h1>Assemblies</h1>").expect(error_msg);
+
+            file_query_ids
+                .iter()
+                .zip(query_files)
+                .zip(file_strand)
+                .for_each(|((&q_id, file_name), is_fwd)| {
+                    writeln!(
+                        &mut asm_index_writer,
+                        "<li><a href=\"{}\">{} {} (id {})</a></li>",
+                        file_name,
+                        alignment_data.query_name_map.get(q_id),
+                        if is_fwd { "Forward" } else { "Reverse" },
+                        q_id
+                    )
+                    .expect(error_msg);
+                });
+
+            writeln!(&mut asm_index_writer, "</ul>\n</body>\n</html>").expect(error_msg);
+        }
 
         assemblies.sort_by_key(|a| a.target_start);
 

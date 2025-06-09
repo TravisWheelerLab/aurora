@@ -291,7 +291,7 @@ pub fn windowed_score(
     substitution_matrices: &VecMap<SubstitutionMatrix>,
     background: &impl BackgroundFrequencies,
     window_size: usize,
-    skip_state_score: f64
+    skip_state_score: f64,
 ) -> anyhow::Result<()> {
     let target_start = matrix.target_start();
 
