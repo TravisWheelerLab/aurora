@@ -46,11 +46,7 @@ pub fn viterbi_collapsed(
         // to get the skip state score, we only have to
         // compare the cost of looping vs the cost of
         // jumping from the best score in the previous col
-        //
-        // *NOTE: the skip loop score is not used in this version
-        //        of viterbi because the penalty has already been
-        //        added to the confidence values
-        let skip_loop_score = viterbi_matrix.get_skip(col_from_idx) + score_params.query_loop_score;
+        let skip_loop_score = viterbi_matrix.get_skip(col_from_idx) + score_params.skip_loop_score;
         let query_to_skip_score = max_score_in_col_from + score_params.query_to_skip_score;
 
         if skip_loop_score > query_to_skip_score {
@@ -106,7 +102,9 @@ pub fn viterbi_collapsed(
                             .logical_to_sparse_row_idx(logical_row_to_idx, col_from_idx);
                         (
                             viterbi_matrix.get_sparse(sparse_row_from_idx, col_from_idx)
-                                + score_params.query_loop_score,
+                                // NOTE: we're not adding the query loop score 
+                                // here since it's currently always ZERO
+                                + score_params.skip_loop_score * row_is_ghost as usize as f64,
                             sparse_row_from_idx,
                         )
                     } else {
