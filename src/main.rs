@@ -364,7 +364,7 @@ fn main() -> Result<()> {
             if viz_args.viz {
                 writeln!(
                     &mut index_writer,
-                    "    <li><a href={}/index.html>Annotations</a></li>",
+                    "    <li><a href={}/index.html>annotations</a></li>",
                     idx,
                 )
                 .expect(error_msg);
@@ -373,7 +373,7 @@ fn main() -> Result<()> {
             if viz_args.assembly_viz {
                 writeln!(
                     &mut index_writer,
-                    "    <li><a href={}/assembly_index.html>Assemblies</a></li>",
+                    "    <li><a href={}/assembly_index.html>assemblies</a></li>",
                     idx,
                 )
                 .expect(error_msg);

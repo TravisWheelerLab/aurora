@@ -80,7 +80,7 @@ export function run(data) {
       soda.dynamicText({
         chart: this,
         annotations: params.annotations,
-        text: (d) => [`Alignment ${d.a.id}`, `a${d.a.id}`, "..."],
+        text: (d) => [`a${d.a.id}`, "..."],
         fillColor: (d) => {
           let c = colors[parseInt(d.a.id) % colors.length];
           let r = Math.pow(parseInt(c.substring(1, 3), 16) / 255, 1/2.2);
