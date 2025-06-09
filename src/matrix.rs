@@ -607,13 +607,6 @@ where
     pub fn print(&self) {
         (0..self.num_rows()).for_each(|row_idx| {
             (0..self.num_cols()).for_each(|col_idx| {
-                if self.def.target_start + col_idx < 42_890_000 {
-                    return;
-                }
-                if self.def.target_start + col_idx > 42_891_000 {
-                    return;
-                }
-                //
                 if self.contains_cell(row_idx, col_idx) {
                     print!("{:8.3} ", self.get(row_idx, col_idx));
                 } else {
