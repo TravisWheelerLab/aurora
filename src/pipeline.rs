@@ -6,7 +6,7 @@ use crate::{
     alignment::AlignmentData,
     annotation::Annotation,
     chunks::ProximityGroup,
-    collapse::AssemblyGroup,
+    collapse::{AssemblyGraph, AssemblyGroup},
     confidence::confidence,
     matrix::{Matrix, MatrixDef},
     score_params::{approximate_ideal_skip_state_score, ScoreParams},
@@ -79,6 +79,8 @@ pub fn run_pipeline(
     confidence(&mut confidence_matrix);
 
     let (confidence_avg_by_id, confidence_by_id) = windowed_confidence(&mut confidence_matrix);
+
+    let assembly_graph = AssemblyGraph::new(&proximity_group, &args);
 
     // convert the ProximityGroup into an AssemblyGroup
     let assembly_group = AssemblyGroup::new(

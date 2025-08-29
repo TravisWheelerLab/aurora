@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::File,
     io::{BufWriter, Write},
 };
@@ -417,6 +417,73 @@ pub struct AssemblyGroup<'a> {
     pub target_end: usize,
     pub assemblies: Vec<Assembly<'a>>,
     pub tandem_repeats: &'a [TandemRepeat],
+}
+
+/// Represents graph of compatable alignments on the genome.
+/// For each alignment, stores all alignments from the same query in front of it.
+pub struct AssemblyGraph<'a> {
+    pub fwd_map: HashMap<&'a Alignment, HashSet<&'a Alignment>>,
+    pub rev_map: HashMap<&'a Alignment, HashSet<&'a Alignment>>,
+}
+
+impl<'a> AssemblyGraph<'a> {
+    pub fn new(group: &ProximityGroup<'a>, args: &AuroraArgs) -> Self {
+        let mut query_ids: Vec<usize> = group
+            .alignments
+            .iter()
+            .map(|a| a.query_id)
+            .unique()
+            .collect();
+
+        query_ids.sort();
+
+        let mut fwd_map: HashMap<&'a Alignment, HashSet<&'a Alignment>> = HashMap::new();
+        let mut rev_map: HashMap<&'a Alignment, HashSet<&'a Alignment>> = HashMap::new();
+
+        query_ids
+            .iter()
+            // grab the alignments for this ID
+            .map(|id| (id, group.alignments.iter().filter(|a| a.query_id == *id)))
+            .for_each(|(query_id, alignments)| {
+                // split the forward and reverse stranded alignments
+                let (fwd_ali, rev_ali): (Vec<&Alignment>, Vec<&Alignment>) = alignments
+                    .into_iter()
+                    .partition(|a| a.strand == Strand::Forward);
+
+                let fwd_graph = assembly_graph(&fwd_ali, &args.annotation_args);
+                let rev_graph = assembly_graph(&rev_ali, &args.annotation_args);
+
+                // Extend graph of forward (on query sequence) alignments, we filter to only alignments to the right of each alignment...
+                fwd_map.extend(fwd_graph.into_iter().map(|(al, edges)| {
+                    return (
+                        al,
+                        edges
+                            .iter()
+                            .filter(|e| e.direction == Direction::Right)
+                            .map(|e| e.ali_to)
+                            .collect(),
+                    );
+                }));
+                rev_map.extend(rev_graph.into_iter().map(|(al, edges)| {
+                    return (
+                        al,
+                        edges
+                            .iter()
+                            .filter(|e| e.direction == Direction::Right)
+                            .map(|e| e.ali_to)
+                            .collect(),
+                    );
+                }));
+            });
+
+        return Self { fwd_map, rev_map };
+    }
+
+    /// Check if two alignments are compatable, or could possibly be connected with an insertion in the middle.
+    pub fn compatable(&self, alignment: &Alignment, alignment_other: &Alignment) -> bool {
+        return self.fwd_map[alignment].contains(alignment_other)
+            || self.rev_map[alignment].contains(alignment_other);
+    }
 }
 
 impl<'a> AssemblyGroup<'a> {
