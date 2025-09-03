@@ -22,7 +22,7 @@ use crate::{
         SPACE_UTF8,
     },
     annotation::Annotation,
-    collapse::{Assembly, AssemblyGroup},
+    chunks::ProximityGroup,
     matrix::Matrix,
     split::SplitResults,
     viterbi::TraceSegment,
@@ -126,7 +126,7 @@ impl Alignment {
 }
 
 pub struct AdjudicationSodaData<'a> {
-    group: &'a AssemblyGroup<'a>,
+    group: &'a ProximityGroup<'a>,
     confidence_matrix: &'a Matrix<'a, f64>,
     alignment_data: &'a AlignmentData,
     target_seq: &'a [u8],
@@ -141,7 +141,7 @@ impl<'a> AdjudicationSodaData<'a> {
     const JS: &'static str = include_str!("../../fixtures/soda/annotations.js");
 
     pub fn new(
-        group: &'a AssemblyGroup,
+        group: &'a ProximityGroup,
         confidence_matrix: &'a Matrix<'a, f64>,
         alignment_data: &'a AlignmentData,
         target_seq: &'a [u8],
@@ -183,7 +183,6 @@ impl<'a> AdjudicationSodaData<'a> {
             "auroraAnn": self.aurora_ann(),
             "referenceAnn": self.reference_ann(),
             "alignmentStrings": self.alignment_strings(),
-            "assemblyStrings": self.assembly_strings(),
             "tandemRepeatStrings": self.tandem_repeat_strings(),
             "conclusiveTraceStrings": self.conclusive_trace_strings(),
             "ambiguousTraceStrings": self.ambiguous_trace_strings(),
@@ -232,7 +231,7 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 
     fn num_queries(&self) -> usize {
-        self.group.assemblies.len()
+        self.group.alignments.len()
     }
 
     fn target_seq(&self) -> String {
@@ -319,7 +318,7 @@ impl<'a> AdjudicationSodaData<'a> {
 
     fn alignment_strings(&self) -> Vec<String> {
         self.group
-            .assemblies
+            .alignments
             .iter()
             .enumerate()
             // constraint filter
@@ -327,32 +326,10 @@ impl<'a> AdjudicationSodaData<'a> {
                 a.target_start <= self.constrained_target_end()
                     && a.target_end >= self.constrained_target_start()
             })
-            .flat_map(|(idx, assembly)| {
-                assembly.alignments.iter().map(move |a| {
-                    a.soda_string(idx + 1, self.alignment_data.query_name_map.get(a.query_id))
-                })
-            })
-            .collect()
-    }
-
-    fn assembly_strings(&self) -> Vec<String> {
-        self.group
-            .assemblies
-            .iter()
-            .enumerate()
-            // constraint filter
-            .filter(|(_, a)| {
-                a.target_start <= self.constrained_target_end()
-                    && a.target_end >= self.constrained_target_start()
-            })
-            .map(|(assembly_idx, assembly)| {
-                format!(
-                    "{},{},{},{},{}",
-                    assembly.target_start,
-                    assembly.target_end,
-                    assembly.query_id,
-                    assembly.alignments.len(),
-                    assembly_idx + 1,
+            .map(|(idx, alignment)| {
+                alignment.soda_string(
+                    idx + 1,
+                    self.alignment_data.query_name_map.get(alignment.query_id),
                 )
             })
             .collect()
@@ -375,7 +352,7 @@ impl<'a> AdjudicationSodaData<'a> {
                     repeat.target_end,
                     repeat.consensus_pattern,
                     repeat.period,
-                    repeat_idx + self.group.assemblies.len() + 1,
+                    repeat_idx + self.group.alignments.len() + 1,
                 )
             })
             .collect()
@@ -484,59 +461,46 @@ impl<'a> AdjudicationSodaData<'a> {
                     })
                     .flat_map(|(seg_target_start, seg_target_end)| {
                         self.group
-                            .assemblies
+                            .alignments
                             .iter()
                             .enumerate()
                             // constraint filter
-                            .filter(|(_, a)| {
+                            .filter(move |(_, a)| {
                                 a.target_start <= self.constrained_target_end()
                                     && a.target_end >= self.constrained_target_start()
+                                    && a.target_start < seg_target_end
+                                    && a.target_end > seg_target_start
                             })
                             // get the row idx of the assembly
                             .map(|(i, a)| (i + 1, a))
-                            .flat_map(move |(row_idx, assembly)| {
-                                assembly
-                                    .alignments
-                                    .iter()
-                                    .filter(move |ali| {
-                                        ali.target_start < seg_target_end
-                                            && ali.target_end > seg_target_start
-                                    })
-                                    .map(move |ali| {
-                                        (
-                                            row_idx,
-                                            ali,
-                                            seg_target_start.max(ali.target_start)
-                                                - self.target_start(),
-                                            seg_target_end.min(ali.target_end)
-                                                - self.target_start(),
-                                        )
-                                    })
-                                    .map(move |(row_idx, ali, col_start, col_end)| {
-                                        let mut conf = 0.0;
-                                        (col_start..=col_end).for_each(|col_idx| {
-                                            conf += self.confidence_matrix.get(row_idx, col_idx)
-                                        });
-                                        conf /= (col_end - col_start + 1) as f64;
-                                        format!(
-                                            "{},{},{},{:3.2},{},{},{},{},{},{}",
-                                            seg_target_start.max(ali.target_start),
-                                            seg_target_end.min(ali.target_end),
-                                            row_idx,
-                                            conf,
-                                            self.confidence_matrix
-                                                .consensus_position(row_idx, col_start),
-                                            self.confidence_matrix
-                                                .consensus_position(row_idx, col_end),
-                                            self.alignment_data
-                                                .query_lengths
-                                                .get(&ali.query_id)
-                                                .unwrap(),
-                                            self.confidence_matrix.strand_of_row(row_idx),
-                                            self.alignment_data.query_name_map.get(ali.query_id),
-                                            ali.id,
-                                        )
-                                    })
+                            .map(move |(row_idx, ali)| {
+                                let col_start =
+                                    seg_target_start.max(ali.target_start) - self.target_start();
+                                let col_end =
+                                    seg_target_end.min(ali.target_end) - self.target_start();
+
+                                let mut conf = 0.0;
+                                (col_start..=col_end).for_each(|col_idx| {
+                                    conf += self.confidence_matrix.get(row_idx, col_idx)
+                                });
+                                conf /= (col_end - col_start + 1) as f64;
+                                format!(
+                                    "{},{},{},{:3.2},{},{},{},{},{},{}",
+                                    seg_target_start.max(ali.target_start),
+                                    seg_target_end.min(ali.target_end),
+                                    row_idx,
+                                    conf,
+                                    self.confidence_matrix
+                                        .consensus_position(row_idx, col_start),
+                                    self.confidence_matrix.consensus_position(row_idx, col_end),
+                                    self.alignment_data
+                                        .query_lengths
+                                        .get(&ali.query_id)
+                                        .unwrap(),
+                                    self.confidence_matrix.strand_of_row(row_idx),
+                                    self.alignment_data.query_name_map.get(ali.query_id),
+                                    ali.id,
+                                )
                             })
                     })
                     .collect_vec()
@@ -571,58 +535,48 @@ impl AssemblySodaData {
     const JS: &'static str = include_str!("../../fixtures/soda/assembly.js");
 
     pub fn new(
-        assemblies: &[Assembly],
+        alignments: &[&Alignment],
         links: Vec<String>,
         confidence: &HashMap<usize, f64>,
         alignment_data: &AlignmentData,
     ) -> Self {
-        let query_id = assemblies[0].query_id;
-        let strand = assemblies[0].strand;
+        let query_id = alignments[0].query_id;
+        let strand = alignments[0].strand;
         let query_name = alignment_data.query_name_map.get(query_id).clone();
 
-        let target_assembly_strings = assemblies
+        let target_assembly_strings = alignments
             .iter()
-            .map(|a| {
-                a.alignments
-                    .iter()
-                    .map(|ali| {
-                        format!(
-                            "{},{},{},{}",
-                            ali.id,
-                            ali.target_start,
-                            ali.target_end,
-                            confidence.get(&ali.id).unwrap(),
-                        )
-                    })
-                    .collect_vec()
+            .map(|ali| {
+                return vec![format!(
+                    "{},{},{},{}",
+                    ali.id,
+                    ali.target_start,
+                    ali.target_end,
+                    confidence.get(&ali.id).unwrap(),
+                )];
             })
             .collect_vec();
 
-        let consensus_assembly_strings = assemblies
+        let consensus_assembly_strings = alignments
             .iter()
-            .map(|a| {
-                a.alignments
-                    .iter()
-                    .map(|ali| match strand {
-                        Strand::Forward => format!(
-                            "{},{},{},{}",
-                            ali.id,
-                            ali.query_start,
-                            ali.query_end,
-                            confidence.get(&ali.id).unwrap(),
-                        ),
+            .map(|ali| match strand {
+                Strand::Forward => vec![format!(
+                    "{},{},{},{}",
+                    ali.id,
+                    ali.query_start,
+                    ali.query_end,
+                    confidence.get(&ali.id).unwrap(),
+                )],
 
-                        Strand::Reverse => format!(
-                            "{},{},{},{}",
-                            ali.id,
-                            ali.query_end,
-                            ali.query_start,
-                            confidence.get(&ali.id).unwrap(),
-                        ),
+                Strand::Reverse => vec![format!(
+                    "{},{},{},{}",
+                    ali.id,
+                    ali.query_end,
+                    ali.query_start,
+                    confidence.get(&ali.id).unwrap(),
+                )],
 
-                        Strand::Unset => panic!(),
-                    })
-                    .collect_vec()
+                Strand::Unset => panic!(),
             })
             .collect_vec();
 
@@ -640,17 +594,17 @@ impl AssemblySodaData {
             _ => panic!(),
         };
 
-        let target_start = assemblies.iter().map(|a| a.target_start).min().unwrap();
-        let target_end = assemblies.iter().map(|a| a.target_end).max().unwrap();
+        let target_start = alignments.iter().map(|a| a.target_start).min().unwrap();
+        let target_end = alignments.iter().map(|a| a.target_end).max().unwrap();
 
         let (consensus_start, consensus_end) = match strand {
             Strand::Forward => (
-                assemblies.iter().map(|a| a.query_start).min().unwrap(),
-                assemblies.iter().map(|a| a.query_end).max().unwrap(),
+                alignments.iter().map(|a| a.query_start).min().unwrap(),
+                alignments.iter().map(|a| a.query_end).max().unwrap(),
             ),
             Strand::Reverse => (
-                assemblies.iter().map(|a| a.query_end).min().unwrap(),
-                assemblies.iter().map(|a| a.query_start).max().unwrap(),
+                alignments.iter().map(|a| a.query_end).min().unwrap(),
+                alignments.iter().map(|a| a.query_start).max().unwrap(),
             ),
 
             Strand::Unset => panic!(),

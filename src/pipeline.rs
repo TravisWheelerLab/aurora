@@ -6,11 +6,10 @@ use crate::{
     alignment::AlignmentData,
     annotation::Annotation,
     chunks::ProximityGroup,
-    collapse::{AssemblyGraph, AssemblyGroup},
+    collapse::AssemblyGraph,
     confidence::confidence,
     matrix::{Matrix, MatrixDef},
     score_params::{approximate_ideal_skip_state_score, ScoreParams},
-    split::split_trace,
     support::windowed_confidence,
     viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment},
     viz::AdjudicationSodaData,
@@ -77,101 +76,49 @@ pub fn run_pipeline(
     .unwrap();
 
     confidence(&mut confidence_matrix);
-
-    let (confidence_avg_by_id, confidence_by_id) = windowed_confidence(&mut confidence_matrix);
-
-    let assembly_graph = AssemblyGraph::new(&proximity_group, &args);
-
-    // convert the ProximityGroup into an AssemblyGroup
-    let assembly_group = AssemblyGroup::new(
-        proximity_group,
+    let (confidence_avg_by_id, _confidence_by_id) = windowed_confidence(&mut confidence_matrix);
+    let _assembly_graph = AssemblyGraph::new(
+        &proximity_group,
         &confidence_avg_by_id,
-        &confidence_by_id,
         &args,
         alignment_data,
     );
 
-    // initialize the collpased DP matrices
-    let collapsed_matrix_def = MatrixDef::from_assembly_group(&assembly_group);
-
-    let mut collapsed_confidence_matrix = Matrix::<f64>::new(&collapsed_matrix_def);
-    let mut viterbi_matrix = Matrix::<f64>::new(&collapsed_matrix_def);
-    let mut sources_matrix = Matrix::<usize>::new(&collapsed_matrix_def);
-
-    collapsed_confidence_matrix.copy_fill(&confidence_matrix);
+    // let mut collapsed_confidence_matrix = Matrix::<f64>::new(&collapsed_matrix_def);
+    let mut viterbi_matrix = Matrix::<f64>::new(&matrix_def);
+    let mut sources_matrix = Matrix::<usize>::new(&matrix_def);
 
     // the initial active cols just removes the dead space between alignments
-    let mut active_cols = collapsed_confidence_matrix.initial_active_cols();
-    let mut trace_ambiguous: Vec<Vec<TraceSegment>> = vec![];
+    let active_cols = confidence_matrix.initial_active_cols();
     let mut trace_conclusive: Vec<Vec<TraceSegment>> = vec![];
 
     // if we're going to produce visualizations, this will
     // keep track of all of the data needed to do so
     let mut soda_data = AdjudicationSodaData::new(
-        &assembly_group,
-        &collapsed_confidence_matrix,
+        &proximity_group,
+        &confidence_matrix,
         alignment_data,
         &target_seq,
         &args,
     );
 
-    while !active_cols.is_empty() {
-        viterbi_collapsed(
-            &collapsed_confidence_matrix,
-            &mut viterbi_matrix,
-            &mut sources_matrix,
-            &active_cols,
-            &score_params,
-        );
+    viterbi_collapsed(
+        &confidence_matrix,
+        &mut viterbi_matrix,
+        &mut sources_matrix,
+        &active_cols,
+        &score_params,
+    );
 
-        let trace = traceback(
-            &viterbi_matrix,
-            &collapsed_confidence_matrix,
-            &sources_matrix,
-            &active_cols,
-        );
+    let trace = traceback(
+        &viterbi_matrix,
+        &confidence_matrix,
+        &sources_matrix,
+        &active_cols,
+    );
 
-        // we should always have one trace step for every active column
-        debug_assert_eq!(trace.len(), active_cols.len());
-
-        let trace_segments = trace_segments(&trace);
-
-        let split_results = split_trace(
-            trace_segments,
-            &assembly_group,
-            &active_cols,
-            &confidence_avg_by_id,
-            &args,
-        );
-
-        // everything that was ambiguous during trace
-        // splitting remains as an active column
-        let new_active_cols = split_results
-            .trace_ambiguous
-            .iter()
-            .flat_map(|s| s.col_start..=s.col_end)
-            .collect_vec();
-
-        // TODO: refactor this stuff, it's a remnant of the previous approach
-        trace_conclusive.push(split_results.trace_conclusive.clone());
-        trace_ambiguous.push(split_results.trace_ambiguous.clone());
-
-        // we should absolutely never end up increasing our column count
-        debug_assert!(new_active_cols.len() <= active_cols.len());
-
-        if vis_args.viz {
-            soda_data.add(split_results);
-        }
-
-        if new_active_cols.len() == active_cols.len() {
-            break;
-        }
-
-        active_cols = new_active_cols;
-    }
-
-    let final_ambigous = trace_ambiguous.last().expect("no ambiguous trace").to_vec();
-    trace_conclusive.push(final_ambigous);
+    let trace_segments = trace_segments(&trace);
+    trace_conclusive.push(trace_segments);
 
     // TODO: function for this
     let mut annotations: Vec<Annotation> = trace_conclusive
@@ -192,10 +139,11 @@ pub fn run_pipeline(
                         // 0 is the skip state row
                         // then 1..=(num_assemblies) are alignment rows
                         // so anything >(num_assemblies) is a tandem repeat
-                        r if r > assembly_group.assemblies.len() => {
+                        r if r > proximity_group.alignments.len() => {
                             //
-                            let tandem_repeat_idx = s.row_idx - assembly_group.assemblies.len() - 1;
-                            let repeat = &assembly_group.tandem_repeats[tandem_repeat_idx];
+                            let tandem_repeat_idx =
+                                s.row_idx - proximity_group.alignments.len() - 1;
+                            let repeat = &proximity_group.tandem_repeats[tandem_repeat_idx];
                             format!(
                                 "({}:{})#tandem repeat",
                                 repeat.period, repeat.consensus_pattern,
@@ -207,7 +155,7 @@ pub fn run_pipeline(
                     query_end: viterbi_matrix.consensus_position(s.row_idx, s.col_end),
                     strand: viterbi_matrix.strand_of_row(s.row_idx),
                     confidence: (s.col_start..=s.col_end)
-                        .map(|col_idx| collapsed_confidence_matrix.get(s.row_idx, col_idx))
+                        .map(|col_idx| confidence_matrix.get(s.row_idx, col_idx))
                         .sum::<f64>()
                         / (s.col_end - s.col_start + 1) as f64,
                     join_id: s.row_idx,
