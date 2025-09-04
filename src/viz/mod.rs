@@ -5,11 +5,7 @@ use bed::*;
 use block::*;
 
 use std::{
-    collections::HashMap,
-    fs::File,
-    io::{BufRead, BufReader},
-    num::ParseIntError,
-    path::Path,
+    collections::HashMap, fmt::format, fs::File, io::{BufRead, BufReader}, num::ParseIntError, path::Path
 };
 
 use itertools::Itertools;
@@ -180,6 +176,7 @@ impl<'a> AdjudicationSodaData<'a> {
             "targetEnd": self.constrained_target_end(),
             "targetSeq": self.target_seq(),
             "numQueries": self.num_queries(),
+            "assemblyStrings": self.assembly_strings(),
             "auroraAnn": self.aurora_ann(),
             "referenceAnn": self.reference_ann(),
             "alignmentStrings": self.alignment_strings(),
@@ -204,6 +201,19 @@ impl<'a> AdjudicationSodaData<'a> {
         let mut file = std::fs::File::create(path).expect("failed to create file");
 
         std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
+    }
+
+    fn assembly_strings(&self) -> Vec<String> {
+        return self.group.alignments.iter().enumerate().map(|(idx, ali)| {
+            format!(
+                "{},{},{},{},{}",
+                ali.target_start,
+                ali.target_end,
+                ali.query_id,
+                1,
+                idx + 1
+            )
+        }).collect();
     }
 
     pub fn add(&mut self, results: SplitResults) {
