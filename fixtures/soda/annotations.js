@@ -183,7 +183,7 @@ function run(data) {
 
       traceSelectionWidget.append(radioDiv);
     }
-    document.querySelector(`#traceButton0`).checked = true;
+    //document.querySelector(`#traceButton0`).checked = true;
 
     inputs.set("trace", traceSelectionWidget);
 

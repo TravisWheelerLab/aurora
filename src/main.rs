@@ -7,7 +7,6 @@ mod confidence;
 mod matrix;
 mod pipeline;
 mod score_params;
-mod split;
 mod substitution_matrix;
 mod support;
 mod util;

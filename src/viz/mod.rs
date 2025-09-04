@@ -5,7 +5,11 @@ use bed::*;
 use block::*;
 
 use std::{
-    collections::HashMap, fmt::format, fs::File, io::{BufRead, BufReader}, num::ParseIntError, path::Path
+    collections::HashMap,
+    fs::File,
+    io::{BufRead, BufReader},
+    num::ParseIntError,
+    path::Path,
 };
 
 use itertools::Itertools;
@@ -20,7 +24,6 @@ use crate::{
     annotation::Annotation,
     chunks::ProximityGroup,
     matrix::Matrix,
-    split::SplitResults,
     viterbi::TraceSegment,
     AuroraArgs,
 };
@@ -127,7 +130,7 @@ pub struct AdjudicationSodaData<'a> {
     alignment_data: &'a AlignmentData,
     target_seq: &'a [u8],
     annotations: Vec<Annotation>,
-    split_results: Vec<SplitResults>,
+    trace: &'a Vec<TraceSegment>,
     maybe_constraint: Option<&'a VizConstraint>,
     args: &'a AuroraArgs,
 }
@@ -141,6 +144,7 @@ impl<'a> AdjudicationSodaData<'a> {
         confidence_matrix: &'a Matrix<'a, f64>,
         alignment_data: &'a AlignmentData,
         target_seq: &'a [u8],
+        trace: &'a Vec<TraceSegment>,
         args: &'a AuroraArgs,
     ) -> Self {
         Self {
@@ -149,7 +153,7 @@ impl<'a> AdjudicationSodaData<'a> {
             alignment_data,
             target_seq,
             annotations: vec![],
-            split_results: vec![],
+            trace: trace,
             maybe_constraint: None,
             args,
         }
@@ -204,20 +208,22 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 
     fn assembly_strings(&self) -> Vec<String> {
-        return self.group.alignments.iter().enumerate().map(|(idx, ali)| {
-            format!(
-                "{},{},{},{},{}",
-                ali.target_start,
-                ali.target_end,
-                ali.query_id,
-                1,
-                idx + 1
-            )
-        }).collect();
-    }
-
-    pub fn add(&mut self, results: SplitResults) {
-        self.split_results.push(results);
+        return self
+            .group
+            .alignments
+            .iter()
+            .enumerate()
+            .map(|(idx, ali)| {
+                format!(
+                    "{},{},{},{},{}",
+                    ali.target_start,
+                    ali.target_end,
+                    ali.query_id,
+                    1,
+                    idx + 1
+                )
+            })
+            .collect();
     }
 
     pub fn set_annotations(&mut self, annotations: Vec<Annotation>) {
@@ -382,140 +388,117 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 
     fn conclusive_trace_strings(&self) -> Vec<String> {
-        self.split_results
+        vec![self
+            .trace
             .iter()
-            .map(|r| {
-                r.trace_conclusive
-                    .iter()
-                    // constraint filter
-                    .filter(|s| {
-                        s.col_start + self.target_start() <= self.constrained_target_end()
-                            && s.col_end + self.target_start() >= self.constrained_target_start()
-                    })
-                    .map(|seg| self.trace_string(seg))
-                    .join("|")
+            // constraint filter
+            .filter(|s| {
+                s.col_start + self.target_start() <= self.constrained_target_end()
+                    && s.col_end + self.target_start() >= self.constrained_target_start()
             })
-            .collect()
+            .map(|seg| self.trace_string(seg))
+            .join("|")]
     }
 
     fn ambiguous_trace_strings(&self) -> Vec<String> {
-        self.split_results
-            .iter()
-            .map(|r| {
-                r.trace_ambiguous
-                    .iter()
-                    // constraint filter
-                    .filter(|s| {
-                        s.col_start + self.target_start() <= self.constrained_target_end()
-                            && s.col_end + self.target_start() >= self.constrained_target_start()
-                    })
-                    .map(|seg| self.trace_string(seg))
-                    .join("|")
-            })
-            .collect()
+        return vec![];
     }
 
     fn resolved_assembly_rows(&self) -> Vec<Vec<usize>> {
-        self.split_results
-            .iter()
-            .map(|r| r.resolved_assembly_rows.clone())
-            .collect()
+        return vec![self.confidence_matrix.initial_active_cols()];
     }
 
     fn unresolved_assembly_rows(&self) -> Vec<Vec<usize>> {
-        self.split_results
-            .iter()
-            .map(|r| r.unresolved_assembly_rows.clone())
-            .collect()
+        return vec![vec![]];
     }
 
     fn competed_assembly_rows(&self) -> Vec<Vec<usize>> {
-        self.split_results
-            .iter()
-            .map(|r| r.competed_assembly_rows.clone())
-            .collect()
+        return vec![vec![]];
     }
 
     fn inactive_segment_strings(&self) -> Vec<Vec<String>> {
-        self.split_results
+        let active_cols = self.confidence_matrix.initial_active_cols();
+        let mut inactive_col_ranges: Vec<(usize, usize)> = vec![];
+        active_cols
             .iter()
-            .map(|r| {
-                r.inactive_col_ranges
-                    .iter()
-                    .map(|s| {
-                        format!(
-                            "{},{}",
-                            s.col_start + self.target_start(),
-                            s.col_end + self.target_start()
-                        )
-                    })
-                    .collect_vec()
+            .zip(active_cols.iter().skip(1))
+            .for_each(|(&a, &b)| {
+                if b - 1 != a {
+                    inactive_col_ranges.push((a + 1, b - 1));
+                }
+            });
+
+        return vec![inactive_col_ranges
+            .iter()
+            .map(|(start, end)| {
+                format!(
+                    "{},{}",
+                    start + self.target_start(),
+                    end + self.target_start()
+                )
             })
-            .collect()
+            .collect_vec()];
     }
 
     fn confidence_segment_strings(&self) -> Vec<Vec<String>> {
-        self.split_results
+        let conf_strings = self
+            .trace
             .iter()
-            .map(|r| {
-                r.trace_ambiguous
+            // map each trace segment to
+            // target start & end coordinates
+            .map(|seg| {
+                (
+                    seg.col_start + self.target_start(),
+                    seg.col_end + self.target_start(),
+                )
+            })
+            .flat_map(|(seg_target_start, seg_target_end)| {
+                self.group
+                    .alignments
                     .iter()
-                    .chain(r.trace_conclusive.iter())
-                    // map each trace segment to
-                    // target start & end coordinates
-                    .map(|seg| {
-                        (
-                            seg.col_start + self.target_start(),
-                            seg.col_end + self.target_start(),
+                    .enumerate()
+                    // constraint filter
+                    .filter(move |(_, a)| {
+                        a.target_start <= self.constrained_target_end()
+                            && a.target_end >= self.constrained_target_start()
+                            && a.target_start < seg_target_end
+                            && a.target_end > seg_target_start
+                    })
+                    .inspect(|(_, _ali)| println!("Passed"))
+                    // get the row idx of the assembly
+                    .map(|(i, a)| (i + 1, a))
+                    .map(move |(row_idx, ali)| {
+                        let col_start =
+                            seg_target_start.max(ali.target_start) - self.target_start();
+                        let col_end = seg_target_end.min(ali.target_end) - self.target_start();
+
+                        let mut conf = 0.0;
+                        (col_start..=col_end).for_each(|col_idx| {
+                            conf += self.confidence_matrix.get(row_idx, col_idx)
+                        });
+                        conf /= (col_end - col_start + 1) as f64;
+                        format!(
+                            "{},{},{},{:3.2},{},{},{},{},{},{}",
+                            seg_target_start.max(ali.target_start),
+                            seg_target_end.min(ali.target_end),
+                            row_idx,
+                            conf,
+                            self.confidence_matrix
+                                .consensus_position(row_idx, col_start),
+                            self.confidence_matrix.consensus_position(row_idx, col_end),
+                            self.alignment_data
+                                .query_lengths
+                                .get(&ali.query_id)
+                                .unwrap(),
+                            self.confidence_matrix.strand_of_row(row_idx),
+                            self.alignment_data.query_name_map.get(ali.query_id),
+                            ali.id,
                         )
                     })
-                    .flat_map(|(seg_target_start, seg_target_end)| {
-                        self.group
-                            .alignments
-                            .iter()
-                            .enumerate()
-                            // constraint filter
-                            .filter(move |(_, a)| {
-                                a.target_start <= self.constrained_target_end()
-                                    && a.target_end >= self.constrained_target_start()
-                                    && a.target_start < seg_target_end
-                                    && a.target_end > seg_target_start
-                            })
-                            // get the row idx of the assembly
-                            .map(|(i, a)| (i + 1, a))
-                            .map(move |(row_idx, ali)| {
-                                let col_start =
-                                    seg_target_start.max(ali.target_start) - self.target_start();
-                                let col_end =
-                                    seg_target_end.min(ali.target_end) - self.target_start();
-
-                                let mut conf = 0.0;
-                                (col_start..=col_end).for_each(|col_idx| {
-                                    conf += self.confidence_matrix.get(row_idx, col_idx)
-                                });
-                                conf /= (col_end - col_start + 1) as f64;
-                                format!(
-                                    "{},{},{},{:3.2},{},{},{},{},{},{}",
-                                    seg_target_start.max(ali.target_start),
-                                    seg_target_end.min(ali.target_end),
-                                    row_idx,
-                                    conf,
-                                    self.confidence_matrix
-                                        .consensus_position(row_idx, col_start),
-                                    self.confidence_matrix.consensus_position(row_idx, col_end),
-                                    self.alignment_data
-                                        .query_lengths
-                                        .get(&ali.query_id)
-                                        .unwrap(),
-                                    self.confidence_matrix.strand_of_row(row_idx),
-                                    self.alignment_data.query_name_map.get(ali.query_id),
-                                    ali.id,
-                                )
-                            })
-                    })
-                    .collect_vec()
             })
-            .collect()
+            .collect_vec();
+
+        return vec![conf_strings];
     }
 }
 

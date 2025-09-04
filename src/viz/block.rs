@@ -61,7 +61,6 @@ impl BlockGroup {
 
         let first = joins.first().unwrap();
         let last = joins.last().unwrap();
-        //println!("{}, {}", first, last);
 
         let mut id_cnt = 0usize;
         let mut id_fn = || {
@@ -103,9 +102,8 @@ impl BlockGroup {
             .get(&joins[0].query_id)
             .expect("no query length found");
 
-        //println!("{}", query_length);
-
-        let query_remaining = (query_length + 1) - last.query_end;
+        // TODO: off by one too?
+        let query_remaining = query_length.saturating_sub(last.query_end);
 
         // TODO: off by one?
         // the visual start is (<target start> - <num unaligned model positions to the left>)

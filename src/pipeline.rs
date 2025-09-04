@@ -11,7 +11,7 @@ use crate::{
     matrix::{Matrix, MatrixDef},
     score_params::{approximate_ideal_skip_state_score, ScoreParams},
     support::windowed_confidence,
-    viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment},
+    viterbi::{trace_segments, traceback, viterbi_collapsed},
     viz::AdjudicationSodaData,
     windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
     AuroraArgs,
@@ -90,17 +90,6 @@ pub fn run_pipeline(
 
     // the initial active cols just removes the dead space between alignments
     let active_cols = confidence_matrix.initial_active_cols();
-    let mut trace_conclusive: Vec<Vec<TraceSegment>> = vec![];
-
-    // if we're going to produce visualizations, this will
-    // keep track of all of the data needed to do so
-    let mut soda_data = AdjudicationSodaData::new(
-        &proximity_group,
-        &confidence_matrix,
-        alignment_data,
-        &target_seq,
-        &args,
-    );
 
     viterbi_collapsed(
         &confidence_matrix,
@@ -118,49 +107,54 @@ pub fn run_pipeline(
     );
 
     let trace_segments = trace_segments(&trace);
-    trace_conclusive.push(trace_segments);
+
+    // if we're going to produce visualizations, this will
+    // keep track of all of the data needed to do so
+    let mut soda_data = AdjudicationSodaData::new(
+        &proximity_group,
+        &confidence_matrix,
+        alignment_data,
+        &target_seq,
+        &trace_segments,
+        &args,
+    );
 
     // TODO: function for this
-    let mut annotations: Vec<Annotation> = trace_conclusive
+    let mut annotations: Vec<Annotation> = trace_segments
         .iter()
-        .flat_map(|iter_segments| {
-            iter_segments
-                .iter()
-                .filter(|s| s.ali_id != 0)
-                .map(|s| Annotation {
-                    target_name: alignment_data
-                        .target_name_map
-                        .get(proximity_group.target_id)
-                        .clone(),
-                    target_start: s.col_start + proximity_group.target_start,
-                    target_end: s.col_end + proximity_group.target_start,
-                    query_id: s.query_id,
-                    query_name: match s.row_idx {
-                        // 0 is the skip state row
-                        // then 1..=(num_assemblies) are alignment rows
-                        // so anything >(num_assemblies) is a tandem repeat
-                        r if r > proximity_group.alignments.len() => {
-                            //
-                            let tandem_repeat_idx =
-                                s.row_idx - proximity_group.alignments.len() - 1;
-                            let repeat = &proximity_group.tandem_repeats[tandem_repeat_idx];
-                            format!(
-                                "({}:{})#tandem repeat",
-                                repeat.period, repeat.consensus_pattern,
-                            )
-                        }
-                        _ => alignment_data.query_name_map.get(s.query_id).clone(),
-                    },
-                    query_start: viterbi_matrix.consensus_position(s.row_idx, s.col_start),
-                    query_end: viterbi_matrix.consensus_position(s.row_idx, s.col_end),
-                    strand: viterbi_matrix.strand_of_row(s.row_idx),
-                    confidence: (s.col_start..=s.col_end)
-                        .map(|col_idx| confidence_matrix.get(s.row_idx, col_idx))
-                        .sum::<f64>()
-                        / (s.col_end - s.col_start + 1) as f64,
-                    join_id: s.row_idx,
-                    region_id: region_idx,
-                })
+        .filter(|s| s.ali_id != 0)
+        .map(|s| Annotation {
+            target_name: alignment_data
+                .target_name_map
+                .get(proximity_group.target_id)
+                .clone(),
+            target_start: s.col_start + proximity_group.target_start,
+            target_end: s.col_end + proximity_group.target_start,
+            query_id: s.query_id,
+            query_name: match s.row_idx {
+                // 0 is the skip state row
+                // then 1..=(num_assemblies) are alignment rows
+                // so anything >(num_assemblies) is a tandem repeat
+                r if r > proximity_group.alignments.len() => {
+                    //
+                    let tandem_repeat_idx = s.row_idx - proximity_group.alignments.len() - 1;
+                    let repeat = &proximity_group.tandem_repeats[tandem_repeat_idx];
+                    format!(
+                        "({}:{})#tandem repeat",
+                        repeat.period, repeat.consensus_pattern,
+                    )
+                }
+                _ => alignment_data.query_name_map.get(s.query_id).clone(),
+            },
+            query_start: viterbi_matrix.consensus_position(s.row_idx, s.col_start),
+            query_end: viterbi_matrix.consensus_position(s.row_idx, s.col_end),
+            strand: viterbi_matrix.strand_of_row(s.row_idx),
+            confidence: (s.col_start..=s.col_end)
+                .map(|col_idx| confidence_matrix.get(s.row_idx, col_idx))
+                .sum::<f64>()
+                / (s.col_end - s.col_start + 1) as f64,
+            join_id: s.row_idx,
+            region_id: region_idx,
         })
         .collect_vec();
 
