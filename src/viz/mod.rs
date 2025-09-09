@@ -401,7 +401,7 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 
     fn ambiguous_trace_strings(&self) -> Vec<String> {
-        return vec![];
+        return vec!["".to_string()];
     }
 
     fn resolved_assembly_rows(&self) -> Vec<Vec<usize>> {
