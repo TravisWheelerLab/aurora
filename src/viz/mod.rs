@@ -464,7 +464,6 @@ impl<'a> AdjudicationSodaData<'a> {
                             && a.target_start < seg_target_end
                             && a.target_end > seg_target_start
                     })
-                    .inspect(|(_, _ali)| println!("Passed"))
                     // get the row idx of the assembly
                     .map(|(i, a)| (i + 1, a))
                     .map(move |(row_idx, ali)| {

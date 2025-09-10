@@ -13,6 +13,7 @@ mod util;
 mod viterbi;
 mod viz;
 mod windowed_scores;
+mod segments;
 
 use std::{
     collections::HashMap,
