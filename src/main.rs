@@ -7,13 +7,13 @@ mod confidence;
 mod matrix;
 mod pipeline;
 mod score_params;
+mod segments;
 mod substitution_matrix;
 mod support;
 mod util;
 mod viterbi;
 mod viz;
 mod windowed_scores;
-mod segments;
 
 use std::{
     collections::HashMap,
