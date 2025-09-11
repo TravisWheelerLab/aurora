@@ -190,6 +190,7 @@ impl<'a> ProximityGroup<'a> {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub fn dump_alignments<W>(&self, out: &mut W) -> anyhow::Result<()>
     where
         W: std::io::Write,
@@ -218,6 +219,7 @@ pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool 
             // now check if we violate the join conditions
 
             // first check all chunks to the left
+            #[allow(clippy::needless_range_loop)]
             for other_group_idx in 0..group_idx {
                 let other_group = &groups[other_group_idx];
 

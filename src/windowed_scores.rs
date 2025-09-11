@@ -37,7 +37,7 @@ pub trait BackgroundFrequencies {
     fn frequencies_at(&self, target_pos: usize) -> [f64; 4];
 }
 
-impl<'a> BackgroundFrequencies for Background<'a> {
+impl BackgroundFrequencies for Background<'_> {
     fn frequencies_at(&self, target_pos: usize) -> [f64; 4] {
         debug_assert!(target_pos >= self.target_start);
 

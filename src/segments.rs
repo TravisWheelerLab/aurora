@@ -1,6 +1,6 @@
 use crate::{
     chunks::ProximityGroup, collapse::AssemblyGraph, matrix::Matrix, score_params::ScoreParams,
-    viterbi::TraceSegment,
+    viterbi::TraceSegment, AnnotationArgs,
 };
 use itertools::Itertools;
 
@@ -16,8 +16,8 @@ impl<T> PartialEq for Unordered<T> {
 }
 
 impl<T> PartialOrd for Unordered<T> {
-    fn partial_cmp(&self, _: &Self) -> Option<std::cmp::Ordering> {
-        Some(std::cmp::Ordering::Equal)
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -35,32 +35,32 @@ impl<T> std::hash::Hash for Unordered<T> {
 
 impl<T> From<T> for Unordered<T> {
     fn from(value: T) -> Self {
-        return Self(value);
+        Self(value)
     }
 }
 
 impl<T> AsRef<T> for Unordered<T> {
     fn as_ref(&self) -> &T {
-        return &self.0;
+        &self.0
     }
 }
 
 impl<T> AsMut<T> for Unordered<T> {
     fn as_mut(&mut self) -> &mut T {
-        return &mut self.0;
+        &mut self.0
     }
 }
 
-struct Block {
+pub struct Block {
     pub alignment_id: usize,
-    pub query_id: usize,
+    pub query_id: Option<usize>,
     pub target_start: usize,
     pub target_end: usize,
     pub confidence: f64,
     pub can_join_up_to: usize,
 }
 
-struct Segment {
+pub struct Segment {
     pub start_col: usize,
     pub end_col: usize,
     pub blocks: Vec<Block>,
@@ -84,7 +84,7 @@ where
     I::Item: Copy,
 {
     pub fn new(iter1: I, iter2: J) -> Self {
-        return Self {
+        Self {
             iter1,
             iter2,
             val1: None,
@@ -92,7 +92,7 @@ where
             prior_val: None,
             val1_exhasted: false,
             val2_exhasted: false,
-        };
+        }
     }
 }
 
@@ -143,19 +143,19 @@ where
         }
 
         self.prior_val = next_val;
-        return next_val;
+        next_val
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         let (min1, max1) = self.iter1.size_hint();
         let (min2, max2) = self.iter2.size_hint();
-        return (
+        (
             (min1.max(min2) > 0) as usize,
             match (max1, max2) {
                 (Some(v1), Some(v2)) => Some(v1 + v2),
                 _ => None,
             },
-        );
+        )
     }
 }
 
@@ -166,34 +166,46 @@ fn unique_merging_iterator<I: Iterator, J: Iterator<Item = I::Item>>(
 where
     I::Item: Copy,
 {
-    return MergeIterator::new(list1, list2);
+    MergeIterator::new(list1, list2)
+}
+
+fn logsumexp(a: f64, b: f64) -> f64 {
+    let max = a.max(b);
+    let min = a.min(b);
+    max + (min - max).exp().ln_1p()
 }
 
 pub fn segments_from_matrix_trace(
     group: &ProximityGroup,
-    trace_segments: &Vec<TraceSegment>,
+    trace_segments: &[TraceSegment],
     confidence_matrix: &Matrix<f64>,
     score_params: &ScoreParams,
     assembly_graph: &AssemblyGraph,
+    annotation_args: &AnnotationArgs,
 ) -> SegmentedMatrix {
     // Matrix should always have at least 1 row (for the skip state)...
     debug_assert!(confidence_matrix.def.num_rows > 0);
+    debug_assert!(confidence_matrix.def.num_rows == group.alignments.len() + 1);
 
     let matrix_definition = confidence_matrix.def;
     let mut segments: SegmentedMatrix = Vec::with_capacity(trace_segments.len());
 
     // Monitor alignment scores, note we'll preallocate for performance...
     let mut row_scores: Vec<f64> = vec![0.0; matrix_definition.num_rows];
+    // This tracks the last segment each alignment is found in.
     let mut segment_last_seen: Vec<usize> = vec![0; matrix_definition.num_rows];
+    // Tracks, for each alignment, if it existed in the prior row...
     let mut exists_prior: Vec<bool> = vec![false; matrix_definition.num_rows];
 
     for (s_idx, seg) in trace_segments.iter().enumerate() {
         // Initialize offsets...
         for i in 0..matrix_definition.num_rows {
             row_scores[i] = 0.0;
+            // This causes skip state cost to be calculated correctly for the start of a segment...
+            exists_prior[i] = true;
         }
 
-        // Identify alignments actually in this segment...
+        // Identify alignments actually in this segment, computations are restricted to these values.
         let valid_rows = matrix_definition
             .col_range_by_logical_row
             .iter()
@@ -214,7 +226,7 @@ pub fn segments_from_matrix_trace(
                 .iter()
                 .enumerate()
                 .map(|(score_idx, &ali_idx)| (ali_idx, Unordered(score_idx)));
-            let all_row_iter = valid_rows.iter().map(|&v| (v, Unordered(0 as usize)));
+            let all_row_iter = valid_rows.iter().map(|&v| (v, Unordered(0_usize)));
 
             for (ali_idx, Unordered(score_idx)) in unique_merging_iterator(row_iter, all_row_iter) {
                 let non_skip = score_idx > 0;
@@ -233,20 +245,35 @@ pub fn segments_from_matrix_trace(
 
                 row_scores[ali_idx] += trans_cost + confidence_matrix.data[column][score_idx];
 
-                // Set for the next run...
+                // Set for the next column...
                 exists_prior[ali_idx] = non_skip;
             }
         }
 
-        valid_rows.iter().for_each(|&ali_id| {
-            segment_last_seen[ali_id] = segments.len();
-        });
+        // Compute total confidence of all entries added together for this block (in log space)...
+        let total_confidence = valid_rows
+            .iter()
+            .map(|&ali_id| row_scores[ali_id])
+            .reduce(logsumexp)
+            .unwrap_or(0.0);
+        let min_confidence = annotation_args.min_block_confidence.ln();
+
+        valid_rows
+            .iter()
+            .filter(|&&ali_id| (row_scores[ali_id] - total_confidence) > min_confidence)
+            .for_each(|&ali_id| {
+                segment_last_seen[ali_id] = segments.len();
+            });
 
         segments.push(Segment {
             start_col: seg.col_start,
             end_col: seg.col_end,
             blocks: valid_rows
                 .iter()
+                .filter(|&&ali_id| {
+                    // Remove sections which have too low of a confidence...
+                    (row_scores[ali_id] - total_confidence) > min_confidence
+                })
                 .map(|&ali_id| {
                     let start = seg
                         .col_start
@@ -257,7 +284,11 @@ pub fn segments_from_matrix_trace(
 
                     Block {
                         alignment_id: ali_id,
-                        query_id: group.alignments[ali_id].query_id,
+                        query_id: if ali_id > 0 && ali_id <= group.alignments.len() {
+                            Some(group.alignments[ali_id - 1].query_id)
+                        } else {
+                            None
+                        },
                         target_start: start,
                         target_end: end,
                         confidence: row_scores[ali_id],
@@ -268,24 +299,30 @@ pub fn segments_from_matrix_trace(
         });
     }
 
-    // Link each block to next segment where it can be linked to...
-    for s_idx in 0..segments.len() {
-        for b_idx in 0..segments[s_idx].blocks.len() {
-            let block = &segments[s_idx].blocks[b_idx];
+    // Link each block to farthest segment it can be linked to...
+    for (s_idx, seg) in segments.iter_mut().enumerate() {
+        // 1 is to skip the skip state...
+        for b_idx in 0..seg.blocks.len() {
+            let block = &seg.blocks[b_idx];
 
-            let alignment = &group.alignments[block.alignment_id];
+            // Skip the skip state and tandem repeats...
+            if block.alignment_id == 0 || block.alignment_id > group.alignments.len() {
+                continue;
+            }
+
+            let alignment = &group.alignments[block.alignment_id - 1];
 
             let mut best_idx = s_idx;
 
-            for compat_al in assembly_graph.fwd_map[alignment].iter() {
-                best_idx = best_idx.max(segment_last_seen[compat_al.id]);
+            for &compat_al in assembly_graph.fwd_map.get(alignment).into_iter().flatten() {
+                best_idx = best_idx.max(segment_last_seen[compat_al.id + 1]);
             }
 
-            segments[s_idx].blocks[b_idx].can_join_up_to = best_idx;
+            seg.blocks[b_idx].can_join_up_to = best_idx;
         }
     }
 
-    return segments;
+    segments
 }
 
 #[cfg(test)]
@@ -293,7 +330,9 @@ mod tests {
     use super::*;
     use std::cmp::Ordering;
 
+    // Type used for identifying ordering when values are the same...
     #[derive(Debug)]
+    #[allow(dead_code)]
     struct LComp(u32, Unordered<u32>);
 
     impl PartialEq for LComp {
@@ -304,17 +343,17 @@ mod tests {
     impl Eq for LComp {}
     impl PartialOrd for LComp {
         fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            return self.0.partial_cmp(&other.0);
+            Some(self.cmp(other))
         }
     }
     impl Ord for LComp {
         fn cmp(&self, other: &Self) -> Ordering {
-            return self.0.cmp(&other.0);
+            self.0.cmp(&other.0)
         }
     }
 
-    fn lcomp(v1: u32, v2: u32) {
-        LComp(v1, Unordered(v2));
+    fn lcomp(v1: u32, v2: u32) -> LComp {
+        LComp(v1, Unordered(v2))
     }
 
     #[test]

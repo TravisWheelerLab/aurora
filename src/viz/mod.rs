@@ -153,7 +153,7 @@ impl<'a> AdjudicationSodaData<'a> {
             alignment_data,
             target_seq,
             annotations: vec![],
-            trace: trace,
+            trace,
             maybe_constraint: None,
             args,
         }
@@ -208,8 +208,7 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 
     fn assembly_strings(&self) -> Vec<String> {
-        return self
-            .group
+        self.group
             .alignments
             .iter()
             .enumerate()
@@ -223,7 +222,7 @@ impl<'a> AdjudicationSodaData<'a> {
                     idx + 1
                 )
             })
-            .collect();
+            .collect()
     }
 
     pub fn set_annotations(&mut self, annotations: Vec<Annotation>) {
@@ -401,19 +400,19 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 
     fn ambiguous_trace_strings(&self) -> Vec<String> {
-        return vec!["".to_string()];
+        vec!["".to_string()]
     }
 
     fn resolved_assembly_rows(&self) -> Vec<Vec<usize>> {
-        return vec![self.confidence_matrix.initial_active_cols()];
+        vec![self.confidence_matrix.initial_active_cols()]
     }
 
     fn unresolved_assembly_rows(&self) -> Vec<Vec<usize>> {
-        return vec![vec![]];
+        vec![vec![]]
     }
 
     fn competed_assembly_rows(&self) -> Vec<Vec<usize>> {
-        return vec![vec![]];
+        vec![vec![]]
     }
 
     fn inactive_segment_strings(&self) -> Vec<Vec<String>> {
@@ -428,7 +427,7 @@ impl<'a> AdjudicationSodaData<'a> {
                 }
             });
 
-        return vec![inactive_col_ranges
+        vec![inactive_col_ranges
             .iter()
             .map(|(start, end)| {
                 format!(
@@ -437,7 +436,7 @@ impl<'a> AdjudicationSodaData<'a> {
                     end + self.target_start()
                 )
             })
-            .collect_vec()];
+            .collect_vec()]
     }
 
     fn confidence_segment_strings(&self) -> Vec<Vec<String>> {
@@ -497,7 +496,7 @@ impl<'a> AdjudicationSodaData<'a> {
             })
             .collect_vec();
 
-        return vec![conf_strings];
+        vec![conf_strings]
     }
 }
 
@@ -539,13 +538,13 @@ impl AssemblySodaData {
         let target_assembly_strings = alignments
             .iter()
             .map(|ali| {
-                return vec![format!(
+                vec![format!(
                     "{},{},{},{}",
                     ali.id,
                     ali.target_start,
                     ali.target_end,
                     confidence.get(&ali.id).unwrap(),
-                )];
+                )]
             })
             .collect_vec();
 

@@ -29,6 +29,7 @@ pub struct MatrixDef {
     /// The logical start position of the target sequence
     pub target_start: usize,
     /// The total number of active cells in the matrix
+    #[allow(dead_code)]
     pub num_cells: usize,
 
     // -- sparse data --

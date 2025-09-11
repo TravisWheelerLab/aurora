@@ -174,6 +174,14 @@ pub struct AnnotationArgs {
         value_name = "f"
     )]
     pub skip_state_score_shift: f64,
+
+    /// The minimum cost for keeping an alignment in a segment for history tracing.
+    #[arg(
+        long = "min-segment-confidence",
+        default_value = "0.01",
+        value_name = "f"
+    )]
+    pub min_block_confidence: f64,
 }
 
 #[derive(Args, Debug, Clone, Default)]

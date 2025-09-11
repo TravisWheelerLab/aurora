@@ -7,7 +7,7 @@ use std::{
 use itertools::Itertools;
 
 use crate::{
-    alignment::{Alignment, AlignmentData, Strand, TandemRepeat},
+    alignment::{Alignment, AlignmentData, Strand},
     chunks::ProximityGroup,
     viz::AssemblySodaData,
     AnnotationArgs, AuroraArgs,
@@ -89,14 +89,6 @@ pub fn assembly_graph<'a>(
     });
 
     graph
-}
-
-pub struct AlignmentRange {
-    pub ali_id: usize,
-    /// The start column of the usage of the alignment relative to the assembly
-    pub assembly_col_start: usize,
-    /// The end column of the usage of the alignment relative to the assembly
-    pub assembly_col_end: usize,
 }
 
 /// Represents graph of compatable alignments on the genome.
@@ -204,24 +196,24 @@ impl<'a> AssemblyGraph<'a> {
 
                 // Extend graph of forward (on query sequence) alignments, we filter to only alignments to the right of each alignment...
                 fwd_map.extend(fwd_graph.into_iter().map(|(al, edges)| {
-                    return (
+                    (
                         al,
                         edges
                             .iter()
                             .filter(|e| e.direction == Direction::Right)
                             .map(|e| e.ali_to)
                             .collect(),
-                    );
+                    )
                 }));
                 rev_map.extend(rev_graph.into_iter().map(|(al, edges)| {
-                    return (
+                    (
                         al,
                         edges
                             .iter()
                             .filter(|e| e.direction == Direction::Right)
                             .map(|e| e.ali_to)
                             .collect(),
-                    );
+                    )
                 }));
             });
 
@@ -254,12 +246,6 @@ impl<'a> AssemblyGraph<'a> {
             writeln!(&mut asm_index_writer, "</ul>\n</body>\n</html>").expect(error_msg);
         }
 
-        return Self { fwd_map, rev_map };
-    }
-
-    /// Check if two alignments are compatable, or could possibly be connected with an insertion in the middle.
-    pub fn compatable(&self, alignment: &Alignment, alignment_other: &Alignment) -> bool {
-        return self.fwd_map[alignment].contains(alignment_other)
-            || self.rev_map[alignment].contains(alignment_other);
+        Self { fwd_map, rev_map }
     }
 }

@@ -10,6 +10,7 @@ use crate::{
     confidence::confidence,
     matrix::{Matrix, MatrixDef},
     score_params::{approximate_ideal_skip_state_score, ScoreParams},
+    segments::segments_from_matrix_trace,
     support::windowed_confidence,
     viterbi::{trace_segments, traceback, viterbi_collapsed},
     viz::AdjudicationSodaData,
@@ -77,8 +78,8 @@ pub fn run_pipeline(
 
     confidence(&mut confidence_matrix);
     let (confidence_avg_by_id, _confidence_by_id) = windowed_confidence(&mut confidence_matrix);
-    let _assembly_graph = AssemblyGraph::new(
-        &proximity_group,
+    let assembly_graph = AssemblyGraph::new(
+        proximity_group,
         &confidence_avg_by_id,
         &args,
         alignment_data,
@@ -108,10 +109,19 @@ pub fn run_pipeline(
 
     let trace_segments = trace_segments(&trace);
 
+    let _segments = segments_from_matrix_trace(
+        proximity_group,
+        &trace_segments,
+        &confidence_matrix,
+        &score_params,
+        &assembly_graph,
+        &args.annotation_args,
+    );
+
     // if we're going to produce visualizations, this will
     // keep track of all of the data needed to do so
     let mut soda_data = AdjudicationSodaData::new(
-        &proximity_group,
+        proximity_group,
         &confidence_matrix,
         alignment_data,
         &target_seq,
