@@ -67,7 +67,7 @@ pub struct Segment {
 }
 
 // type SegmentedMatrix = Vec<Segment>;
-type SegmentedMatrix = Vec<Segment>;
+pub type SegmentedMatrix = Vec<Segment>;
 
 struct MergeIterator<I: Iterator, J: Iterator<Item = I::Item>> {
     iter1: I,

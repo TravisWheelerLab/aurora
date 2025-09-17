@@ -1,6 +1,6 @@
-use crate::{alignment::Strand, matrix::Matrix, score_params::ScoreParams};
+use crate::{alignment::Strand, matrix::Matrix, score_params::ScoreParams, segments::{Block, Segment, SegmentedMatrix}};
 
-use itertools::multizip;
+use itertools::{izip, multizip};
 
 pub fn viterbi_collapsed(
     confidence_matrix: &Matrix<f64>,
@@ -316,4 +316,135 @@ pub fn print_viterbi_with_sources(viterbi_matrix: &Matrix<f64>, sources_matrix: 
         println!();
         println!();
     });
+}
+
+
+pub struct HistoryInfo {
+    segment: usize,
+    block: usize,
+    prior_block: usize,
+    prior_history: usize,
+    score: f64
+}
+
+
+impl PartialEq for HistoryInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.segment == other.segment && self.block == other.block && self.prior_history == other.prior_history
+    }
+}
+
+impl Eq for HistoryInfo {}
+
+impl Ord for HistoryInfo {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.segment.cmp(&other.segment) {
+            core::cmp::Ordering::Equal => {}
+            ord => return ord,
+        }
+        match self.block.cmp(&other.block) {
+            core::cmp::Ordering::Equal => {}
+            ord => return ord,
+        }
+        self.prior_history.cmp(&other.prior_history)
+    }
+}
+
+
+impl PartialOrd for HistoryInfo {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub enum HistoryEntry {
+    Root,
+    Join(HistoryInfo),
+    Append(HistoryInfo)
+}
+
+
+pub struct History<'a> {
+    pub segment_offsets: &'a [usize],
+    pub entries: &'a [HistoryEntry]
+}
+
+
+fn remove_expired_history_entries(history: &[HistoryEntry], segments: &SegmentedMatrix, current_segment: usize, start_entry: usize, history_depth: usize) -> usize {
+    let mut current_entry = start_entry;
+    
+    for _ in 0..history_depth {
+        match &history[current_entry] {
+            HistoryEntry::Root => {
+                return current_entry;
+            }
+            HistoryEntry::Append(val) | HistoryEntry::Join(val) => {
+                let segment = &segments[val.segment].blocks[val.block];
+                if segment.can_join_up_to > current_segment {
+                    return current_entry;
+                }
+                current_entry = val.prior_history;
+            }
+        }
+    }
+
+    return 0;
+}
+
+
+pub fn history_viterbi_on_segments(segments: &SegmentedMatrix, history_depth: usize) -> History {
+    let block_count: usize = segments.iter().map(|s| s.blocks.len()).sum();
+
+    let mut histories: Vec<HistoryEntry> = Vec::with_capacity(block_count + 1);
+    let mut seg_offsets: Vec<usize> = Vec::with_capacity(segments.len() + 1);
+    
+    histories.push(HistoryEntry::Root);
+    seg_offsets.push(0);
+    let mut prior_step_end = histories.len();
+
+    // For every segment...
+    for segment_idx in 0..segments.len() {
+        for current_block in segments[segment_idx].blocks.iter() {
+            for prior_hist_idx in (*seg_offsets.last().unwrap())..prior_step_end {
+                let mut last_hist = prior_hist_idx;
+                // Add a join and no join history...
+                let mut join_index = (0..history_depth)
+                    .map_while(|_| {
+                        match histories[last_hist] {
+                            HistoryEntry::Root => None,
+                            HistoryEntry::Append(val) | HistoryEntry::Join(val) => {
+                                let cur_hist = last_hist;
+                                last_hist = val.prior_history;
+                                let blk = &segments[val.segment].blocks[val.block];
+                                if blk.query_id == current_block.query_id && blk.can_join_up_to >= segment_idx {
+                                    Some(Some(cur_hist))
+                                } else {
+                                    Some(None)
+                                }
+                            }
+                        }
+                    }).find(|v| match v {
+                        Some(_) => true,
+                        _ => false
+                    }).flatten();
+
+                let other_index = remove_expired_history_entries(
+                    &histories, 
+                    segments, 
+                    segment_idx, 
+                    prior_hist_idx, 
+                    history_depth
+                );
+
+
+            }
+        }
+        
+        seg_offsets.push(prior_step_end);
+        prior_step_end = histories.len();
+    }
+
+    History { segment_offsets: &seg_offsets, entries: &histories }
 }
