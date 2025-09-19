@@ -17,6 +17,11 @@ pub fn approximate_ideal_skip_state_score(
     -(query_jump_penalty_nats / num_skip_loops_match_jump) + penalty_shift
 }
 
+fn fast_select(a: f64, b: f64, switch: bool) -> f64 {
+    let sw = (!switch as u64).wrapping_sub(1);
+    return f64::from_bits((a.to_bits() & sw) + (b.to_bits() & !sw))
+}
+
 impl ScoreParams {
     pub fn new(
         num_alignments: usize,
@@ -46,6 +51,14 @@ impl ScoreParams {
             query_loop_score,
             skip_loop_score,
         }
+    }
+
+    pub fn transition(&self, is_skip: bool, prior_is_different: bool) -> f64 {
+        return fast_select(
+            fast_select(self.query_to_skip_score, self.query_jump_score, is_skip), 
+            fast_select(self.skip_loop_score, self.query_loop_score, is_skip),
+            prior_is_different
+        )
     }
 }
 

@@ -195,14 +195,14 @@ pub fn segments_from_matrix_trace(
     // This tracks the last segment each alignment is found in.
     let mut segment_last_seen: Vec<usize> = vec![0; matrix_definition.num_rows];
     // Tracks, for each alignment, if it existed in the prior row...
-    let mut exists_prior: Vec<bool> = vec![false; matrix_definition.num_rows];
+    let mut prior_val: Vec<usize> = vec![0; matrix_definition.num_rows];
 
     for (s_idx, seg) in trace_segments.iter().enumerate() {
         // Initialize offsets...
         for i in 0..matrix_definition.num_rows {
             row_scores[i] = 0.0;
             // This causes skip state cost to be calculated correctly for the start of a segment...
-            exists_prior[i] = true;
+            prior_val[i] = i;
         }
 
         // Identify alignments actually in this segment, computations are restricted to these values.
@@ -226,27 +226,14 @@ pub fn segments_from_matrix_trace(
                 .iter()
                 .enumerate()
                 .map(|(score_idx, &ali_idx)| (ali_idx, Unordered(score_idx)));
-            let all_row_iter = valid_rows.iter().map(|&v| (v, Unordered(0_usize)));
+            let all_row_iter = valid_rows.iter().map(|&v| (v, Unordered(0)));
 
             for (ali_idx, Unordered(score_idx)) in unique_merging_iterator(row_iter, all_row_iter) {
-                let non_skip = score_idx > 0;
-                let state_change = exists_prior[ali_idx] != non_skip;
-                // Due to dumb rules...
-                let ns = non_skip as u32 as f64;
-                let sc = state_change as u32 as f64;
-                let nso = !non_skip as u32 as f64;
-                let sco = !state_change as u32 as f64;
-                let jump_score =
-                    score_params.query_jump_score * ns + score_params.query_to_skip_score * nso;
-                let loop_score =
-                    score_params.query_loop_score * ns + score_params.skip_loop_score * nso;
-
-                let trans_cost = jump_score * sc + loop_score * sco;
-
+                let trans_cost = score_params.transition(score_idx == 0, prior_val[ali_idx] != score_idx);
                 row_scores[ali_idx] += trans_cost + confidence_matrix.data[column][score_idx];
 
                 // Set for the next column...
-                exists_prior[ali_idx] = non_skip;
+                prior_val[ali_idx] = score_idx;
             }
         }
 
@@ -282,9 +269,11 @@ pub fn segments_from_matrix_trace(
                         .col_end
                         .min(matrix_definition.col_range_by_logical_row[ali_id].1);
 
+                    let is_alignment = ali_id > 0 && ali_id <= group.alignments.len();
+
                     Block {
                         alignment_id: ali_id,
-                        query_id: if ali_id > 0 && ali_id <= group.alignments.len() {
+                        query_id: if is_alignment {
                             Some(group.alignments[ali_id - 1].query_id)
                         } else {
                             None
@@ -299,7 +288,7 @@ pub fn segments_from_matrix_trace(
         });
     }
 
-    // Link each block to farthest segment it can be linked to...
+    // Allow each alignment block to farthest segment it can be linked to...
     for (s_idx, seg) in segments.iter_mut().enumerate() {
         // 1 is to skip the skip state...
         for b_idx in 0..seg.blocks.len() {
@@ -371,7 +360,7 @@ mod tests {
                 .eq([1, 2, 3, 4, 5, 8, 10].iter())
         );
 
-        /* When two lists have the same value, values are taken from the first iterator first. */
+        /* When two lists have the same value, values are taken from the first iterator. */
         assert!(unique_merging_iterator(
             [lcomp(1, 30), lcomp(1, 40), lcomp(2, 4)].iter(),
             [lcomp(1, 15)].iter()
