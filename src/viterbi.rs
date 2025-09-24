@@ -326,8 +326,9 @@ pub fn print_viterbi_with_sources(viterbi_matrix: &Matrix<f64>, sources_matrix: 
 pub struct HistoryInfo {
     segment: usize,
     block: usize,
-    prior_block: usize,
+    prior_block_history: usize,
     prior_history: usize,
+    join_history: usize,
     score: f64,
 }
 
@@ -461,6 +462,13 @@ fn check_for_join(
     None
 }
 
+fn get_owning_block(history_entry: &HistoryEntry) -> Option<usize> {
+    match history_entry {
+        HistoryEntry::Append(val) | HistoryEntry::Join(val) => Some(val.block),
+        HistoryEntry::Root => None,
+    }
+}
+
 pub fn history_viterbi_on_segments(
     segments: &SegmentedMatrix,
     score_params: &ScoreParams,
@@ -496,9 +504,9 @@ pub fn history_viterbi_on_segments(
                     history_depth,
                 );
 
-                if let Some(mut join_index) = join_index {
+                if let Some(join_index) = join_index {
                     // Clean expired history entries from the join path....
-                    join_index = remove_expired_history_entries(
+                    let simplified_join_index = remove_expired_history_entries(
                         &histories,
                         segments,
                         segment_idx,
@@ -508,8 +516,9 @@ pub fn history_viterbi_on_segments(
                     histories.push(HistoryEntry::Join(HistoryInfo {
                         segment: segment_idx,
                         block: block_idx,
-                        prior_block: prior_hist_idx,
-                        prior_history: join_index,
+                        prior_block_history: prior_hist_idx,
+                        prior_history: simplified_join_index,
+                        join_history: join_index,
                         score: history_score(&histories[prior_hist_idx])
                             + score_params.query_loop_score
                             + segments[segment_idx].blocks[block_idx].confidence,
@@ -523,8 +532,8 @@ pub fn history_viterbi_on_segments(
                     HistoryEntry::Append(val) | HistoryEntry::Join(val) => {
                         let prior_block = &segments[val.segment].blocks[val.block];
                         score_params.transition(
-                            current_block.alignment_id == 0,
-                            prior_block.alignment_id != current_block.alignment_id,
+                            current_block.row_idx == 0,
+                            prior_block.row_idx != current_block.row_idx,
                         )
                     }
                 };
@@ -533,8 +542,9 @@ pub fn history_viterbi_on_segments(
                 histories.push(HistoryEntry::Append(HistoryInfo {
                     segment: segment_idx,
                     block: block_idx,
-                    prior_block: prior_hist_idx,
+                    prior_block_history: prior_hist_idx,
                     prior_history: other_index,
+                    join_history: prior_hist_idx,
                     score: history_score(&histories[prior_hist_idx])
                         + trans_score
                         + segments[segment_idx].blocks[block_idx].confidence,
@@ -553,47 +563,121 @@ pub fn history_viterbi_on_segments(
     }
 }
 
-
 struct RefinedTraceSegment {
     pub query_id: usize,
-    pub ali_id: usize,
+    pub ali_id: Option<usize>,
     pub row_idx: usize,
     pub col_start: usize,
     pub col_end: usize,
-    pub join_index: usize
+    pub join_index: usize,
 }
 
+fn get_max_history(history_range: &[HistoryEntry]) -> usize {
+    history_range
+        .iter()
+        .map(history_score)
+        .enumerate()
+        .reduce(|(pi, pscore), (i, score)| {
+            if score > pscore {
+                (i, score)
+            } else {
+                (pi, pscore)
+            }
+        })
+        .expect("Unable to find a max history, should not be possible!")
+        .0
+}
 
-fn backtrace_histories_helper(
-    segments: &SegmentedMatrix, 
-    history: &History, 
-    join_index: usize, 
-    start_segment: usize, 
-    end_segment: usize, 
-    trace: &mut Vec<RefinedTraceSegment>) {
-
-    let mut prior_seg_start = if end_segment + 1 >= (history.segment_offsets.len()) {
-        history.entries.len()
-    } else {
-        history.segment_offsets[end_segment + 1]
-    };
-
-
-
-    for seg_idx in (start_segment..end_segment).rev() {
-        // Compute the max segment in this range...
-        let current_start = history.segment_offsets[seg_idx]; 
+pub fn history_backtrace_append_block(
+    refined_segments: &mut Vec<RefinedTraceSegment>,
+    join_stack: &mut Vec<(usize, usize, usize)>,
+    block: &Block,
+    current_index: usize,
+    join_index: usize,
+) -> usize {
+    // Case 1: Same row index and touches start of segment in front of it, extend the segment backwards to include this...
+    if let Some(ref_seg) = refined_segments.last_mut() {
+        if ref_seg.row_idx == block.row_idx && block.target_end == ref_seg.col_end {
+            ref_seg.col_start = block.target_start;
+            return join_index;
+        }
     }
+
+    if let Some(query_id) = block.query_id {
+        // Case 2: Is part of a join, update join index to indicate this...
+        if let Some(&(check_idx, _hist_idx, group_join_idx)) = join_stack.last() {
+            if current_index == check_idx {
+                refined_segments.push(RefinedTraceSegment {
+                    query_id,
+                    ali_id: block.alignment_id,
+                    row_idx: block.row_idx,
+                    col_start: block.target_start,
+                    col_end: block.target_end,
+                    join_index: group_join_idx,
+                });
+
+                join_stack.pop();
+                return join_index;
+            }
+        }
+
+        // Case 4: New segment not part of a join...
+        refined_segments.push(RefinedTraceSegment {
+            query_id,
+            ali_id: block.alignment_id,
+            row_idx: block.row_idx,
+            col_start: block.target_start,
+            col_end: block.target_end,
+            join_index,
+        });
+
+        return join_index + 1;
+    }
+
+    // Case 4: Skip state, don't add anything...
+    return join_index;
 }
 
-
-pub fn backtrace_histories(segments: &SegmentedMatrix, history: &History) -> Vec<RefinedTraceSegment> {
-    debug_assert!(segments.len() == history.segment_offsets.len());
+pub fn backtrace_histories(
+    segments: &SegmentedMatrix,
+    history: &History,
+) -> Vec<RefinedTraceSegment> {
+    debug_assert!(segments.len() == history.segment_offsets.len() - 1);
 
     let mut refined_segments: Vec<RefinedTraceSegment> = Vec::new();
+    let mut join_stack: Vec<(usize, usize, usize)> = Vec::new();
 
-    backtrace_histories_helper(segments, history, 0, 0, history.segment_offsets.len(), &mut refined_segments);
+    let last_segment = history.segment_offsets.len() - 1;
+    // Find the max in the first row....
+    let mut current_idx = history.segment_offsets[last_segment]
+        + get_max_history(&history.entries[history.segment_offsets[last_segment]..]);
+    let mut current_entry = &history.entries[current_idx];
+    let mut join_idx: usize = 0;
 
+    while let HistoryEntry::Join(entry_info) | HistoryEntry::Append(entry_info) = current_entry {
+        // Append current entry to segment stack...
+        let block = &segments[entry_info.segment].blocks[entry_info.block];
+
+        // Append block for this entry (or extend prior trace block if this is the same alignment)...
+        join_idx = history_backtrace_append_block(
+            &mut refined_segments,
+            &mut join_stack,
+            block,
+            current_idx,
+            join_idx,
+        );
+
+        // If this is a join, add it so the segment it joins to can be constructed correctly later...
+        if let HistoryEntry::Join(_) = current_entry {
+            join_stack.push((entry_info.join_history, current_idx, join_idx));
+        }
+
+        // Go to the next entry in the history...
+        current_idx = entry_info.prior_block_history;
+        current_entry = &history.entries[current_idx];
+    }
+
+    // Reverse so trace segments go from start to end instead of end to start.
     refined_segments.reverse();
     return refined_segments;
 }

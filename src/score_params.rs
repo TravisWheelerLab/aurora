@@ -55,9 +55,9 @@ impl ScoreParams {
 
     pub fn transition(&self, is_skip: bool, prior_is_different: bool) -> f64 {
         fast_select(
-            fast_select(self.query_to_skip_score, self.query_jump_score, is_skip), 
+            fast_select(self.query_to_skip_score, self.query_jump_score, is_skip),
             fast_select(self.skip_loop_score, self.query_loop_score, is_skip),
-            prior_is_different
+            prior_is_different,
         )
     }
 }

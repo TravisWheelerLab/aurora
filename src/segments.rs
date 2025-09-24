@@ -51,8 +51,16 @@ impl<T> AsMut<T> for Unordered<T> {
     }
 }
 
+pub enum BlockType {
+    Skip,
+    Alignment,
+    TandemRepeat,
+}
+
 pub struct Block {
-    pub alignment_id: usize,
+    pub row_idx: usize,
+    pub block_type: BlockType,
+    pub alignment_id: Option<usize>,
     pub query_id: Option<usize>,
     pub target_start: usize,
     pub target_end: usize,
@@ -185,7 +193,9 @@ pub fn segments_from_matrix_trace(
 ) -> SegmentedMatrix {
     // Matrix should always have at least 1 row (for the skip state)...
     debug_assert!(confidence_matrix.def.num_rows > 0);
-    debug_assert!(confidence_matrix.def.num_rows == group.alignments.len() + 1);
+    debug_assert!(
+        confidence_matrix.def.num_rows == group.alignments.len() + group.tandem_repeats.len() + 1
+    );
 
     let matrix_definition = confidence_matrix.def;
     let mut segments: SegmentedMatrix = Vec::with_capacity(trace_segments.len());
@@ -225,32 +235,32 @@ pub fn segments_from_matrix_trace(
             let row_iter = rows
                 .iter()
                 .enumerate()
-                .map(|(score_idx, &ali_idx)| (ali_idx, Unordered(score_idx)));
+                .map(|(score_idx, &row_idx)| (row_idx, Unordered(score_idx)));
             let all_row_iter = valid_rows.iter().map(|&v| (v, Unordered(0)));
 
-            for (ali_idx, Unordered(score_idx)) in unique_merging_iterator(row_iter, all_row_iter) {
+            for (row_idx, Unordered(score_idx)) in unique_merging_iterator(row_iter, all_row_iter) {
                 let trans_cost =
-                    score_params.transition(score_idx == 0, prior_val[ali_idx] != score_idx);
-                row_scores[ali_idx] += trans_cost + confidence_matrix.data[column][score_idx];
+                    score_params.transition(score_idx == 0, prior_val[row_idx] != score_idx);
+                row_scores[row_idx] += trans_cost + confidence_matrix.data[column][score_idx];
 
                 // Set for the next column...
-                prior_val[ali_idx] = score_idx;
+                prior_val[row_idx] = score_idx;
             }
         }
 
         // Compute total confidence of all entries added together for this block (in log space)...
         let total_confidence = valid_rows
             .iter()
-            .map(|&ali_id| row_scores[ali_id])
+            .map(|&row_idx| row_scores[row_idx])
             .reduce(logsumexp)
             .unwrap_or(0.0);
         let min_confidence = annotation_args.min_block_confidence.ln();
 
         valid_rows
             .iter()
-            .filter(|&&ali_id| (row_scores[ali_id] - total_confidence) > min_confidence)
-            .for_each(|&ali_id| {
-                segment_last_seen[ali_id] = segments.len();
+            .filter(|&&row_idx| (row_scores[row_idx] - total_confidence) > min_confidence)
+            .for_each(|&row_idx| {
+                segment_last_seen[row_idx] = segments.len();
             });
 
         segments.push(Segment {
@@ -258,30 +268,45 @@ pub fn segments_from_matrix_trace(
             end_col: seg.col_end,
             blocks: valid_rows
                 .iter()
-                .filter(|&&ali_id| {
+                .filter(|&&row_idx| {
                     // Remove sections which have too low of a confidence...
-                    (row_scores[ali_id] - total_confidence) > min_confidence
+                    (row_scores[row_idx] - total_confidence) > min_confidence
                 })
-                .map(|&ali_id| {
+                .map(|&row_idx| {
                     let start = seg
                         .col_start
-                        .max(matrix_definition.col_range_by_logical_row[ali_id].0);
+                        .max(matrix_definition.col_range_by_logical_row[row_idx].0);
                     let end = seg
                         .col_end
-                        .min(matrix_definition.col_range_by_logical_row[ali_id].1);
+                        .min(matrix_definition.col_range_by_logical_row[row_idx].1);
 
-                    let is_alignment = ali_id > 0 && ali_id <= group.alignments.len();
+                    let block_type = if row_idx == 0 {
+                        BlockType::Skip
+                    } else if row_idx <= group.alignments.len() {
+                        BlockType::Alignment
+                    } else {
+                        BlockType::TandemRepeat
+                    };
+
+                    let alignment_id = match block_type {
+                        BlockType::Alignment => Some(group.alignments[row_idx - 1].id),
+                        BlockType::TandemRepeat => Some(group.tandem_repeats[row_idx - 1].id),
+                        _ => None,
+                    };
+
+                    let query_id = match block_type {
+                        BlockType::Alignment => Some(group.alignments[row_idx - 1].query_id),
+                        _ => None,
+                    };
 
                     Block {
-                        alignment_id: ali_id,
-                        query_id: if is_alignment {
-                            Some(group.alignments[ali_id - 1].query_id)
-                        } else {
-                            None
-                        },
+                        row_idx,
+                        block_type,
+                        alignment_id,
+                        query_id,
                         target_start: start,
                         target_end: end,
-                        confidence: row_scores[ali_id],
+                        confidence: row_scores[row_idx],
                         can_join_up_to: s_idx,
                     }
                 })
@@ -296,11 +321,12 @@ pub fn segments_from_matrix_trace(
             let block = &seg.blocks[b_idx];
 
             // Skip the skip state and tandem repeats...
-            if block.alignment_id == 0 || block.alignment_id > group.alignments.len() {
+            if let BlockType::TandemRepeat | BlockType::Skip = block.block_type {
                 continue;
             }
 
-            let alignment = &group.alignments[block.alignment_id - 1];
+            let alignment =
+                &group.alignments[block.alignment_id.expect("Alignment with no alignment id!")];
 
             let mut best_idx = s_idx;
 
