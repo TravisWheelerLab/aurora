@@ -229,7 +229,8 @@ pub fn segments_from_matrix_trace(
             let all_row_iter = valid_rows.iter().map(|&v| (v, Unordered(0)));
 
             for (ali_idx, Unordered(score_idx)) in unique_merging_iterator(row_iter, all_row_iter) {
-                let trans_cost = score_params.transition(score_idx == 0, prior_val[ali_idx] != score_idx);
+                let trans_cost =
+                    score_params.transition(score_idx == 0, prior_val[ali_idx] != score_idx);
                 row_scores[ali_idx] += trans_cost + confidence_matrix.data[column][score_idx];
 
                 // Set for the next column...
