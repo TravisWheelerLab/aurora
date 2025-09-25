@@ -182,6 +182,8 @@ pub fn run_pipeline(
 
     let refined_trace_segments = backtrace_histories(&segments, &history);
 
+    println!("{:?}", history);
+
     // if we're going to produce visualizations, this will
     // keep track of all of the data needed to do so
     let mut soda_data = AdjudicationSodaData::new(

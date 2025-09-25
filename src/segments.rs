@@ -325,8 +325,7 @@ pub fn segments_from_matrix_trace(
                 continue;
             }
 
-            let alignment =
-                &group.alignments[block.alignment_id.expect("Alignment with no alignment id!")];
+            let alignment = &group.alignments[block.row_idx - 1];
 
             let mut best_idx = s_idx;
 

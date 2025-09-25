@@ -323,6 +323,7 @@ pub fn print_viterbi_with_sources(viterbi_matrix: &Matrix<f64>, sources_matrix: 
     });
 }
 
+#[derive(Debug)]
 pub struct HistoryInfo {
     segment: usize,
     block: usize,
@@ -362,13 +363,14 @@ impl PartialOrd for HistoryInfo {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HistoryEntry {
     Root,
     Join(HistoryInfo),
     Append(HistoryInfo),
 }
 
+#[derive(Debug)]
 pub struct History {
     pub segment_offsets: Vec<usize>,
     pub entries: Vec<HistoryEntry>,
@@ -563,6 +565,7 @@ pub fn history_viterbi_on_segments(
     }
 }
 
+#[derive(Debug)]
 pub struct RefinedTraceSegment {
     pub query_id: Option<usize>,
     pub ali_id: usize,
