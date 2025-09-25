@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fmt::Display, fs};
 
 use itertools::Itertools;
 
@@ -12,11 +12,67 @@ use crate::{
     score_params::{approximate_ideal_skip_state_score, ScoreParams},
     segments::segments_from_matrix_trace,
     support::windowed_confidence,
-    viterbi::{trace_segments, traceback, viterbi_collapsed},
+    viterbi::{
+        backtrace_histories, history_viterbi_on_segments, trace_segments, traceback,
+        viterbi_collapsed, RefinedTraceSegment,
+    },
     viz::AdjudicationSodaData,
     windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
     AuroraArgs,
 };
+
+pub fn to_annotations(
+    proximity_group: &ProximityGroup,
+    alignment_data: &AlignmentData,
+    confidence_matrix: &Matrix<f64>,
+    trace_segments: &[RefinedTraceSegment],
+    region_idx: usize,
+) -> Vec<Annotation> {
+    trace_segments
+        .iter()
+        .filter(|v| v.row_idx != 0)
+        .map(|s| {
+            let query_id = s.query_id.unwrap_or(0);
+
+            Annotation {
+                target_name: alignment_data
+                    .target_name_map
+                    .get(proximity_group.target_id)
+                    .clone(),
+                target_start: s.col_start + proximity_group.target_start,
+                target_end: s.col_end + proximity_group.target_start,
+                query_id,
+                query_name: match s.row_idx {
+                    // 0 is the skip state row
+                    // then 1..=(num_assemblies) are alignment rows
+                    // so anything >(num_assemblies) is a tandem repeat
+                    r if r > proximity_group.alignments.len() => {
+                        //
+                        let tandem_repeat_idx = s.row_idx - proximity_group.alignments.len() - 1;
+                        let repeat = &proximity_group.tandem_repeats[tandem_repeat_idx];
+                        format!(
+                            "({}:{})#tandem repeat",
+                            repeat.period, repeat.consensus_pattern,
+                        )
+                    }
+                    _ => alignment_data
+                        .query_name_map
+                        .get(s.query_id.expect("Annotation has no query id!"))
+                        .clone(),
+                },
+                query_start: confidence_matrix.consensus_position(s.row_idx, s.col_start),
+                query_end: confidence_matrix.consensus_position(s.row_idx, s.col_end),
+                strand: confidence_matrix.strand_of_row(s.row_idx),
+                confidence: (s.col_start..=s.col_end)
+                    .map(|col_idx| confidence_matrix.get(s.row_idx, col_idx))
+                    .sum::<f64>()
+                    / (s.col_end - s.col_start + 1) as f64,
+                join_id: s.join_index,
+                region_id: region_idx,
+            }
+        })
+        .collect_vec()
+}
 
 pub fn run_pipeline(
     proximity_group: &ProximityGroup,
@@ -109,7 +165,7 @@ pub fn run_pipeline(
 
     let trace_segments = trace_segments(&trace);
 
-    let _segments = segments_from_matrix_trace(
+    let segments = segments_from_matrix_trace(
         proximity_group,
         &trace_segments,
         &confidence_matrix,
@@ -118,6 +174,14 @@ pub fn run_pipeline(
         &args.annotation_args,
     );
 
+    let history = history_viterbi_on_segments(
+        &segments,
+        &score_params,
+        args.annotation_args.max_history_depth,
+    );
+
+    let refined_trace_segments = backtrace_histories(&segments, &history);
+
     // if we're going to produce visualizations, this will
     // keep track of all of the data needed to do so
     let mut soda_data = AdjudicationSodaData::new(
@@ -125,48 +189,18 @@ pub fn run_pipeline(
         &confidence_matrix,
         alignment_data,
         &target_seq,
-        &trace_segments,
+        &refined_trace_segments,
         &args,
     );
 
-    // TODO: function for this
-    let mut annotations: Vec<Annotation> = trace_segments
-        .iter()
-        .filter(|s| s.ali_id != 0)
-        .map(|s| Annotation {
-            target_name: alignment_data
-                .target_name_map
-                .get(proximity_group.target_id)
-                .clone(),
-            target_start: s.col_start + proximity_group.target_start,
-            target_end: s.col_end + proximity_group.target_start,
-            query_id: s.query_id,
-            query_name: match s.row_idx {
-                // 0 is the skip state row
-                // then 1..=(num_assemblies) are alignment rows
-                // so anything >(num_assemblies) is a tandem repeat
-                r if r > proximity_group.alignments.len() => {
-                    //
-                    let tandem_repeat_idx = s.row_idx - proximity_group.alignments.len() - 1;
-                    let repeat = &proximity_group.tandem_repeats[tandem_repeat_idx];
-                    format!(
-                        "({}:{})#tandem repeat",
-                        repeat.period, repeat.consensus_pattern,
-                    )
-                }
-                _ => alignment_data.query_name_map.get(s.query_id).clone(),
-            },
-            query_start: viterbi_matrix.consensus_position(s.row_idx, s.col_start),
-            query_end: viterbi_matrix.consensus_position(s.row_idx, s.col_end),
-            strand: viterbi_matrix.strand_of_row(s.row_idx),
-            confidence: (s.col_start..=s.col_end)
-                .map(|col_idx| confidence_matrix.get(s.row_idx, col_idx))
-                .sum::<f64>()
-                / (s.col_end - s.col_start + 1) as f64,
-            join_id: s.row_idx,
-            region_id: region_idx,
-        })
-        .collect_vec();
+    // Grab the annotations...
+    let mut annotations: Vec<Annotation> = to_annotations(
+        proximity_group,
+        alignment_data,
+        &confidence_matrix,
+        &refined_trace_segments,
+        region_idx,
+    );
 
     if vis_args.viz {
         // TODO: this is kind of awkward

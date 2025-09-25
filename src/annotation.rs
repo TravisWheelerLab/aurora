@@ -1,4 +1,4 @@
-use crate::alignment::Strand;
+use crate::{alignment::Strand, viterbi::RefinedTraceSegment};
 
 #[derive(Clone)]
 pub struct Annotation {

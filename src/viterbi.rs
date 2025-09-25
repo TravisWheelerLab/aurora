@@ -563,9 +563,9 @@ pub fn history_viterbi_on_segments(
     }
 }
 
-struct RefinedTraceSegment {
-    pub query_id: usize,
-    pub ali_id: Option<usize>,
+pub struct RefinedTraceSegment {
+    pub query_id: Option<usize>,
+    pub ali_id: usize,
     pub row_idx: usize,
     pub col_start: usize,
     pub col_end: usize,
@@ -597,19 +597,21 @@ pub fn history_backtrace_append_block(
 ) -> usize {
     // Case 1: Same row index and touches start of segment in front of it, extend the segment backwards to include this...
     if let Some(ref_seg) = refined_segments.last_mut() {
-        if ref_seg.row_idx == block.row_idx && block.target_end == ref_seg.col_end {
+        if ref_seg.row_idx == block.row_idx
+            && block.target_end >= (ref_seg.col_start.saturating_sub(1))
+        {
             ref_seg.col_start = block.target_start;
             return join_index;
         }
     }
 
-    if let Some(query_id) = block.query_id {
-        // Case 2: Is part of a join, update join index to indicate this...
+    if let Some(alignment_id) = block.alignment_id {
+        // Case 2: Is part of a join, use shared join index...
         if let Some(&(check_idx, _hist_idx, group_join_idx)) = join_stack.last() {
             if current_index == check_idx {
                 refined_segments.push(RefinedTraceSegment {
-                    query_id,
-                    ali_id: block.alignment_id,
+                    query_id: block.query_id,
+                    ali_id: alignment_id,
                     row_idx: block.row_idx,
                     col_start: block.target_start,
                     col_end: block.target_end,
@@ -621,10 +623,10 @@ pub fn history_backtrace_append_block(
             }
         }
 
-        // Case 4: New segment not part of a join...
+        // Case 3: New segment not part of a join...
         refined_segments.push(RefinedTraceSegment {
-            query_id,
-            ali_id: block.alignment_id,
+            query_id: block.query_id,
+            ali_id: alignment_id,
             row_idx: block.row_idx,
             col_start: block.target_start,
             col_end: block.target_end,
@@ -635,7 +637,7 @@ pub fn history_backtrace_append_block(
     }
 
     // Case 4: Skip state, don't add anything...
-    return join_index;
+    join_index
 }
 
 pub fn backtrace_histories(
@@ -679,5 +681,5 @@ pub fn backtrace_histories(
 
     // Reverse so trace segments go from start to end instead of end to start.
     refined_segments.reverse();
-    return refined_segments;
+    refined_segments
 }

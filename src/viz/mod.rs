@@ -5,6 +5,7 @@ use bed::*;
 use block::*;
 
 use std::{
+    cell::Ref,
     collections::HashMap,
     fs::File,
     io::{BufRead, BufReader},
@@ -24,7 +25,7 @@ use crate::{
     annotation::Annotation,
     chunks::ProximityGroup,
     matrix::Matrix,
-    viterbi::TraceSegment,
+    viterbi::{RefinedTraceSegment, TraceSegment},
     AuroraArgs,
 };
 
@@ -130,7 +131,7 @@ pub struct AdjudicationSodaData<'a> {
     alignment_data: &'a AlignmentData,
     target_seq: &'a [u8],
     annotations: Vec<Annotation>,
-    trace: &'a Vec<TraceSegment>,
+    trace: &'a Vec<RefinedTraceSegment>,
     maybe_constraint: Option<&'a VizConstraint>,
     args: &'a AuroraArgs,
 }
@@ -144,7 +145,7 @@ impl<'a> AdjudicationSodaData<'a> {
         confidence_matrix: &'a Matrix<'a, f64>,
         alignment_data: &'a AlignmentData,
         target_seq: &'a [u8],
-        trace: &'a Vec<TraceSegment>,
+        trace: &'a Vec<RefinedTraceSegment>,
         args: &'a AuroraArgs,
     ) -> Self {
         Self {
@@ -373,7 +374,7 @@ impl<'a> AdjudicationSodaData<'a> {
             .collect()
     }
 
-    fn trace_string(&self, seg: &TraceSegment) -> String {
+    fn trace_string(&self, seg: &RefinedTraceSegment) -> String {
         let mut conf = 0.0;
         (seg.col_start..=seg.col_end)
             .for_each(|col_idx| conf += self.confidence_matrix.get(seg.row_idx, col_idx));
@@ -382,7 +383,11 @@ impl<'a> AdjudicationSodaData<'a> {
 
         format!(
             "{},{},{},{},{:3.2}",
-            seg.col_start, seg.col_end, seg.query_id, seg.row_idx, conf
+            seg.col_start,
+            seg.col_end,
+            seg.query_id.unwrap_or(0),
+            seg.row_idx,
+            conf
         )
     }
 

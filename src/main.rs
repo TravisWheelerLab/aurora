@@ -182,6 +182,10 @@ pub struct AnnotationArgs {
         value_name = "f"
     )]
     pub min_block_confidence: f64,
+
+    /// The max depth of the histories used for identifying joins.
+    #[arg(long = "max-history-depth", default_value = "30", value_name = "n")]
+    pub max_history_depth: usize,
 }
 
 #[derive(Args, Debug, Clone, Default)]
