@@ -63,7 +63,6 @@ pub enum BlockType {
 pub struct Block {
     pub row_idx: usize,
     pub block_type: BlockType,
-    pub alignment_id: Option<usize>,
     pub query_id: Option<usize>,
     pub target_start: usize,
     pub target_end: usize,
@@ -293,12 +292,6 @@ pub fn segments_from_matrix_trace(
                         BlockType::TandemRepeat
                     };
 
-                    let alignment_id = match block_type {
-                        BlockType::Alignment => Some(group.alignments[row_idx - 1].id),
-                        BlockType::TandemRepeat => Some(group.tandem_repeats[row_idx - 1].id),
-                        _ => None,
-                    };
-
                     let query_id = match block_type {
                         BlockType::Alignment => Some(group.alignments[row_idx - 1].query_id),
                         _ => None,
@@ -307,7 +300,6 @@ pub fn segments_from_matrix_trace(
                     Block {
                         row_idx,
                         block_type,
-                        alignment_id,
                         query_id,
                         target_start: start,
                         target_end: end,

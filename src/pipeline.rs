@@ -134,7 +134,7 @@ pub fn run_pipeline(
 
     confidence(&mut confidence_matrix);
     let (confidence_avg_by_id, _confidence_by_id) = windowed_confidence(&mut confidence_matrix);
-    
+
     let assembly_graph = AssemblyGraph::new(
         proximity_group,
         &confidence_avg_by_id,
@@ -175,11 +175,15 @@ pub fn run_pipeline(
         &args.annotation_args,
     );
 
+    println!("{:?}", segments);
+
     let history = history_viterbi_on_segments(
         &segments,
         &score_params,
         args.annotation_args.max_history_depth,
     );
+
+    println!("{:?}", history);
 
     let refined_trace_segments = backtrace_histories(&segments, &history);
 

@@ -1,8 +1,10 @@
+use std::cmp::Ordering;
+
 use crate::{
     alignment::Strand,
     matrix::Matrix,
     score_params::ScoreParams,
-    segments::{Block, Segment, SegmentedMatrix},
+    segments::{Block, BlockType, Segment, SegmentedMatrix},
 };
 
 use itertools::{izip, multizip};
@@ -344,13 +346,13 @@ impl PartialEq for HistoryInfo {
 impl Eq for HistoryInfo {}
 
 impl Ord for HistoryInfo {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         match self.segment.cmp(&other.segment) {
-            core::cmp::Ordering::Equal => {}
+            Ordering::Equal => {}
             ord => return ord,
         }
         match self.block.cmp(&other.block) {
-            core::cmp::Ordering::Equal => {}
+            Ordering::Equal => {}
             ord => return ord,
         }
         self.prior_history.cmp(&other.prior_history)
@@ -358,16 +360,45 @@ impl Ord for HistoryInfo {
 }
 
 impl PartialOrd for HistoryInfo {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug)]
 pub enum HistoryEntry {
     Root,
     Join(HistoryInfo),
     Append(HistoryInfo),
+}
+
+impl PartialEq for HistoryEntry {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Join(l0) | Self::Append(l0), Self::Join(r0) | Self::Append(r0)) => l0 == r0,
+            (Self::Root, Self::Root) => true,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for HistoryEntry {}
+
+impl Ord for HistoryEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Self::Join(l0) | Self::Append(l0), Self::Join(r0) | Self::Append(r0)) => l0.cmp(r0),
+            (Self::Root, Self::Root) => Ordering::Equal,
+            (Self::Root, _) => Ordering::Less,
+            (_, Self::Root) => Ordering::Greater
+        }
+    }
+}
+
+impl PartialOrd for HistoryEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 #[derive(Debug)]
@@ -423,7 +454,8 @@ fn keep_unique_histories(histories: &mut Vec<HistoryEntry>, start_offset: usize)
                 histories.swap(next_idx, current_unique);
             }
         } else {
-            current_unique += 1
+            current_unique += 1;
+            histories.swap(next_idx, current_unique);
         }
     }
 
@@ -568,7 +600,6 @@ pub fn history_viterbi_on_segments(
 #[derive(Debug)]
 pub struct RefinedTraceSegment {
     pub query_id: Option<usize>,
-    pub ali_id: usize,
     pub row_idx: usize,
     pub col_start: usize,
     pub col_end: usize,
@@ -608,13 +639,12 @@ pub fn history_backtrace_append_block(
         }
     }
 
-    if let Some(alignment_id) = block.alignment_id {
+    if let BlockType::TandemRepeat | BlockType::Alignment = block.block_type {
         // Case 2: Is part of a join, use shared join index...
         if let Some(&(check_idx, _hist_idx, group_join_idx)) = join_stack.last() {
             if current_index == check_idx {
                 refined_segments.push(RefinedTraceSegment {
                     query_id: block.query_id,
-                    ali_id: alignment_id,
                     row_idx: block.row_idx,
                     col_start: block.target_start,
                     col_end: block.target_end,
@@ -629,7 +659,6 @@ pub fn history_backtrace_append_block(
         // Case 3: New segment not part of a join...
         refined_segments.push(RefinedTraceSegment {
             query_id: block.query_id,
-            ali_id: alignment_id,
             row_idx: block.row_idx,
             col_start: block.target_start,
             col_end: block.target_end,
