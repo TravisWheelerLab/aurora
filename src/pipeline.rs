@@ -134,6 +134,7 @@ pub fn run_pipeline(
 
     confidence(&mut confidence_matrix);
     let (confidence_avg_by_id, _confidence_by_id) = windowed_confidence(&mut confidence_matrix);
+    
     let assembly_graph = AssemblyGraph::new(
         proximity_group,
         &confidence_avg_by_id,
@@ -181,8 +182,6 @@ pub fn run_pipeline(
     );
 
     let refined_trace_segments = backtrace_histories(&segments, &history);
-
-    println!("{:?}", history);
 
     // if we're going to produce visualizations, this will
     // keep track of all of the data needed to do so

@@ -51,12 +51,15 @@ impl<T> AsMut<T> for Unordered<T> {
     }
 }
 
+
+#[derive(Debug)]
 pub enum BlockType {
     Skip,
     Alignment,
     TandemRepeat,
 }
 
+#[derive(Debug)]
 pub struct Block {
     pub row_idx: usize,
     pub block_type: BlockType,
@@ -68,6 +71,8 @@ pub struct Block {
     pub can_join_up_to: usize,
 }
 
+
+#[derive(Debug)]
 pub struct Segment {
     pub start_col: usize,
     pub end_col: usize,
@@ -324,13 +329,13 @@ pub fn segments_from_matrix_trace(
             if let BlockType::TandemRepeat | BlockType::Skip = block.block_type {
                 continue;
             }
-
-            let alignment = &group.alignments[block.row_idx - 1];
-
             let mut best_idx = s_idx;
 
-            for &compat_al in assembly_graph.fwd_map.get(alignment).into_iter().flatten() {
-                best_idx = best_idx.max(segment_last_seen[compat_al.id + 1]);
+            for e in assembly_graph.fwd_graph[block.row_idx - 1].iter() {
+                best_idx = best_idx.max(segment_last_seen[e.edge_to + 1]);
+            }
+            for e in assembly_graph.rev_graph[block.row_idx - 1].iter() {
+                best_idx = best_idx.max(segment_last_seen[e.edge_to + 1]);
             }
 
             seg.blocks[b_idx].can_join_up_to = best_idx;

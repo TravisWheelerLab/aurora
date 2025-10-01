@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs::File,
     io::{BufWriter, Write},
+    hash::{Hash}
 };
 
 use itertools::Itertools;
@@ -16,37 +17,52 @@ use crate::{
 /// The direction of an `Edge` in terms of where
 /// `&Alignment` B (value) is in relation to `&Alignment` A (key)
 /// in the coordinate space of the chromosome
-#[derive(PartialEq, Clone, Copy, Debug)]
+#[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
 pub enum Direction {
     Left,
     Right,
 }
 
-#[derive(PartialEq, Clone, Copy, Debug)]
-pub struct Edge<'a> {
-    pub ali_to: &'a Alignment,
+#[derive(Clone, Copy, Debug)]
+pub struct Edge {
+    pub edge_to: usize,
     pub weight: f64,
     pub direction: Direction,
 }
 
-pub fn assembly_graph<'a>(
-    alignments: &[&'a Alignment],
+// Hashing and equivalence only based on to edge field.
+impl PartialEq for Edge {
+    fn eq(&self, other: &Self) -> bool {
+        self.edge_to == other.edge_to
+    }
+}
+
+impl Eq for Edge {}
+
+impl Hash for Edge {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.edge_to.hash(state);
+    }
+}
+
+fn link_assemblies(
+    graph: &mut [HashSet<Edge>],
+    alignments: &[(usize, &Alignment)],
     args: &AnnotationArgs,
-) -> HashMap<&'a Alignment, Vec<Edge<'a>>> {
+) {
     // this relies on the alignments being sorted by target start
     // note: this assertion iter will only run in debug mode
     alignments
         .iter()
         .zip(alignments.iter().skip(1))
         .for_each(|(a, b)| {
-            debug_assert!(a.target_start <= b.target_start);
+            debug_assert!(a.1.target_start <= b.1.target_start);
         });
+    // We also rely on the fact that all alignment indexes are actually in the graph!
+    alignments.iter().for_each(|a| debug_assert!(a.0 < graph.len()));
 
-    let mut graph: HashMap<&Alignment, Vec<Edge>> =
-        alignments.iter().map(|&a| (a, vec![])).collect();
-
-    alignments.iter().enumerate().for_each(|(a_idx, &a)| {
-        alignments[a_idx + 1..].iter().for_each(|&b| {
+    alignments.iter().enumerate().for_each(|(idx, &(a_idx, a))| {
+        alignments[idx + 1..].iter().for_each(|&(b_idx, b)| {
             // TODO: this is highly suspect, as this should never happen
             //       ?????
             if a == b {
@@ -71,36 +87,31 @@ pub fn assembly_graph<'a>(
             let weight = target_distance.abs() as f64;
 
             if within_target_distance_threshold && consensus_is_colinear {
-                let a_edges = graph.entry(a).or_default();
-                a_edges.push(Edge {
-                    ali_to: b,
+                graph[a_idx].insert(Edge {
+                    edge_to: b_idx,
                     weight,
                     direction: Direction::Right,
                 });
-
-                let b_edges = graph.entry(b).or_default();
-                b_edges.push(Edge {
-                    ali_to: a,
+                graph[b_idx].insert(Edge {
+                    edge_to: a_idx,
                     weight,
                     direction: Direction::Left,
                 });
             }
         });
     });
-
-    graph
 }
 
 /// Represents graph of compatable alignments on the genome.
 /// For each alignment, stores all alignments from the same query in front of it.
-pub struct AssemblyGraph<'a> {
-    pub fwd_map: HashMap<&'a Alignment, HashSet<&'a Alignment>>,
-    pub rev_map: HashMap<&'a Alignment, HashSet<&'a Alignment>>,
+pub struct AssemblyGraph {
+    pub fwd_graph: Vec<HashSet<Edge>>,
+    pub rev_graph: Vec<HashSet<Edge>>
 }
 
-impl<'a> AssemblyGraph<'a> {
+impl AssemblyGraph {
     pub fn new(
-        group: &ProximityGroup<'a>,
+        group: &ProximityGroup,
         confidence_avg_by_id: &HashMap<usize, f64>,
         args: &AuroraArgs,
         alignment_data: &AlignmentData,
@@ -114,8 +125,8 @@ impl<'a> AssemblyGraph<'a> {
 
         query_ids.sort();
 
-        let mut fwd_map: HashMap<&'a Alignment, HashSet<&'a Alignment>> = HashMap::new();
-        let mut rev_map: HashMap<&'a Alignment, HashSet<&'a Alignment>> = HashMap::new();
+        let mut fwd_graph: Vec<HashSet<Edge>> = vec![HashSet::new(); group.alignments.len()];
+        let mut rev_graph: Vec<HashSet<Edge>> = vec![HashSet::new(); group.alignments.len()];
 
         let mut query_files: Vec<String> = vec![];
         let mut file_query_ids: Vec<usize> = vec![];
@@ -124,22 +135,22 @@ impl<'a> AssemblyGraph<'a> {
         query_ids
             .iter()
             // grab the alignments for this ID
-            .map(|id| (id, group.alignments.iter().filter(|a| a.query_id == *id)))
+            .map(|id| (id, group.alignments.iter().enumerate().filter(|&(_, a)| a.query_id == *id)))
             .for_each(|(query_id, alignments)| {
                 // split the forward and reverse stranded alignments
-                let (fwd_ali, rev_ali): (Vec<&Alignment>, Vec<&Alignment>) = alignments
+                let (fwd_ali, rev_ali): (Vec<(usize, &Alignment)>, Vec<(usize, &Alignment)>) = alignments
                     .into_iter()
-                    .partition(|a| a.strand == Strand::Forward);
+                    .partition(|&(_, a)| a.strand == Strand::Forward);
 
-                let fwd_graph = assembly_graph(&fwd_ali, &args.annotation_args);
-                let rev_graph = assembly_graph(&rev_ali, &args.annotation_args);
+                link_assemblies(&mut fwd_graph, &fwd_ali, &args.annotation_args);
+                link_assemblies(&mut rev_graph, &rev_ali, &args.annotation_args);
 
                 if args.visualization_args.assembly_viz {
-                    let fwd_links = fwd_graph
+                    let fwd_links = fwd_ali
                         .iter()
-                        .flat_map(|(ali_from, edges)| {
-                            edges.iter().map(|e| {
-                                let ali_to = e.ali_to;
+                        .flat_map(|&(ali_idx, ali_from)| {
+                            fwd_graph[ali_idx].iter().map(|e| {
+                                let ali_to = &group.alignments[e.edge_to];
                                 let start = (ali_from.target_start + ali_from.target_end) / 2;
                                 let end = (ali_to.target_start + ali_to.target_end) / 2;
                                 format!("{}-{},{},{}", ali_from.id, ali_to.id, start, end)
@@ -147,11 +158,11 @@ impl<'a> AssemblyGraph<'a> {
                         })
                         .collect_vec();
 
-                    let rev_links = rev_graph
+                    let rev_links = rev_ali
                         .iter()
-                        .flat_map(|(ali_from, edges)| {
-                            edges.iter().map(|e| {
-                                let ali_to = e.ali_to;
+                        .flat_map(|&(ali_idx, ali_from)| {
+                            fwd_graph[ali_idx].iter().map(|e| {
+                                let ali_to = &group.alignments[e.edge_to];
                                 let start = (ali_from.target_start + ali_from.target_end) / 2;
                                 let end = (ali_to.target_start + ali_to.target_end) / 2;
                                 format!("{}-{},{},{}", ali_from.id, ali_to.id, start, end)
@@ -160,11 +171,12 @@ impl<'a> AssemblyGraph<'a> {
                         .collect_vec();
 
                     if !fwd_ali.is_empty() {
+                        let fwd_ali_only = fwd_ali.iter().map(|&(_, al)| al).collect_vec();
                         query_files.push(format!("{}-fwd.html", query_id));
                         file_query_ids.push(*query_id);
                         file_strand.push(true);
                         AssemblySodaData::new(
-                            &fwd_ali,
+                            &fwd_ali_only,
                             fwd_links,
                             confidence_avg_by_id,
                             alignment_data,
@@ -177,11 +189,12 @@ impl<'a> AssemblyGraph<'a> {
                     }
 
                     if !rev_ali.is_empty() {
+                        let rev_ali_only = rev_ali.iter().map(|&(_, al)| al).collect_vec();
                         query_files.push(format!("{}-rev.html", query_id));
                         file_query_ids.push(*query_id);
                         file_strand.push(false);
                         AssemblySodaData::new(
-                            &rev_ali,
+                            &rev_ali_only,
                             rev_links,
                             confidence_avg_by_id,
                             alignment_data,
@@ -193,28 +206,6 @@ impl<'a> AssemblyGraph<'a> {
                         );
                     }
                 }
-
-                // Extend graph of forward (on query sequence) alignments, we filter to only alignments to the right of each alignment...
-                fwd_map.extend(fwd_graph.into_iter().map(|(al, edges)| {
-                    (
-                        al,
-                        edges
-                            .iter()
-                            .filter(|e| e.direction == Direction::Right)
-                            .map(|e| e.ali_to)
-                            .collect(),
-                    )
-                }));
-                rev_map.extend(rev_graph.into_iter().map(|(al, edges)| {
-                    (
-                        al,
-                        edges
-                            .iter()
-                            .filter(|e| e.direction == Direction::Right)
-                            .map(|e| e.ali_to)
-                            .collect(),
-                    )
-                }));
             });
 
         if args.visualization_args.assembly_viz {
@@ -246,6 +237,6 @@ impl<'a> AssemblyGraph<'a> {
             writeln!(&mut asm_index_writer, "</ul>\n</body>\n</html>").expect(error_msg);
         }
 
-        Self { fwd_map, rev_map }
+        Self { fwd_graph, rev_graph }
     }
 }
