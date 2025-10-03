@@ -1,3 +1,5 @@
+use std::{fmt::Debug, iter::Fuse};
+
 use crate::{
     chunks::ProximityGroup, collapse::AssemblyGraph, matrix::Matrix, score_params::ScoreParams,
     viterbi::TraceSegment, AnnotationArgs,
@@ -39,18 +41,6 @@ impl<T> From<T> for Unordered<T> {
     }
 }
 
-impl<T> AsRef<T> for Unordered<T> {
-    fn as_ref(&self) -> &T {
-        &self.0
-    }
-}
-
-impl<T> AsMut<T> for Unordered<T> {
-    fn as_mut(&mut self) -> &mut T {
-        &mut self.0
-    }
-}
-
 
 #[derive(Debug)]
 pub enum BlockType {
@@ -81,14 +71,48 @@ pub struct Segment {
 // type SegmentedMatrix = Vec<Segment>;
 pub type SegmentedMatrix = Vec<Segment>;
 
+
+#[derive(Eq, Ord, PartialEq, PartialOrd, Copy, Clone, Debug)]
+enum MergeEntry<T> {
+    Start,
+    Some(T),
+    End,
+}
+
+impl<T> MergeEntry<T> {
+    fn is_start(&self) -> bool {
+        matches!(self, Self::Start)
+    }
+
+    fn is_end(&self) -> bool {
+        matches!(self, Self::End)
+    }
+}
+
+impl<T> From<Option<T>> for MergeEntry<T> {
+    fn from(value: Option<T>) -> Self {
+        match value {
+            Some(v) => MergeEntry::Some(v),
+            None => MergeEntry::End
+        }
+    }
+}
+
+impl<T> From<MergeEntry<T>> for Option<T> {
+    fn from(value: MergeEntry<T>) -> Self {
+        match value {
+            MergeEntry::Some(v) => Some(v),
+            _ => None,
+        }
+    }
+}
+
 struct MergeIterator<I: Iterator, J: Iterator<Item = I::Item>> {
-    iter1: I,
-    iter2: J,
-    val1: Option<I::Item>,
-    val2: Option<I::Item>,
-    prior_val: Option<I::Item>,
-    val1_exhasted: bool,
-    val2_exhasted: bool,
+    iter1: Fuse<I>,
+    iter2: Fuse<J>,
+    val1: MergeEntry<I::Item>,
+    val2: MergeEntry<I::Item>,
+    prior_val: MergeEntry<I::Item>,
 }
 
 impl<I: Iterator, J: Iterator<Item = I::Item>> MergeIterator<I, J>
@@ -97,13 +121,11 @@ where
 {
     pub fn new(iter1: I, iter2: J) -> Self {
         Self {
-            iter1,
-            iter2,
-            val1: None,
-            val2: None,
-            prior_val: None,
-            val1_exhasted: false,
-            val2_exhasted: false,
+            iter1: iter1.fuse(),
+            iter2: iter2.fuse(),
+            val1: MergeEntry::Start,
+            val2: MergeEntry::Start,
+            prior_val: MergeEntry::Start,
         }
     }
 }
@@ -115,47 +137,24 @@ where
     type Item = I::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut next_val: Option<Self::Item> = None;
+        if let MergeEntry::End = self.prior_val {
+            return None;
+        }
 
-        while !self.val1_exhasted || !self.val2_exhasted {
-            // Fill iterators with next values...
-            if self.val1.is_none() && !self.val1_exhasted {
-                self.val1 = self.iter1.next();
-                self.val1_exhasted = self.val1.is_none();
-            }
-            if self.val2.is_none() && !self.val2_exhasted {
-                self.val2 = self.iter2.next();
-                self.val2_exhasted = self.val2.is_none();
-            }
+        let mut next_val: MergeEntry<Self::Item> = self.prior_val;
 
-            match (self.val1, self.val2) {
-                (Some(v), None) => {
-                    self.val1 = None;
-                    next_val = Some(v);
-                }
-                (None, Some(v)) => {
-                    self.val2 = None;
-                    next_val = Some(v)
-                }
-                (Some(v1), Some(v2)) => {
-                    if v1 <= v2 {
-                        next_val = self.val1;
-                        self.val1 = None;
-                    } else {
-                        next_val = self.val2;
-                        self.val2 = None;
-                    }
-                }
-                _ => {}
-            }
-
-            if self.prior_val != next_val {
-                break;
+        while next_val.is_start() || next_val == self.prior_val {
+            if self.val1 <= self.val2 {
+                next_val = self.val1;
+                self.val1 = self.iter1.next().into();
+            } else {
+                next_val = self.val2;
+                self.val2 = self.iter2.next().into();
             }
         }
 
         self.prior_val = next_val;
-        next_val
+        next_val.into()
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -214,7 +213,7 @@ pub fn segments_from_matrix_trace(
     for (s_idx, seg) in trace_segments.iter().enumerate() {
         // Initialize offsets...
         for i in 0..matrix_definition.num_rows {
-            row_scores[i] = 0.0;
+            row_scores[i] = 0.0;  // ln(1)
             // This causes skip state cost to be calculated correctly for the start of a segment...
             prior_val[i] = i;
         }
@@ -245,7 +244,7 @@ pub fn segments_from_matrix_trace(
             for (row_idx, Unordered(score_idx)) in unique_merging_iterator(row_iter, all_row_iter) {
                 let trans_cost =
                     score_params.transition(score_idx == 0, (prior_val[row_idx] > 0) != (score_idx > 0));
-                row_scores[row_idx] += trans_cost + confidence_matrix.data[column][score_idx].ln();
+                row_scores[row_idx] += trans_cost + confidence_matrix.get_sparse(score_idx, column).ln();
 
                 // Set for the next column...
                 prior_val[row_idx] = score_idx;
@@ -340,29 +339,11 @@ pub fn segments_from_matrix_trace(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cmp::Ordering;
 
     // Type used for identifying ordering when values are the same...
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
     #[allow(dead_code)]
     struct LComp(u32, Unordered<u32>);
-
-    impl PartialEq for LComp {
-        fn eq(&self, other: &Self) -> bool {
-            other.0.eq(&other.0)
-        }
-    }
-    impl Eq for LComp {}
-    impl PartialOrd for LComp {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            Some(self.cmp(other))
-        }
-    }
-    impl Ord for LComp {
-        fn cmp(&self, other: &Self) -> Ordering {
-            self.0.cmp(&other.0)
-        }
-    }
 
     fn lcomp(v1: u32, v2: u32) -> LComp {
         LComp(v1, Unordered(v2))
@@ -385,9 +366,15 @@ mod tests {
 
         /* When two lists have the same value, values are taken from the first iterator. */
         assert!(unique_merging_iterator(
-            [lcomp(1, 30), lcomp(1, 40), lcomp(2, 4)].iter(),
+            [lcomp(1, 500), lcomp(1, 20), lcomp(2, 4)].iter(),
+            [lcomp(1, 15), lcomp(1, 15), lcomp(1, 15), lcomp(1, 15), lcomp(1, 15), lcomp(2, 10), lcomp(2, 20), lcomp(2, 30)].iter()
+        )
+        .eq([lcomp(1, 500), lcomp(2, 4)].iter()));
+
+        assert!(unique_merging_iterator(
+            [lcomp(1, 500)].iter(),
             [lcomp(1, 15)].iter()
         )
-        .eq([lcomp(1, 30), lcomp(2, 4)].iter()));
+        .eq([lcomp(1, 500)].iter()));
     }
 }

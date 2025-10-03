@@ -693,6 +693,7 @@ pub fn backtrace_histories(
         let block = &segments[entry_info.segment].blocks[entry_info.block];
 
         // Append block for this entry (or extend prior trace block if this is the same alignment)...
+        let old_join_idx = join_idx;
         join_idx = history_backtrace_append_block(
             &mut refined_segments,
             &mut join_stack,
@@ -703,7 +704,7 @@ pub fn backtrace_histories(
 
         // If this is a join, add it so the segment it joins to can be constructed correctly later...
         if let HistoryEntry::Join(_) = current_entry {
-            join_stack.push((entry_info.join_history, current_idx, join_idx));
+            join_stack.push((entry_info.join_history, current_idx, old_join_idx));
         }
 
         // Go to the next entry in the history...

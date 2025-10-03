@@ -18,8 +18,9 @@ pub fn approximate_ideal_skip_state_score(
 }
 
 fn fast_select(a: f64, b: f64, switch: bool) -> f64 {
-    let sw = (!switch as u64).wrapping_sub(1);
-    f64::from_bits((a.to_bits() & sw) | (b.to_bits() & !sw))
+    /*let sw = (!switch as u64).wrapping_sub(1);
+    f64::from_bits((a.to_bits() & sw) | (b.to_bits() & !sw))*/
+    if switch { a } else { b }
 }
 
 impl ScoreParams {
