@@ -175,7 +175,8 @@ pub fn run_pipeline(
         &args.annotation_args,
     );
 
-    println!("{:?}", segments);
+    println!("{:#?}", proximity_group);
+    println!("{:#?}", segments);
 
     let history = history_viterbi_on_segments(
         &segments,
@@ -183,7 +184,7 @@ pub fn run_pipeline(
         args.annotation_args.max_history_depth,
     );
 
-    println!("{:?}", history);
+    println!("{:#?}", history);
 
     let refined_trace_segments = backtrace_histories(&segments, &history);
 

@@ -244,8 +244,8 @@ pub fn segments_from_matrix_trace(
 
             for (row_idx, Unordered(score_idx)) in unique_merging_iterator(row_iter, all_row_iter) {
                 let trans_cost =
-                    score_params.transition(score_idx == 0, prior_val[row_idx] != score_idx);
-                row_scores[row_idx] += trans_cost + confidence_matrix.data[column][score_idx];
+                    score_params.transition(score_idx == 0, (prior_val[row_idx] > 0) != (score_idx > 0));
+                row_scores[row_idx] += trans_cost + confidence_matrix.data[column][score_idx].ln();
 
                 // Set for the next column...
                 prior_val[row_idx] = score_idx;
@@ -262,7 +262,7 @@ pub fn segments_from_matrix_trace(
 
         valid_rows
             .iter()
-            .filter(|&&row_idx| (row_scores[row_idx] - total_confidence) > min_confidence)
+            .filter(|&&row_idx| (row_idx == 0) || (row_scores[row_idx] - total_confidence) > min_confidence)
             .for_each(|&row_idx| {
                 segment_last_seen[row_idx] = segments.len();
             });
@@ -274,7 +274,7 @@ pub fn segments_from_matrix_trace(
                 .iter()
                 .filter(|&&row_idx| {
                     // Remove sections which have too low of a confidence...
-                    (row_scores[row_idx] - total_confidence) > min_confidence
+                    (row_idx == 0) || (row_scores[row_idx] - total_confidence) > min_confidence
                 })
                 .map(|&row_idx| {
                     let start = seg
