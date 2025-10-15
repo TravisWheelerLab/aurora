@@ -622,20 +622,21 @@ fn get_max_history(history_range: &[HistoryEntry]) -> usize {
         .0
 }
 
+// Return is the assigned index of the new block
 pub fn history_backtrace_append_block(
     refined_segments: &mut Vec<RefinedTraceSegment>,
     join_stack: &mut Vec<(usize, usize, usize)>,
     block: &Block,
     current_index: usize,
     join_index: usize,
-) -> usize {
+) -> (Option<usize>, usize) {
     // Case 1: Same row index and touches start of segment in front of it, extend the segment backwards to include this...
     if let Some(ref_seg) = refined_segments.last_mut() {
         if ref_seg.row_idx == block.row_idx
             && block.target_end >= (ref_seg.col_start.saturating_sub(1))
         {
             ref_seg.col_start = block.target_start;
-            return join_index;
+            return (Some(ref_seg.join_index), join_index);
         }
     }
 
@@ -652,7 +653,7 @@ pub fn history_backtrace_append_block(
                 });
 
                 join_stack.pop();
-                return join_index;
+                return (Some(group_join_idx), join_index);
             }
         }
 
@@ -665,11 +666,11 @@ pub fn history_backtrace_append_block(
             join_index,
         });
 
-        return join_index + 1;
+        return (Some(join_index), join_index + 1);
     }
 
     // Case 4: Skip state, don't add anything...
-    join_index
+    (None, join_index)
 }
 
 pub fn backtrace_histories(
@@ -693,8 +694,8 @@ pub fn backtrace_histories(
         let block = &segments[entry_info.segment].blocks[entry_info.block];
 
         // Append block for this entry (or extend prior trace block if this is the same alignment)...
-        let old_join_idx = join_idx;
-        join_idx = history_backtrace_append_block(
+        let new_node_join_index;
+        (new_node_join_index, join_idx) = history_backtrace_append_block(
             &mut refined_segments,
             &mut join_stack,
             block,
@@ -704,7 +705,9 @@ pub fn backtrace_histories(
 
         // If this is a join, add it so the segment it joins to can be constructed correctly later...
         if let HistoryEntry::Join(_) = current_entry {
-            join_stack.push((entry_info.join_history, current_idx, old_join_idx));
+            if let Some(new_node_join_index) = new_node_join_index {
+                join_stack.push((entry_info.join_history, current_idx, new_node_join_index));
+            }
         }
 
         // Go to the next entry in the history...
