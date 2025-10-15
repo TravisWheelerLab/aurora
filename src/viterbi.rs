@@ -1,10 +1,7 @@
 use std::cmp::Ordering;
 
 use crate::{
-    alignment::Strand,
-    matrix::Matrix,
-    score_params::ScoreParams,
-    segments::{Block, BlockType, Segment, SegmentedMatrix},
+    alignment::Strand, collapse::{AssemblyGraph, Direction, Edge}, matrix::Matrix, score_params::ScoreParams, segments::{Block, BlockType, Segment, SegmentedMatrix}
 };
 
 use itertools::{izip, multizip};
@@ -422,8 +419,8 @@ fn remove_expired_history_entries(
                 return current_entry;
             }
             HistoryEntry::Append(val) | HistoryEntry::Join(val) => {
-                let segment = &segments[val.segment].blocks[val.block];
-                if segment.can_join_up_to > current_segment {
+                let blk = &segments[val.segment].blocks[val.block];
+                if blk.can_join_up_to > current_segment {
                     return current_entry;
                 }
                 current_entry = val.prior_history;
@@ -464,9 +461,34 @@ fn keep_unique_histories(histories: &mut Vec<HistoryEntry>, start_offset: usize)
     }
 }
 
+fn check_for_forward_link(
+    assembly_graph: &AssemblyGraph,
+    start_block: &Block,
+    later_block: &Block
+) -> bool {
+    // Weight and direction are ignored for edges...
+    let edge = Edge {
+        edge_to: later_block.row_idx - 1,
+        weight: 0.0,
+        direction: Direction::Right
+    };
+
+    // If we find it in either the forward or reverse graph, check it's in front of the start alignment...
+    if let Some(e1) = assembly_graph.fwd_graph[start_block.row_idx - 1].get(&edge) {
+        e1.direction == edge.direction
+    }
+    else if let Some(e1) = assembly_graph.rev_graph[start_block.row_idx - 1].get(&edge) {
+        e1.direction == edge.direction
+    }
+    else {
+        false
+    }
+}
+
 fn check_for_join(
     histories: &[HistoryEntry],
     segments: &SegmentedMatrix,
+    assembly_graph: &AssemblyGraph,
     current_block_index: (usize, usize),
     start_entry: usize,
     history_depth: usize,
@@ -475,19 +497,23 @@ fn check_for_join(
     let current_block = &segments[current_block_index.0].blocks[current_block_index.1];
     let segment_idx = current_block_index.0;
 
-    for _ in 0..history_depth {
-        match &histories[last_hist] {
-            HistoryEntry::Root => return None,
-            HistoryEntry::Append(val) | HistoryEntry::Join(val) => {
-                let cur_hist = last_hist;
-                last_hist = val.prior_history;
-                let blk = &segments[val.segment].blocks[val.block];
-                if blk.query_id.is_some()
-                    && current_block.query_id.is_some()
-                    && blk.query_id == current_block.query_id
-                    && blk.can_join_up_to >= segment_idx
-                {
-                    return Some(cur_hist);
+    if let Some(current_query_id) = current_block.query_id {
+        for _ in 0..history_depth {
+            match &histories[last_hist] {
+                HistoryEntry::Root => return None,
+                HistoryEntry::Append(val) | HistoryEntry::Join(val) => {
+                    let cur_hist = last_hist;
+                    last_hist = val.prior_history;
+                    let blk = &segments[val.segment].blocks[val.block];
+                    
+                    if let Some(prior_query_id) = blk.query_id {
+                        if prior_query_id == current_query_id
+                            && blk.can_join_up_to >= segment_idx
+                            && check_for_forward_link(assembly_graph, &blk, &current_block)
+                        {
+                            return Some(cur_hist);
+                        }
+                    }
                 }
             }
         }
@@ -506,6 +532,7 @@ fn get_owning_block(history_entry: &HistoryEntry) -> Option<usize> {
 pub fn history_viterbi_on_segments(
     segments: &SegmentedMatrix,
     score_params: &ScoreParams,
+    assembly_graph: &AssemblyGraph,
     history_depth: usize,
 ) -> History {
     let block_count: usize = segments.iter().map(|s| s.blocks.len()).sum();
@@ -525,6 +552,7 @@ pub fn history_viterbi_on_segments(
                 let join_index = check_for_join(
                     &histories,
                     segments,
+                    assembly_graph,
                     (segment_idx, block_idx),
                     prior_hist_idx,
                     history_depth,

@@ -263,7 +263,7 @@ pub fn segments_from_matrix_trace(
             .iter()
             .filter(|&&row_idx| (row_idx == 0) || (row_scores[row_idx] - total_confidence) > min_confidence)
             .for_each(|&row_idx| {
-                segment_last_seen[row_idx] = segments.len();
+                segment_last_seen[row_idx] = if segment_last_seen[row_idx] == 0 { segments.len() } else {segment_last_seen[row_idx]};
             });
 
         segments.push(Segment {

@@ -142,44 +142,51 @@ pub fn run_pipeline(
         alignment_data,
     );
 
-    // let mut collapsed_confidence_matrix = Matrix::<f64>::new(&collapsed_matrix_def);
-    let mut viterbi_matrix = Matrix::<f64>::new(&matrix_def);
-    let mut sources_matrix = Matrix::<usize>::new(&matrix_def);
+    let segments;
 
-    // the initial active cols just removes the dead space between alignments
-    let active_cols = confidence_matrix.initial_active_cols();
+    // In a new block so initial viterbi matricies/sources are freed right after being used...
+    {
+        // let mut collapsed_confidence_matrix = Matrix::<f64>::new(&collapsed_matrix_def);
+        let mut viterbi_matrix = Matrix::<f64>::new(&matrix_def);
+        let mut sources_matrix = Matrix::<usize>::new(&matrix_def);
+        // the initial active cols just removes the dead space between alignments
+        let active_cols = confidence_matrix.initial_active_cols();
 
-    viterbi_collapsed(
-        &confidence_matrix,
-        &mut viterbi_matrix,
-        &mut sources_matrix,
-        &active_cols,
-        &score_params,
-    );
+        viterbi_collapsed(
+            &confidence_matrix,
+            &mut viterbi_matrix,
+            &mut sources_matrix,
+            &active_cols,
+            &score_params,
+        );
 
-    let trace = traceback(
-        &viterbi_matrix,
-        &confidence_matrix,
-        &sources_matrix,
-        &active_cols,
-    );
+        let trace = traceback(
+            &viterbi_matrix,
+            &confidence_matrix,
+            &sources_matrix,
+            &active_cols,
+        );
 
-    let trace_segments = trace_segments(&trace);
+        let trace_segments = trace_segments(&trace);
 
-    let segments = segments_from_matrix_trace(
-        proximity_group,
-        &trace_segments,
-        &confidence_matrix,
-        &score_params,
-        &assembly_graph,
-        &args.annotation_args,
-    );
+        segments = segments_from_matrix_trace(
+            proximity_group,
+            &trace_segments,
+            &confidence_matrix,
+            &score_params,
+            &assembly_graph,
+            &args.annotation_args,
+        );
+    }
 
     let history = history_viterbi_on_segments(
         &segments,
         &score_params,
+        &assembly_graph,
         args.annotation_args.max_history_depth,
     );
+
+    //println!("{:?}", history.segment_offsets.iter().zip(history.segment_offsets.iter().skip(1)).map(|(a, b)| b - a).zip(segments.iter().map(|s| s.blocks.len())).collect_vec());
 
     let refined_trace_segments = backtrace_histories(&segments, &history);
 
