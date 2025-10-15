@@ -41,7 +41,6 @@ impl<T> From<T> for Unordered<T> {
     }
 }
 
-
 #[derive(Debug)]
 pub enum BlockType {
     Skip,
@@ -60,7 +59,6 @@ pub struct Block {
     pub can_join_up_to: usize,
 }
 
-
 #[derive(Debug)]
 pub struct Segment {
     pub start_col: usize,
@@ -70,7 +68,6 @@ pub struct Segment {
 
 // type SegmentedMatrix = Vec<Segment>;
 pub type SegmentedMatrix = Vec<Segment>;
-
 
 #[derive(Eq, Ord, PartialEq, PartialOrd, Copy, Clone, Debug)]
 enum MergeEntry<T> {
@@ -93,7 +90,7 @@ impl<T> From<Option<T>> for MergeEntry<T> {
     fn from(value: Option<T>) -> Self {
         match value {
             Some(v) => MergeEntry::Some(v),
-            None => MergeEntry::End
+            None => MergeEntry::End,
         }
     }
 }
@@ -213,8 +210,8 @@ pub fn segments_from_matrix_trace(
     for (s_idx, seg) in trace_segments.iter().enumerate() {
         // Initialize offsets...
         for i in 0..matrix_definition.num_rows {
-            row_scores[i] = 0.0;  // ln(1)
-            // This causes skip state cost to be calculated correctly for the start of a segment...
+            row_scores[i] = 0.0; // ln(1)
+                                 // This causes skip state cost to be calculated correctly for the start of a segment...
             prior_val[i] = i;
         }
 
@@ -242,9 +239,10 @@ pub fn segments_from_matrix_trace(
             let all_row_iter = valid_rows.iter().map(|&v| (v, Unordered(0)));
 
             for (row_idx, Unordered(score_idx)) in unique_merging_iterator(row_iter, all_row_iter) {
-                let trans_cost =
-                    score_params.transition(score_idx == 0, (prior_val[row_idx] > 0) != (score_idx > 0));
-                row_scores[row_idx] += trans_cost + confidence_matrix.get_sparse(score_idx, column).ln();
+                let trans_cost = score_params
+                    .transition(score_idx == 0, (prior_val[row_idx] > 0) != (score_idx > 0));
+                row_scores[row_idx] +=
+                    trans_cost + confidence_matrix.get_sparse(score_idx, column).ln();
 
                 // Set for the next column...
                 prior_val[row_idx] = score_idx;
@@ -261,9 +259,15 @@ pub fn segments_from_matrix_trace(
 
         valid_rows
             .iter()
-            .filter(|&&row_idx| (row_idx == 0) || (row_scores[row_idx] - total_confidence) > min_confidence)
+            .filter(|&&row_idx| {
+                (row_idx == 0) || (row_scores[row_idx] - total_confidence) > min_confidence
+            })
             .for_each(|&row_idx| {
-                segment_last_seen[row_idx] = if segment_last_seen[row_idx] == 0 { segments.len() } else {segment_last_seen[row_idx]};
+                segment_last_seen[row_idx] = if segment_last_seen[row_idx] == 0 {
+                    segments.len()
+                } else {
+                    segment_last_seen[row_idx]
+                };
             });
 
         segments.push(Segment {
@@ -367,14 +371,23 @@ mod tests {
         /* When two lists have the same value, values are taken from the first iterator. */
         assert!(unique_merging_iterator(
             [lcomp(1, 500), lcomp(1, 20), lcomp(2, 4)].iter(),
-            [lcomp(1, 15), lcomp(1, 15), lcomp(1, 15), lcomp(1, 15), lcomp(1, 15), lcomp(2, 10), lcomp(2, 20), lcomp(2, 30)].iter()
+            [
+                lcomp(1, 15),
+                lcomp(1, 15),
+                lcomp(1, 15),
+                lcomp(1, 15),
+                lcomp(1, 15),
+                lcomp(2, 10),
+                lcomp(2, 20),
+                lcomp(2, 30)
+            ]
+            .iter()
         )
         .eq([lcomp(1, 500), lcomp(2, 4)].iter()));
 
-        assert!(unique_merging_iterator(
-            [lcomp(1, 500)].iter(),
-            [lcomp(1, 15)].iter()
-        )
-        .eq([lcomp(1, 500)].iter()));
+        assert!(
+            unique_merging_iterator([lcomp(1, 500)].iter(), [lcomp(1, 15)].iter())
+                .eq([lcomp(1, 500)].iter())
+        );
     }
 }

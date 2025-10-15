@@ -1,7 +1,11 @@
 use std::cmp::Ordering;
 
 use crate::{
-    alignment::Strand, collapse::{AssemblyGraph, Direction, Edge}, matrix::Matrix, score_params::ScoreParams, segments::{Block, BlockType, Segment, SegmentedMatrix}
+    alignment::Strand,
+    collapse::{AssemblyGraph, Direction, Edge},
+    matrix::Matrix,
+    score_params::ScoreParams,
+    segments::{Block, BlockType, Segment, SegmentedMatrix},
 };
 
 use itertools::{izip, multizip};
@@ -324,12 +328,12 @@ pub fn print_viterbi_with_sources(viterbi_matrix: &Matrix<f64>, sources_matrix: 
 
 #[derive(Debug)]
 pub struct HistoryInfo {
-    segment: usize,
-    block: usize,
-    prior_block_history: usize,
-    prior_history: usize,
-    join_history: usize,
-    score: f64,
+    pub segment: usize,
+    pub block: usize,
+    pub prior_block_history: usize,
+    pub prior_history: usize,
+    pub join_history: usize,
+    pub score: f64,
 }
 
 impl PartialEq for HistoryInfo {
@@ -387,7 +391,7 @@ impl Ord for HistoryEntry {
             (Self::Join(l0) | Self::Append(l0), Self::Join(r0) | Self::Append(r0)) => l0.cmp(r0),
             (Self::Root, Self::Root) => Ordering::Equal,
             (Self::Root, _) => Ordering::Less,
-            (_, Self::Root) => Ordering::Greater
+            (_, Self::Root) => Ordering::Greater,
         }
     }
 }
@@ -464,23 +468,21 @@ fn keep_unique_histories(histories: &mut Vec<HistoryEntry>, start_offset: usize)
 fn check_for_forward_link(
     assembly_graph: &AssemblyGraph,
     start_block: &Block,
-    later_block: &Block
+    later_block: &Block,
 ) -> bool {
     // Weight and direction are ignored for edges...
     let edge = Edge {
         edge_to: later_block.row_idx - 1,
         weight: 0.0,
-        direction: Direction::Right
+        direction: Direction::Right,
     };
 
     // If we find it in either the forward or reverse graph, check it's in front of the start alignment...
     if let Some(e1) = assembly_graph.fwd_graph[start_block.row_idx - 1].get(&edge) {
         e1.direction == edge.direction
-    }
-    else if let Some(e1) = assembly_graph.rev_graph[start_block.row_idx - 1].get(&edge) {
+    } else if let Some(e1) = assembly_graph.rev_graph[start_block.row_idx - 1].get(&edge) {
         e1.direction == edge.direction
-    }
-    else {
+    } else {
         false
     }
 }
@@ -505,7 +507,7 @@ fn check_for_join(
                     let cur_hist = last_hist;
                     last_hist = val.prior_history;
                     let blk = &segments[val.segment].blocks[val.block];
-                    
+
                     if let Some(prior_query_id) = blk.query_id {
                         if prior_query_id == current_query_id
                             && blk.can_join_up_to >= segment_idx

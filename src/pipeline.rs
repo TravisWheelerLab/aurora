@@ -14,7 +14,7 @@ use crate::{
     support::windowed_confidence,
     viterbi::{
         backtrace_histories, history_viterbi_on_segments, trace_segments, traceback,
-        viterbi_collapsed, RefinedTraceSegment,
+        viterbi_collapsed, HistoryEntry, RefinedTraceSegment,
     },
     viz::AdjudicationSodaData,
     windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
@@ -186,7 +186,35 @@ pub fn run_pipeline(
         args.annotation_args.max_history_depth,
     );
 
-    //println!("{:?}", history.segment_offsets.iter().zip(history.segment_offsets.iter().skip(1)).map(|(a, b)| b - a).zip(segments.iter().map(|s| s.blocks.len())).collect_vec());
+    let segment_lengths = segments.iter().map(|s| s.blocks.len());
+    let history_lengths = history
+        .segment_offsets
+        .iter()
+        .zip(history.segment_offsets.iter().skip(1))
+        .map(|(a, b)| b - a);
+    let join_count = history
+        .segment_offsets
+        .iter()
+        .zip(history.segment_offsets.iter().skip(1))
+        .map(|(&a, &b)| {
+            history.entries[a..b]
+                .iter()
+                .map(|b| match b {
+                    HistoryEntry::Append(val) | HistoryEntry::Join(val) => {
+                        (segments[val.segment].blocks[val.block].can_join_up_to - val.segment)
+                            as u64
+                    }
+                    _ => 0,
+                })
+                .max()
+        });
+    println!(
+        "{:?}",
+        history_lengths
+            .zip(segment_lengths)
+            .zip(join_count)
+            .collect_vec()
+    );
 
     let refined_trace_segments = backtrace_histories(&segments, &history);
 
