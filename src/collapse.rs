@@ -86,7 +86,8 @@ fn link_assemblies(
                 };
 
                 // TODO: PARAMETERIZE THIS
-                let consensus_is_colinear = consensus_distance > -20;
+                let consensus_is_colinear = consensus_distance > -args.consensus_join_overlap
+                    && consensus_distance < args.consensus_join_distance;
 
                 // let weight = consensus_distance.abs() as f64;
                 let weight = target_distance.abs() as f64;

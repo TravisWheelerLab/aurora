@@ -1,6 +1,6 @@
 use std::{fmt::Display, fs};
 
-use itertools::Itertools;
+use itertools::{izip, Itertools};
 
 use crate::{
     alignment::AlignmentData,
@@ -207,14 +207,23 @@ pub fn run_pipeline(
                     _ => 0,
                 })
                 .max()
+                .unwrap()
         });
-    println!(
-        "{:?}",
-        history_lengths
-            .zip(segment_lengths)
-            .zip(join_count)
-            .collect_vec()
-    );
+    let segment_ranges = segments.iter().map(|s| {
+        (
+            proximity_group.target_start + s.start_col,
+            proximity_group.target_start + s.end_col,
+        )
+    });
+
+    izip!(
+        (0..segments.len()),
+        history_lengths,
+        segment_lengths,
+        join_count,
+        segment_ranges
+    )
+    .for_each(|v| println!("{:?}", v));
 
     let refined_trace_segments = backtrace_histories(&segments, &history);
 
@@ -226,6 +235,7 @@ pub fn run_pipeline(
         alignment_data,
         &target_seq,
         &refined_trace_segments,
+        &segments,
         &args,
     );
 

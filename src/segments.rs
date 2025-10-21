@@ -202,8 +202,9 @@ pub fn segments_from_matrix_trace(
 
     // Monitor alignment scores, note we'll preallocate for performance...
     let mut row_scores: Vec<f64> = vec![0.0; matrix_definition.num_rows];
-    // This tracks the last segment each alignment is found in.
-    let mut segment_last_seen: Vec<usize> = vec![0; matrix_definition.num_rows];
+    // This tracks the first segment each alignment is found in.
+    let mut first_segment_seen: Vec<usize> = vec![0; matrix_definition.num_rows];
+    let mut last_segment_seen: Vec<usize> = vec![0; matrix_definition.num_rows];
     // Tracks, for each alignment, if it existed in the prior row...
     let mut prior_val: Vec<usize> = vec![0; matrix_definition.num_rows];
 
@@ -263,11 +264,12 @@ pub fn segments_from_matrix_trace(
                 (row_idx == 0) || (row_scores[row_idx] - total_confidence) > min_confidence
             })
             .for_each(|&row_idx| {
-                segment_last_seen[row_idx] = if segment_last_seen[row_idx] == 0 {
+                first_segment_seen[row_idx] = if first_segment_seen[row_idx] == 0 {
                     segments.len()
                 } else {
-                    segment_last_seen[row_idx]
+                    first_segment_seen[row_idx]
                 };
+                last_segment_seen[row_idx] = last_segment_seen[row_idx].max(segments.len());
             });
 
         segments.push(Segment {
@@ -316,9 +318,11 @@ pub fn segments_from_matrix_trace(
 
     // Allow each alignment block to farthest segment it can be linked to...
     for (s_idx, seg) in segments.iter_mut().enumerate() {
-        // 1 is to skip the skip state...
         for b_idx in 0..seg.blocks.len() {
             let block = &seg.blocks[b_idx];
+            if block.row_idx == 0 || s_idx != last_segment_seen[block.row_idx] {
+                continue;
+            }
 
             // Skip the skip state and tandem repeats...
             if let BlockType::TandemRepeat | BlockType::Skip = block.block_type {
@@ -327,10 +331,10 @@ pub fn segments_from_matrix_trace(
             let mut best_idx = s_idx;
 
             for e in assembly_graph.fwd_graph[block.row_idx - 1].iter() {
-                best_idx = best_idx.max(segment_last_seen[e.edge_to + 1]);
+                best_idx = best_idx.max(first_segment_seen[e.edge_to + 1]);
             }
             for e in assembly_graph.rev_graph[block.row_idx - 1].iter() {
-                best_idx = best_idx.max(segment_last_seen[e.edge_to + 1]);
+                best_idx = best_idx.max(first_segment_seen[e.edge_to + 1]);
             }
 
             seg.blocks[b_idx].can_join_up_to = best_idx;

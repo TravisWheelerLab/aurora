@@ -25,6 +25,7 @@ use crate::{
     annotation::Annotation,
     chunks::ProximityGroup,
     matrix::Matrix,
+    segments::{BlockType, SegmentedMatrix},
     viterbi::{RefinedTraceSegment, TraceSegment},
     AuroraArgs,
 };
@@ -133,6 +134,7 @@ pub struct AdjudicationSodaData<'a> {
     annotations: Vec<Annotation>,
     trace: &'a Vec<RefinedTraceSegment>,
     maybe_constraint: Option<&'a VizConstraint>,
+    segments: &'a SegmentedMatrix,
     args: &'a AuroraArgs,
 }
 
@@ -146,6 +148,7 @@ impl<'a> AdjudicationSodaData<'a> {
         alignment_data: &'a AlignmentData,
         target_seq: &'a [u8],
         trace: &'a Vec<RefinedTraceSegment>,
+        segments: &'a SegmentedMatrix,
         args: &'a AuroraArgs,
     ) -> Self {
         Self {
@@ -156,6 +159,7 @@ impl<'a> AdjudicationSodaData<'a> {
             annotations: vec![],
             trace,
             maybe_constraint: None,
+            segments,
             args,
         }
     }
@@ -193,6 +197,8 @@ impl<'a> AdjudicationSodaData<'a> {
             "competedAssemblyRows": self.competed_assembly_rows(),
             "inactiveSegmentStrings": self.inactive_segment_strings(),
             "confidenceSegmentStrings": self.confidence_segment_strings(),
+            "historySegments": self.history_segments(),
+            "historyBlocks": self.history_blocks(),
         });
 
         let viz_html = Self::TEMPLATE
@@ -206,6 +212,53 @@ impl<'a> AdjudicationSodaData<'a> {
         let mut file = std::fs::File::create(path).expect("failed to create file");
 
         std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
+    }
+
+    fn history_segments(&self) -> Vec<String> {
+        self.segments
+            .iter()
+            .map(|s| format!("{},{}", s.start_col, s.end_col))
+            .collect()
+    }
+
+    fn history_blocks(&self) -> Vec<String> {
+        self.segments
+            .iter()
+            .enumerate()
+            .flat_map(|(s_idx, s)| {
+                s.blocks.iter().enumerate().map(move |(b_idx, b)| {
+                    let q_id = match b.query_id {
+                        Some(v) => v.to_string(),
+                        _ => (-1).to_string(),
+                    };
+                    let name = match b.block_type {
+                        BlockType::Skip => "Skip".to_string(),
+                        BlockType::Alignment => self
+                            .alignment_data
+                            .query_name_map
+                            .get(b.query_id.unwrap())
+                            .to_string(),
+                        BlockType::TandemRepeat => format!(
+                            "repeat#{}",
+                            self.group.tandem_repeats[b.row_idx].consensus_pattern
+                        ),
+                    };
+
+                    format!(
+                        "{},{},{},{},{},{},{},{},{}",
+                        s_idx,
+                        b_idx,
+                        b.row_idx,
+                        q_id,
+                        b.target_start,
+                        b.target_end,
+                        b.can_join_up_to,
+                        b.confidence,
+                        name
+                    )
+                })
+            })
+            .collect()
     }
 
     fn assembly_strings(&self) -> Vec<String> {

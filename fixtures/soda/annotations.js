@@ -1,7 +1,7 @@
 function run(data) {
   document
     .querySelector(".container")
-    .addEventListener("wheel", function(event) {
+    .addEventListener("wheel", function (event) {
       if (event.ctrlKey) {
         event.preventDefault();
       }
@@ -101,6 +101,7 @@ function run(data) {
       "labels",
       "onlyTrace",
       "showInactive",
+      "showSegments",
     ];
     let numeric = ["confThresh", "aliThresh"];
     let text = ["regex"];
@@ -154,6 +155,7 @@ function run(data) {
     inputs.set("onlySelected", document.querySelector("input#onlySelected"));
     inputs.set("onlyTrace", document.querySelector("input#onlyTrace"));
     inputs.set("showInactive", document.querySelector("input#showInactive"));
+    inputs.set("showSegments", document.querySelector("input#showSegments"));
     inputs.set("regex", document.querySelector("input#regex"));
 
     // grab the entire sidebar
@@ -222,7 +224,7 @@ function run(data) {
         // sneaky: rewrite the layout object's row retrieval
         //         function so that it works for the annotations
         //         that the proxy annotations correspond to
-        this.layout.row = function(d) {
+        this.layout.row = function (d) {
           let id_tokens = d.a.id.split("-");
           let id = `${id_tokens[0]}-${id_tokens[1]}`;
           let row = this.rowMap.get(id);
@@ -317,6 +319,122 @@ function run(data) {
           });
         }
       },
+    });
+
+    let segments = new soda.Chart({
+      ...chartConf,
+      zoomable: true,
+      rowHeight: 20,
+      updateRowCount(params) {
+        if (state.showSegments) {
+          this.rowCount = Math.max(...params.historyBlocks.map((blk) => blk.query_id)) + 3;
+        }
+        else {
+          this.rowCount = 0;
+        }
+      },
+      draw(params) {
+        if(this.showSegments) return;
+
+        let join_info = params.historyBlocks.filter((blk) => blk.segment != blk.join_to).map((blk) => {
+          return {
+            row: blk.query_id + 2,
+            start: params.historySegments[blk.segment].end,
+            end: params.historySegments[blk.join_to].start,
+          }
+        });
+
+        function classColor(d) {
+          if(d.a.row == 0) {
+            return "#4d4d4dff"
+          }
+          let lbl = d.a.label;
+          let firstSplit = lbl.split("#");
+          if (firstSplit.length > 1) {
+            let c = firstSplit[1].split("/")[0].toLowerCase();
+            let i = classNames.indexOf(c);
+            if (i == -1) {
+              i = 9;
+            }
+            return classColors[i];
+          } else {
+            return classColors[9];
+          }
+        }
+
+        soda.rectangle({
+          chart: this,
+          selector: "segments",
+          annotations: params.historySegments,
+          fillColor: (d) => (d.a.index % 2) ? "red" : "blue",
+          fillOpacity: 0.1,
+          y: 0,
+          height: this.viewportHeightPx,
+        });
+
+        soda.rectangle({
+          chart: this,
+          selector: "blocks",
+          annotations: params.historyBlocks,
+          fillColor: classColor,
+          row: (d) => {
+            return (d.a.row == 0)? 0: d.a.query_id + 2;
+          },
+        });
+
+        soda.line({
+          chart: this,
+          selector: "blockJoins",
+          annotations: join_info,
+          row: (d) => d.a.row
+        });
+
+        soda.dynamicText({
+          chart: this,
+          selector: "blocksLabel",
+          annotations: params.historyBlocks,
+          fontSize: 14,
+          height: 20,
+          fontWeight: 700,
+          fillColor: (d) => (d.a.row == 0)? "white": "black",
+          row: (d) => {
+            return (d.a.row == 0)? 0: d.a.query_id + 2;
+          },
+          text: (d) => {
+            return [d.a.label, d.a.label.split("#")[0], d.a.label.charAt(0), ""];
+          }
+        });
+      },
+
+      postRender(params) {
+        if(this.showSegments) return;
+
+        soda.hoverBehavior({
+          chart: this,
+          annotations: params.historyBlocks,
+          // this function is evaluated when a glyph is moused over
+          mouseover: (s, d) => s.style("stroke", "black"),
+          // this function is evaluated when a glyph is no longer moused over
+          mouseout: (s, d) => s.style("stroke", "none"),
+          row: (d) => {
+            return (d.a.row == 0)? 0: d.a.query_id + 2;
+          },
+        });
+
+        soda.tooltip({
+          chart: this,
+          annotations: params.historyBlocks,
+          row: (d) => {
+            return (d.a.row == 0)? 0: d.a.query_id + 2;
+          },
+          text: (d) => {
+            return Object.entries(d.a).map((val) => {
+              let [k, v] = val;
+              return `${k}: ${v}`
+            }).join("<br>\n");
+          }
+        });
+      }
     });
 
     let alignments = new soda.Chart({
@@ -591,7 +709,7 @@ function run(data) {
       },
     });
 
-    alignments.render = function(params) {
+    alignments.render = function (params) {
       //this.resetTransform();
 
       let queryFilter = (a) => {
@@ -654,7 +772,7 @@ function run(data) {
       this.draw(filteredParams);
       this.postRender(filteredParams);
     };
-    return { reference, referenceZoom, aurora, auroraZoom, genome, alignments };
+    return { reference, referenceZoom, aurora, auroraZoom, genome, segments, alignments };
   }
 
   function prepareAnn(ann) {
@@ -927,6 +1045,58 @@ function run(data) {
     return { confidenceSegments };
   }
 
+  function prepareSegments(segmentStrings, targetStart) {
+    let segments = [];
+
+    for (const [index, seg] of segmentStrings.entries()) {
+      let tokens = seg.split(",");
+      let start = parseInt(tokens[0]) + targetStart;
+      let end = parseInt(tokens[1]) + targetStart;
+      segments.push({
+        id: `segment-${index}`,
+        index,
+        start,
+        end
+      });
+    }
+
+    return segments;
+  }
+
+  function prepareBlocks(blockStrings, targetStart) {
+    let blocks = [];
+
+    for (const [index, blk] of blockStrings.entries()) {
+      let tokens = blk.split(",");
+      let segment = parseInt(tokens[0]);
+      let block = parseInt(tokens[1]);
+      let row = parseInt(tokens[2]);
+      let query_id = parseInt(tokens[3]);
+      let start = parseInt(tokens[4]) + targetStart;
+      let end = parseInt(tokens[5]) + targetStart;
+      let join_to = parseInt(tokens[6]);
+
+      let confidence = parseFloat(tokens[7]);
+
+      let label = tokens[8];
+
+      blocks.push({
+        id: `block-${index}`,
+        start,
+        end,
+        segment,
+        block,
+        row,
+        query_id,
+        join_to,
+        confidence,
+        label
+      });
+    }
+
+    return blocks;
+  }
+
   function prepareData() {
     let coords = {
       start: data.targetStart - LABEL_WIDTH,
@@ -982,6 +1152,8 @@ function run(data) {
       competedAssemblyRows: data.competedAssemblyRows,
       ...prepareInactiveSegments(data.inactiveSegmentStrings),
       ...prepareConfidenceSegments(data.confidenceSegmentStrings),
+      historySegments: prepareSegments(data.historySegments, data.targetStart),
+      historyBlocks: prepareBlocks(data.historyBlocks, data.targetStart),
     };
 
     alignments.proxy.forEach((a) => {
@@ -1055,6 +1227,12 @@ function run(data) {
       ...coords,
     });
 
+    charts.segments.render({
+      ...params.alignments,
+      labels: params.aurora.labels,
+      ...coords
+    })
+
     charts.alignments.render({
       updateDomain,
       ...params.alignments,
@@ -1072,6 +1250,7 @@ function run(data) {
       charts.auroraZoom,
       charts.referenceZoom,
       charts.genome,
+      charts.segments,
       charts.alignments,
     ]);
   }

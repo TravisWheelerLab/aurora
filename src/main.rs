@@ -117,36 +117,25 @@ pub struct AnnotationArgs {
     )]
     pub target_join_distance: usize,
 
-    /// The max consensus position difference at which
+    /// The maximum overlap in the consensus at which
+    /// a join is considered between compatible alignments.
+    #[arg(
+        short = 'O',
+        long = "consensus-join-overlap",
+        default_value = "50",
+        value_name = "n"
+    )]
+    pub consensus_join_overlap: isize,
+
+    /// The maximum consensus position distance at which
     /// a join is considered between compatible alignments.
     #[arg(
         short = 'C',
         long = "consensus-join-distance",
-        default_value = "50",
+        default_value = "1000",
         value_name = "n"
     )]
-    pub consensus_join_distance: usize,
-
-    /// The minimum length of an alignment fragment
-    /// at which a join is considered between another
-    /// alignment fragment.
-    #[arg(
-        short = 'M',
-        long = "min-fragment-length",
-        default_value = "10",
-        value_name = "n"
-    )]
-    pub min_fragment_length: usize,
-
-    /// The distance used to approximate various
-    /// alignment overlap conditions.
-    #[arg(
-        short = 'F',
-        long = "fudge-distance",
-        default_value = "10",
-        value_name = "n"
-    )]
-    pub fudge_distance: usize,
+    pub consensus_join_distance: isize,
 
     /// The size of the window looked at to determine a single alignment score in nucleotides.
     #[arg(
@@ -184,7 +173,7 @@ pub struct AnnotationArgs {
     pub min_block_confidence: f64,
 
     /// The max depth of the histories used for identifying joins.
-    #[arg(long = "max-history-depth", default_value = "30", value_name = "n")]
+    #[arg(long = "max-history-depth", default_value = "64", value_name = "n")]
     pub max_history_depth: usize,
 }
 
