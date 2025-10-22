@@ -190,8 +190,16 @@ pub fn run_pipeline(
     let history_lengths = history
         .segment_offsets
         .iter()
-        .zip(history.segment_offsets.iter().skip(1))
-        .map(|(a, b)| b - a);
+        .skip(1)
+        .zip(
+            history
+                .segment_offsets
+                .iter()
+                .skip(2)
+                .chain([history.entries.len()].iter()),
+        )
+        .map(|(a, b)| b - a)
+        .collect_vec();
     let join_count = history
         .segment_offsets
         .iter()
@@ -218,12 +226,12 @@ pub fn run_pipeline(
 
     izip!(
         (0..segments.len()),
-        history_lengths,
+        history_lengths.iter(),
         segment_lengths,
         join_count,
         segment_ranges
     )
-    .for_each(|v| println!("{:?}", v));
+    .for_each(|v| println!("{}: {:?}", region_idx, v));
 
     let refined_trace_segments = backtrace_histories(&segments, &history);
 
@@ -236,6 +244,7 @@ pub fn run_pipeline(
         &target_seq,
         &refined_trace_segments,
         &segments,
+        &history_lengths,
         &args,
     );
 

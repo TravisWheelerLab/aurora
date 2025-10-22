@@ -324,21 +324,57 @@ function run(data) {
     let segments = new soda.Chart({
       ...chartConf,
       zoomable: true,
-      rowHeight: 20,
-      updateRowCount(params) {
-        if (state.showSegments) {
-          this.rowCount = Math.max(...params.historyBlocks.map((blk) => blk.query_id)) + 3;
+      rowHeight: 30,
+      rowColors: ["whitesmoke", "white"],
+      updateLayout(params) {
+        let query_to_row = new Map();
+        //let fullRowCount = (state.showSegments)? Math.max(...params.historyBlocks.map((blk) => blk.query_id)) + 3: 0;
+
+        let to_absolute_row = (blk) => (blk.row == 0)? 0: blk.query_id + 2;
+
+        let visible_queries = params.historyBlocks.filter((blk) => {
+          let start = this.xScale(blk.start);
+          let end = this.xScale(blk.end);
+
+          // Check if alignment is 'in bounds'...
+          return end >= 0 && start < this.viewportWidthPx;
+        }).map(to_absolute_row).sort((a, b) => a - b);
+
+        let i = 0;
+        for(const q_id of visible_queries) {
+          if(!query_to_row.has(q_id)) {
+            query_to_row.set(q_id, i);
+            i += 1;
+          }
         }
-        else {
-          this.rowCount = 0;
+
+        let abs_row_to_row = (r) => {
+          let r_floor = Math.floor(r);
+          let new_r = query_to_row.get(r_floor) ?? -1;
+          return new_r + (r % 1);
         }
+        
+        this.layout = {
+          row: (d) => {
+            let abs_row = to_absolute_row(d.a);
+            return abs_row_to_row(abs_row);
+          },
+          toAbsRow: to_absolute_row,
+          absRowToRow: abs_row_to_row,
+          rowCount: (state.showSegments)? query_to_row.size: 0,
+        };
       },
       draw(params) {
         if(this.showSegments) return;
 
+        let y = (d) => this.rowHeight * this.layout.row(d) + 14;
+        let x = (d) => this.xScale(d.a.start - 0.25);
+        let width = (d) => this.xScale(d.a.end) - this.xScale(d.a.start - 0.5);
+        let height = 13;
+
         let join_info = params.historyBlocks.filter((blk) => blk.segment != blk.join_to).map((blk) => {
           return {
-            row: blk.query_id + 2,
+            row: this.layout.toAbsRow(blk),
             start: params.historySegments[blk.segment].end,
             end: params.historySegments[blk.join_to].start,
           }
@@ -362,6 +398,7 @@ function run(data) {
           }
         }
 
+        // Color segments with alternating colors...
         soda.rectangle({
           chart: this,
           selector: "segments",
@@ -369,37 +406,57 @@ function run(data) {
           fillColor: (d) => (d.a.index % 2) ? "red" : "blue",
           fillOpacity: 0.1,
           y: 0,
+          x,
+          width,
           height: this.viewportHeightPx,
         });
 
+        // Render segment index and history count...
+        soda.dynamicText({
+          chart: this,
+          selector: "segmentInfo",
+          annotations: params.historySegments,
+          row: 0,
+          text: (d) => {
+            return [`${d.a.index}: ${d.a.history_count}`, `${d.a.index}`]
+          }
+        });
+
+        // Render the blocks...
         soda.rectangle({
           chart: this,
           selector: "blocks",
           annotations: params.historyBlocks,
-          fillColor: classColor,
-          row: (d) => {
-            return (d.a.row == 0)? 0: d.a.query_id + 2;
-          },
+          strokeColor: classColor,
+          strokeWidth: 2,
+          fillColor: "white",
+          x,
+          y,
+          width,
+          height,
         });
 
-        soda.line({
+        // Display blocks that can join (how far ahead)...
+        soda.arc({
           chart: this,
           selector: "blockJoins",
           annotations: join_info,
-          row: (d) => d.a.row
+          row: (d) => {
+            return (this.layout.absRowToRow(d.a.row) - 1) + (14.5 / this.rowHeight);
+          },
+          height: 12,
         });
 
+        // Display the name of the block...
         soda.dynamicText({
           chart: this,
           selector: "blocksLabel",
           annotations: params.historyBlocks,
-          fontSize: 14,
-          height: 20,
-          fontWeight: 700,
-          fillColor: (d) => (d.a.row == 0)? "white": "black",
-          row: (d) => {
-            return (d.a.row == 0)? 0: d.a.query_id + 2;
-          },
+          fontSize: 12,
+          y: (d) => y(d) + 2,
+          height,
+          fontWeight: 500,
+          fillColor: "black",
           text: (d) => {
             return [d.a.label, d.a.label.split("#")[0], d.a.label.charAt(0), ""];
           }
@@ -409,24 +466,45 @@ function run(data) {
       postRender(params) {
         if(this.showSegments) return;
 
-        soda.hoverBehavior({
+        let y = (d) => this.rowHeight * this.layout.row(d) + 14;
+        let x = (d) => this.xScale(d.a.start - 0.25);
+        let width = (d) => this.xScale(d.a.end) - this.xScale(d.a.start - 0.5);
+        let height = 12;
+
+        /*soda.hoverBehavior({
           chart: this,
           annotations: params.historyBlocks,
           // this function is evaluated when a glyph is moused over
           mouseover: (s, d) => s.style("stroke", "black"),
           // this function is evaluated when a glyph is no longer moused over
           mouseout: (s, d) => s.style("stroke", "none"),
-          row: (d) => {
-            return (d.a.row == 0)? 0: d.a.query_id + 2;
-          },
+          x,
+          y,
+          width,
+          height,
+        });*/
+
+        soda.tooltip({
+          chart: this,
+          annotations: params.historySegments,
+          row: 0,
+          x,
+          width,
+          text: (d) => {
+            return Object.entries(d.a).map((val) => {
+              let [k, v] = val;
+              return `${k}: ${v}`
+            }).join("<br>\n");
+          }
         });
 
         soda.tooltip({
           chart: this,
           annotations: params.historyBlocks,
-          row: (d) => {
-            return (d.a.row == 0)? 0: d.a.query_id + 2;
-          },
+          x,
+          y,
+          width,
+          height,
           text: (d) => {
             return Object.entries(d.a).map((val) => {
               let [k, v] = val;
@@ -1052,11 +1130,13 @@ function run(data) {
       let tokens = seg.split(",");
       let start = parseInt(tokens[0]) + targetStart;
       let end = parseInt(tokens[1]) + targetStart;
+      let history_count = parseInt(tokens[2]);
       segments.push({
         id: `segment-${index}`,
         index,
         start,
-        end
+        end,
+        history_count
       });
     }
 

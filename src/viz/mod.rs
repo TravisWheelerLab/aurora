@@ -135,6 +135,7 @@ pub struct AdjudicationSodaData<'a> {
     trace: &'a Vec<RefinedTraceSegment>,
     maybe_constraint: Option<&'a VizConstraint>,
     segments: &'a SegmentedMatrix,
+    history_counts: &'a [usize],
     args: &'a AuroraArgs,
 }
 
@@ -149,6 +150,7 @@ impl<'a> AdjudicationSodaData<'a> {
         target_seq: &'a [u8],
         trace: &'a Vec<RefinedTraceSegment>,
         segments: &'a SegmentedMatrix,
+        history_counts: &'a [usize],
         args: &'a AuroraArgs,
     ) -> Self {
         Self {
@@ -160,6 +162,7 @@ impl<'a> AdjudicationSodaData<'a> {
             trace,
             maybe_constraint: None,
             segments,
+            history_counts,
             args,
         }
     }
@@ -217,7 +220,8 @@ impl<'a> AdjudicationSodaData<'a> {
     fn history_segments(&self) -> Vec<String> {
         self.segments
             .iter()
-            .map(|s| format!("{},{}", s.start_col, s.end_col))
+            .zip(self.history_counts.iter())
+            .map(|(s, h_s)| format!("{},{},{}", s.start_col, s.end_col, h_s))
             .collect()
     }
 
