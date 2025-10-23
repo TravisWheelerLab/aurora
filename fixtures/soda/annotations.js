@@ -327,17 +327,20 @@ function run(data) {
       rowHeight: 30,
       rowColors: ["whitesmoke", "white"],
       updateLayout(params) {
+        // Must update the domain first inorder to properly layout the graph, by default this runs after this function but before draw 
+        // causing the graph to be out of sync...
+        this.updateDomain(params);
+
         let query_to_row = new Map();
         //let fullRowCount = (state.showSegments)? Math.max(...params.historyBlocks.map((blk) => blk.query_id)) + 3: 0;
 
         let to_absolute_row = (blk) => (blk.row == 0)? 0: blk.query_id + 2;
 
         let visible_queries = params.historyBlocks.filter((blk) => {
-          let start = this.xScale(blk.start);
-          let end = this.xScale(blk.end);
-
+          let start = blk.start;
+          let end = blk.end;
           // Check if alignment is 'in bounds'...
-          return end >= 0 && start < this.viewportWidthPx;
+          return end > this.domain[0] && start < this.domain[1];
         }).map(to_absolute_row).sort((a, b) => a - b);
 
         let i = 0;
@@ -352,8 +355,7 @@ function run(data) {
           let r_floor = Math.floor(r);
           let new_r = query_to_row.get(r_floor) ?? -1;
           return new_r + (r % 1);
-        }
-        
+        }        
         this.layout = {
           row: (d) => {
             let abs_row = to_absolute_row(d.a);
@@ -365,6 +367,7 @@ function run(data) {
         };
       },
       draw(params) {
+        this.clear();
         if(this.showSegments) return;
 
         let y = (d) => this.rowHeight * this.layout.row(d) + 14;
