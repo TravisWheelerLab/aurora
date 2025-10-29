@@ -1,7 +1,7 @@
 use std::{fmt::Debug, iter::Fuse};
 
 use crate::{
-    chunks::ProximityGroup, assembly::AssemblyGraph, matrix::Matrix, score_params::ScoreParams,
+    assembly::AssemblyGraph, chunks::ProximityGroup, matrix::Matrix, score_params::ScoreParams,
     viterbi::TraceSegment, AnnotationArgs,
 };
 use itertools::Itertools;

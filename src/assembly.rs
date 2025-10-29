@@ -8,7 +8,7 @@ use itertools::Itertools;
 use crate::{
     alignment::{Alignment, AlignmentData, Strand},
     chunks::ProximityGroup,
-    AnnotationArgs
+    AnnotationArgs,
 };
 
 /// The direction of an `Edge` in terms of where
@@ -20,13 +20,12 @@ pub enum Direction {
     Right,
 }
 
-
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
 pub enum LinkType {
     Forward,
     Reverse,
     FRInversion,
-    RFInversion
+    RFInversion,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -84,21 +83,40 @@ fn link_assemblies(
                 let target_distance = b.target_start as isize - a.target_end as isize;
 
                 let (consensus_distance, link_type) = match (a.strand, b.strand) {
-                    (Strand::Forward, Strand::Forward) => (b.query_start as isize - a.query_end as isize, LinkType::Forward),
-                    (Strand::Reverse, Strand::Reverse) => (b.query_end as isize - a.query_start as isize, LinkType::Reverse),
-                    (Strand::Forward, Strand::Reverse) => (b.query_end as isize - a.query_end as isize, LinkType::FRInversion),
-                    (Strand::Reverse, Strand::Forward) => (b.query_start as isize - a.query_start as isize, LinkType::RFInversion),
+                    (Strand::Forward, Strand::Forward) => (
+                        b.query_start as isize - a.query_end as isize,
+                        LinkType::Forward,
+                    ),
+                    (Strand::Reverse, Strand::Reverse) => (
+                        b.query_end as isize - a.query_start as isize,
+                        LinkType::Reverse,
+                    ),
+                    (Strand::Forward, Strand::Reverse) => (
+                        b.query_end as isize - a.query_end as isize,
+                        LinkType::FRInversion,
+                    ),
+                    (Strand::Reverse, Strand::Forward) => (
+                        b.query_start as isize - a.query_start as isize,
+                        LinkType::RFInversion,
+                    ),
                     _ => panic!(),
                 };
 
                 let within_target_distance_threshold = match link_type {
-                    LinkType::FRInversion | LinkType::RFInversion => target_distance.abs() < args.inversion_distance,
+                    LinkType::FRInversion | LinkType::RFInversion => {
+                        target_distance.abs() < args.inversion_distance
+                    }
                     _ => target_distance < args.target_join_distance as isize,
-                }; 
+                };
 
                 let consensus_is_colinear = match link_type {
-                    LinkType::FRInversion | LinkType::RFInversion => consensus_distance.abs() < args.inversion_distance,
-                    _ => consensus_distance > -args.consensus_join_overlap && consensus_distance < args.consensus_join_distance,
+                    LinkType::FRInversion | LinkType::RFInversion => {
+                        consensus_distance.abs() < args.inversion_distance
+                    }
+                    _ => {
+                        consensus_distance > -args.consensus_join_overlap
+                            && consensus_distance < args.consensus_join_distance
+                    }
                 };
 
                 // let weight = consensus_distance.abs() as f64;
@@ -162,8 +180,6 @@ impl AssemblyGraph {
                 link_assemblies(&mut link_graph, &alignments.collect_vec(), &annotation_args);
             });
 
-        Self {
-            link_graph
-        }
+        Self { link_graph }
     }
 }

@@ -5,8 +5,8 @@ use itertools::{izip, Itertools};
 use crate::{
     alignment::AlignmentData,
     annotation::Annotation,
-    chunks::ProximityGroup,
     assembly::AssemblyGraph,
+    chunks::ProximityGroup,
     confidence::confidence,
     matrix::{Matrix, MatrixDef},
     score_params::{approximate_ideal_skip_state_score, ScoreParams},

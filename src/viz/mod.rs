@@ -16,9 +16,18 @@ use itertools::Itertools;
 use serde::Serialize;
 
 use crate::{
-    AuroraArgs, alignment::{Alignment, AlignmentData, Strand}, alphabet::{
-        ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, NucleotideByteUtils, SPACE_UTF8
-    }, annotation::Annotation, assembly::AssemblyGraph, chunks::ProximityGroup, matrix::Matrix, segments::{BlockType, SegmentedMatrix}, viterbi::{RefinedTraceSegment, TraceSegment}
+    alignment::{Alignment, AlignmentData, Strand},
+    alphabet::{
+        NucleotideByteUtils, ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
+        SPACE_UTF8,
+    },
+    annotation::Annotation,
+    assembly::AssemblyGraph,
+    chunks::ProximityGroup,
+    matrix::Matrix,
+    segments::{BlockType, SegmentedMatrix},
+    viterbi::{RefinedTraceSegment, TraceSegment},
+    AuroraArgs,
 };
 
 const SODA_JS: &str = include_str!("../../fixtures/soda/soda.js");
@@ -213,13 +222,16 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 
     fn block_links(&self) -> Vec<Vec<String>> {
-        self.links.link_graph
+        self.links
+            .link_graph
             .iter()
             .map(|links| {
-                links.iter().map(|edge| {
-                    format!("{},{}", edge.edge_to, edge.weight)
-                }).collect()
-            }).collect()
+                links
+                    .iter()
+                    .map(|edge| format!("{},{}", edge.edge_to, edge.weight))
+                    .collect()
+            })
+            .collect()
     }
 
     fn history_segments(&self) -> Vec<String> {
@@ -566,4 +578,3 @@ impl<'a> AdjudicationSodaData<'a> {
         vec![conf_strings]
     }
 }
-

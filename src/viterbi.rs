@@ -8,7 +8,7 @@ use crate::{
     segments::{Block, BlockType, SegmentedMatrix},
 };
 
-use itertools::{multizip};
+use itertools::multizip;
 
 pub fn viterbi_collapsed(
     confidence_matrix: &Matrix<f64>,
@@ -475,7 +475,7 @@ fn check_for_forward_link(
         edge_to: later_block.row_idx - 1,
         weight: 0.0,
         direction: Direction::Right,
-        link_type: LinkType::Forward
+        link_type: LinkType::Forward,
     };
 
     // If we find it in either the forward or reverse graph, check it's in front of the start alignment...
