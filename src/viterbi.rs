@@ -2,13 +2,13 @@ use std::cmp::Ordering;
 
 use crate::{
     alignment::Strand,
-    collapse::{AssemblyGraph, Direction, Edge},
+    assembly::{AssemblyGraph, Direction, Edge, LinkType},
     matrix::Matrix,
     score_params::ScoreParams,
-    segments::{Block, BlockType, Segment, SegmentedMatrix},
+    segments::{Block, BlockType, SegmentedMatrix},
 };
 
-use itertools::{izip, multizip};
+use itertools::{multizip};
 
 pub fn viterbi_collapsed(
     confidence_matrix: &Matrix<f64>,
@@ -470,17 +470,16 @@ fn check_for_forward_link(
     start_block: &Block,
     later_block: &Block,
 ) -> bool {
-    // Weight and direction are ignored for edges...
+    // Weight, direction, and link type are ignored for edges...
     let edge = Edge {
         edge_to: later_block.row_idx - 1,
         weight: 0.0,
         direction: Direction::Right,
+        link_type: LinkType::Forward
     };
 
     // If we find it in either the forward or reverse graph, check it's in front of the start alignment...
-    if let Some(e1) = assembly_graph.fwd_graph[start_block.row_idx - 1].get(&edge) {
-        e1.direction == edge.direction
-    } else if let Some(e1) = assembly_graph.rev_graph[start_block.row_idx - 1].get(&edge) {
+    if let Some(e1) = assembly_graph.link_graph[start_block.row_idx - 1].get(&edge) {
         e1.direction == edge.direction
     } else {
         false
@@ -511,7 +510,7 @@ fn check_for_join(
                     if let Some(prior_query_id) = blk.query_id {
                         if prior_query_id == current_query_id
                             && blk.can_join_up_to >= segment_idx
-                            && check_for_forward_link(assembly_graph, &blk, &current_block)
+                            && check_for_forward_link(assembly_graph, blk, current_block)
                         {
                             return Some(cur_hist);
                         }

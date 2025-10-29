@@ -1,7 +1,7 @@
 use std::{fmt::Debug, iter::Fuse};
 
 use crate::{
-    chunks::ProximityGroup, collapse::AssemblyGraph, matrix::Matrix, score_params::ScoreParams,
+    chunks::ProximityGroup, assembly::AssemblyGraph, matrix::Matrix, score_params::ScoreParams,
     viterbi::TraceSegment, AnnotationArgs,
 };
 use itertools::Itertools;
@@ -330,10 +330,7 @@ pub fn segments_from_matrix_trace(
             }
             let mut best_idx = s_idx;
 
-            for e in assembly_graph.fwd_graph[block.row_idx - 1].iter() {
-                best_idx = best_idx.max(first_segment_seen[e.edge_to + 1]);
-            }
-            for e in assembly_graph.rev_graph[block.row_idx - 1].iter() {
+            for e in assembly_graph.link_graph[block.row_idx - 1].iter() {
                 best_idx = best_idx.max(first_segment_seen[e.edge_to + 1]);
             }
 

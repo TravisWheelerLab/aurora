@@ -6,7 +6,7 @@ use crate::{
     alignment::AlignmentData,
     annotation::Annotation,
     chunks::ProximityGroup,
-    collapse::AssemblyGraph,
+    assembly::AssemblyGraph,
     confidence::confidence,
     matrix::{Matrix, MatrixDef},
     score_params::{approximate_ideal_skip_state_score, ScoreParams},
@@ -138,8 +138,7 @@ pub fn run_pipeline(
     let assembly_graph = AssemblyGraph::new(
         proximity_group,
         &confidence_avg_by_id,
-        &args,
-        alignment_data,
+        &args.annotation_args,
     );
 
     let segments;
@@ -245,6 +244,7 @@ pub fn run_pipeline(
         &refined_trace_segments,
         &segments,
         &history_lengths,
+        &assembly_graph,
         &args,
     );
 

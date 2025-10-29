@@ -5,7 +5,6 @@ use bed::*;
 use block::*;
 
 use std::{
-    cell::Ref,
     collections::HashMap,
     fs::File,
     io::{BufRead, BufReader},
@@ -17,17 +16,9 @@ use itertools::Itertools;
 use serde::Serialize;
 
 use crate::{
-    alignment::{Alignment, AlignmentData, Strand},
-    alphabet::{
-        NucleotideByteUtils, ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
-        SPACE_UTF8,
-    },
-    annotation::Annotation,
-    chunks::ProximityGroup,
-    matrix::Matrix,
-    segments::{BlockType, SegmentedMatrix},
-    viterbi::{RefinedTraceSegment, TraceSegment},
-    AuroraArgs,
+    AuroraArgs, alignment::{Alignment, AlignmentData, Strand}, alphabet::{
+        ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, NucleotideByteUtils, SPACE_UTF8
+    }, annotation::Annotation, assembly::AssemblyGraph, chunks::ProximityGroup, matrix::Matrix, segments::{BlockType, SegmentedMatrix}, viterbi::{RefinedTraceSegment, TraceSegment}
 };
 
 const SODA_JS: &str = include_str!("../../fixtures/soda/soda.js");
@@ -136,6 +127,7 @@ pub struct AdjudicationSodaData<'a> {
     maybe_constraint: Option<&'a VizConstraint>,
     segments: &'a SegmentedMatrix,
     history_counts: &'a [usize],
+    links: &'a AssemblyGraph,
     args: &'a AuroraArgs,
 }
 
@@ -151,6 +143,7 @@ impl<'a> AdjudicationSodaData<'a> {
         trace: &'a Vec<RefinedTraceSegment>,
         segments: &'a SegmentedMatrix,
         history_counts: &'a [usize],
+        links: &'a AssemblyGraph,
         args: &'a AuroraArgs,
     ) -> Self {
         Self {
@@ -163,6 +156,7 @@ impl<'a> AdjudicationSodaData<'a> {
             maybe_constraint: None,
             segments,
             history_counts,
+            links,
             args,
         }
     }
@@ -202,6 +196,7 @@ impl<'a> AdjudicationSodaData<'a> {
             "confidenceSegmentStrings": self.confidence_segment_strings(),
             "historySegments": self.history_segments(),
             "historyBlocks": self.history_blocks(),
+            "blockLinks": self.block_links()
         });
 
         let viz_html = Self::TEMPLATE
@@ -215,6 +210,16 @@ impl<'a> AdjudicationSodaData<'a> {
         let mut file = std::fs::File::create(path).expect("failed to create file");
 
         std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
+    }
+
+    fn block_links(&self) -> Vec<Vec<String>> {
+        self.links.link_graph
+            .iter()
+            .map(|links| {
+                links.iter().map(|edge| {
+                    format!("{},{}", edge.edge_to, edge.weight)
+                }).collect()
+            }).collect()
     }
 
     fn history_segments(&self) -> Vec<String> {
@@ -562,134 +567,3 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 }
 
-///
-///
-///
-///
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AssemblySodaData {
-    query_id: usize,
-    query_name: String,
-    target_start: usize,
-    target_end: usize,
-    consensus_start: usize,
-    consensus_end: usize,
-    consensus_ali_strings: Vec<String>,
-    target_ali_strings: Vec<String>,
-    consensus_assembly_strings: Vec<Vec<String>>,
-    target_assembly_strings: Vec<Vec<String>>,
-    links: Vec<String>,
-    suffix: String,
-}
-
-impl AssemblySodaData {
-    const TEMPLATE: &'static str = include_str!("../../fixtures/soda/assembly.html");
-    const JS: &'static str = include_str!("../../fixtures/soda/assembly.js");
-
-    pub fn new(
-        alignments: &[&Alignment],
-        links: Vec<String>,
-        confidence: &HashMap<usize, f64>,
-        alignment_data: &AlignmentData,
-    ) -> Self {
-        let query_id = alignments[0].query_id;
-        let strand = alignments[0].strand;
-        let query_name = alignment_data.query_name_map.get(query_id).clone();
-
-        let target_assembly_strings = alignments
-            .iter()
-            .map(|ali| {
-                vec![format!(
-                    "{},{},{},{}",
-                    ali.id,
-                    ali.target_start,
-                    ali.target_end,
-                    confidence.get(&ali.id).unwrap(),
-                )]
-            })
-            .collect_vec();
-
-        let consensus_assembly_strings = alignments
-            .iter()
-            .map(|ali| match strand {
-                Strand::Forward => vec![format!(
-                    "{},{},{},{}",
-                    ali.id,
-                    ali.query_start,
-                    ali.query_end,
-                    confidence.get(&ali.id).unwrap(),
-                )],
-
-                Strand::Reverse => vec![format!(
-                    "{},{},{},{}",
-                    ali.id,
-                    ali.query_end,
-                    ali.query_start,
-                    confidence.get(&ali.id).unwrap(),
-                )],
-
-                Strand::Unset => panic!(),
-            })
-            .collect_vec();
-
-        let target_ali_strings = target_assembly_strings.iter().flatten().cloned().collect();
-
-        let consensus_ali_strings = consensus_assembly_strings
-            .iter()
-            .flatten()
-            .cloned()
-            .collect();
-
-        let suffix = match strand {
-            Strand::Forward => "fwd".to_string(),
-            Strand::Reverse => "rev".to_string(),
-            _ => panic!(),
-        };
-
-        let target_start = alignments.iter().map(|a| a.target_start).min().unwrap();
-        let target_end = alignments.iter().map(|a| a.target_end).max().unwrap();
-
-        let (consensus_start, consensus_end) = match strand {
-            Strand::Forward => (
-                alignments.iter().map(|a| a.query_start).min().unwrap(),
-                alignments.iter().map(|a| a.query_end).max().unwrap(),
-            ),
-            Strand::Reverse => (
-                alignments.iter().map(|a| a.query_end).min().unwrap(),
-                alignments.iter().map(|a| a.query_start).max().unwrap(),
-            ),
-
-            Strand::Unset => panic!(),
-        };
-
-        Self {
-            query_id,
-            query_name,
-            target_start,
-            target_end,
-            consensus_start,
-            consensus_end,
-            consensus_ali_strings,
-            target_ali_strings,
-            consensus_assembly_strings,
-            target_assembly_strings,
-            links,
-            suffix,
-        }
-    }
-
-    pub fn write(&self, path: impl AsRef<Path>) {
-        let viz_html = Self::TEMPLATE
-            .replace("SODA_TARGET", SODA_JS)
-            .replace(
-                "DATA_TARGET",
-                &serde_json::to_string(&self).expect("failed to serialize JSON data"),
-            )
-            .replace("JS_TARGET", Self::JS);
-
-        let mut file = std::fs::File::create(path).expect("failed to create file");
-
-        std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
-    }
-}

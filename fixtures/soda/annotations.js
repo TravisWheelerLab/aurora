@@ -1180,6 +1180,30 @@ function run(data) {
     return blocks;
   }
 
+  function prepareBlockLinks(blockLinks) {
+    let new_block_links = [];
+
+    for(const links of blockLinks) {
+      let new_links = [];
+
+      for(const edgeStr of links) {
+        let tokens = edgeStr.split(",");
+
+        let other = parseInt(tokens[0]);
+        let weight = parseFloat(tokens[1]);
+
+        new_links.push({
+          other,
+          weight
+        });
+      }
+
+      new_block_links.push(new_links);
+    }
+
+    return new_block_links;
+  }
+
   function prepareData() {
     let coords = {
       start: data.targetStart - LABEL_WIDTH,
@@ -1237,6 +1261,7 @@ function run(data) {
       ...prepareConfidenceSegments(data.confidenceSegmentStrings),
       historySegments: prepareSegments(data.historySegments, data.targetStart),
       historyBlocks: prepareBlocks(data.historyBlocks, data.targetStart),
+      blockLinks: prepareBlockLinks(data.blockLinks),
     };
 
     alignments.proxy.forEach((a) => {

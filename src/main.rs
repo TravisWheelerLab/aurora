@@ -2,7 +2,7 @@ mod alignment;
 mod alphabet;
 mod annotation;
 mod chunks;
-mod collapse;
+mod assembly;
 mod confidence;
 mod matrix;
 mod pipeline;
@@ -127,7 +127,7 @@ pub struct AnnotationArgs {
     )]
     pub consensus_join_overlap: isize,
 
-    /// The maximum consensus position distance at which
+    /// The maximum consensus seperation distance at which
     /// a join is considered between compatible alignments.
     #[arg(
         short = 'C',
@@ -136,6 +136,15 @@ pub struct AnnotationArgs {
         value_name = "n"
     )]
     pub consensus_join_distance: isize,
+
+    /// The maximum seperation or overlap in nucleotides on both target and consensus
+    /// for a join to be allowed between inverted alignments.
+    #[arg(
+        long = "inversion-distance",
+        default_value = "20",
+        value_name = "n"
+    )]
+    pub inversion_distance: isize,
 
     /// The size of the window looked at to determine a single alignment score in nucleotides.
     #[arg(
@@ -205,10 +214,6 @@ pub struct VisualizationArgs {
     /// visualization output will be written
     #[arg(long = "viz-out", default_value = "./viz", value_name = "path")]
     pub viz_output_path: PathBuf,
-
-    /// Produce visualization output for potential join "assemblies"
-    #[arg(long = "assembly-viz")]
-    pub assembly_viz: bool,
 
     /// A list of target names, starts, and ends
     /// that will constrain the visualization output
@@ -325,7 +330,7 @@ fn main() -> Result<()> {
         });
     }
 
-    if viz_args.viz || viz_args.assembly_viz {
+    if viz_args.viz {
         let error_msg = "failed to write to index.html";
         let index_file = File::create(viz_args.viz_output_path.join("index.html")).unwrap();
         let mut index_writer = BufWriter::new(index_file);
@@ -366,15 +371,6 @@ fn main() -> Result<()> {
                 writeln!(
                     &mut index_writer,
                     "    <li><a href={}/index.html>annotations</a></li>",
-                    idx,
-                )
-                .expect(error_msg);
-            }
-
-            if viz_args.assembly_viz {
-                writeln!(
-                    &mut index_writer,
-                    "    <li><a href={}/assembly_index.html>assemblies</a></li>",
                     idx,
                 )
                 .expect(error_msg);
