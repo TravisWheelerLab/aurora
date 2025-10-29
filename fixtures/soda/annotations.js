@@ -321,6 +321,21 @@ function run(data) {
       },
     });
 
+    let segmentsRenderBlockLinks = (chart, block) => {
+      if(block.link_data == undefined) return undefined;
+      let arc = soda.arc({
+        chart: chart,
+        annotations: block.link_data,
+        strokeColor: "red",
+        strokeWidth: 3,
+        row: (d) => {
+          return (chart.layout.absRowToRow(d.a.row) - 1) + (14.5 / chart.rowHeight);
+        },
+        height: 12,
+      });
+      return arc;
+    }
+
     let segments = new soda.Chart({
       ...chartConf,
       zoomable: true,
@@ -464,8 +479,11 @@ function run(data) {
             return [d.a.label, d.a.label.split("#")[0], d.a.label.charAt(0), ""];
           }
         });
-      },
 
+        for(let block of params.historyBlocks) {
+          block.arc = segmentsRenderBlockLinks(this, block);
+        }
+      },
       postRender(params) {
         if(this.showSegments) return;
 
@@ -486,6 +504,43 @@ function run(data) {
           width,
           height,
         });*/
+
+        soda.clickBehavior({
+          chart: this,
+          annotations: params.historyBlocks,
+          click: (s, d) => {
+            let link_data = d.a.link_data;
+
+            if(link_data) {
+              delete d.a.link_data;
+              if(d.a.arc != undefined) {
+                d.a.arc.remove();
+                delete d.a.arc;
+              }
+            } else {
+              let links = params.blockLinks[d.a.row - 1];
+              if(links == undefined || links.length == 0) return;
+
+              let link_data = [];
+
+              links.forEach((link) => {
+                let other_segment = params.historyBlocks.find((blk) => blk.row - 1 == link.other);
+                if(other_segment == undefined) return;
+                let [s1, s2] = [d.a.segment, other_segment.segment].sort();
+                
+                link_data.push({
+                  start: params.historySegments[s1].end,
+                  end: params.historySegments[s2].start,
+                  row: this.layout.toAbsRow(d.a),
+                  weight: link.weight,
+                });
+              });
+
+              d.a.link_data = link_data;
+              d.a.arc = segmentsRenderBlockLinks(this, d.a);
+            }
+          }
+        });
 
         soda.tooltip({
           chart: this,
