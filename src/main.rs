@@ -220,6 +220,10 @@ pub struct VisualizationArgs {
     )]
     pub viz_constraints: Vec<VizConstraint>,
 
+    /// Enable output of viterbi scores vizual.
+    #[arg(long = "viz-view-viterbi")]
+    pub viz_view_viterbi: bool,
+
     /// The path to the BED file that contains
     /// reference annotations for visualization
     #[arg(short = 'R', long = "viz-ref-bed", value_name = "path")]

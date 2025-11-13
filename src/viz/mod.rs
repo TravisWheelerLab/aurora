@@ -137,6 +137,7 @@ pub struct AdjudicationSodaData<'a> {
     segments: &'a SegmentedMatrix,
     history_counts: &'a [usize],
     links: &'a AssemblyGraph,
+    viterbi_matrix: Option<&'a Matrix<'a, f64>>,
     args: &'a AuroraArgs,
 }
 
@@ -153,6 +154,7 @@ impl<'a> AdjudicationSodaData<'a> {
         segments: &'a SegmentedMatrix,
         history_counts: &'a [usize],
         links: &'a AssemblyGraph,
+        viterbi_matrix: Option<&'a Matrix<'a, f64>>,
         args: &'a AuroraArgs,
     ) -> Self {
         Self {
@@ -166,6 +168,7 @@ impl<'a> AdjudicationSodaData<'a> {
             segments,
             history_counts,
             links,
+            viterbi_matrix,
             args,
         }
     }
@@ -205,7 +208,8 @@ impl<'a> AdjudicationSodaData<'a> {
             "confidenceSegmentStrings": self.confidence_segment_strings(),
             "historySegments": self.history_segments(),
             "historyBlocks": self.history_blocks(),
-            "blockLinks": self.block_links()
+            "blockLinks": self.block_links(),
+            "alignmentScores": self.alignment_scores(),
         });
 
         let viz_html = Self::TEMPLATE
@@ -219,6 +223,23 @@ impl<'a> AdjudicationSodaData<'a> {
         let mut file = std::fs::File::create(path).expect("failed to create file");
 
         std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
+    }
+
+    fn alignment_scores(&self) -> Option<Vec<Vec<f64>>> {
+        if let Some(val) = self.viterbi_matrix {
+            return Some(
+                val.def
+                    .col_range_by_logical_row
+                    .iter()
+                    .enumerate()
+                    .map(|(row, &(start, end))| {
+                        (start..end).map(|col| val.get(row, col)).collect_vec()
+                    })
+                    .collect_vec(),
+            );
+        }
+
+        None
     }
 
     fn block_links(&self) -> Vec<Vec<String>> {
