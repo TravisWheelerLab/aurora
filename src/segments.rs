@@ -258,29 +258,26 @@ pub fn segments_from_matrix_trace(
             .unwrap_or(0.0);
         let min_confidence = annotation_args.min_block_confidence.ln();
 
-        valid_rows
-            .iter()
-            .filter(|&&row_idx| {
-                (row_idx == 0) || (row_scores[row_idx] - total_confidence) > min_confidence
-            })
-            .for_each(|&row_idx| {
-                first_segment_seen[row_idx] = if first_segment_seen[row_idx] == 0 {
-                    segments.len()
-                } else {
-                    first_segment_seen[row_idx]
-                };
-                last_segment_seen[row_idx] = last_segment_seen[row_idx].max(segments.len());
-            });
+        let row_filter = |&&row_idx: &&usize| {
+            (row_idx == 0)
+                || (seg.ali_id != 0 && (row_scores[row_idx] - total_confidence) > min_confidence)
+        };
+
+        valid_rows.iter().filter(row_filter).for_each(|&row_idx| {
+            first_segment_seen[row_idx] = if first_segment_seen[row_idx] == 0 {
+                segments.len()
+            } else {
+                first_segment_seen[row_idx]
+            };
+            last_segment_seen[row_idx] = last_segment_seen[row_idx].max(segments.len());
+        });
 
         segments.push(Segment {
             start_col: seg.col_start,
             end_col: seg.col_end,
             blocks: valid_rows
                 .iter()
-                .filter(|&&row_idx| {
-                    // Remove sections which have too low of a confidence...
-                    (row_idx == 0) || (row_scores[row_idx] - total_confidence) > min_confidence
-                })
+                .filter(row_filter)
                 .map(|&row_idx| {
                     let start = seg
                         .col_start

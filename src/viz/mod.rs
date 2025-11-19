@@ -29,6 +29,7 @@ use crate::{
     viterbi::{RefinedTraceSegment, TraceSegment},
     AuroraArgs,
 };
+use base64::prelude::*;
 
 const SODA_JS: &str = include_str!("../../fixtures/soda/soda.js");
 
@@ -225,15 +226,40 @@ impl<'a> AdjudicationSodaData<'a> {
         std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
     }
 
-    fn alignment_scores(&self) -> Option<Vec<Vec<f64>>> {
+    fn alignment_scores(&self) -> Option<Vec<String>> {
         if let Some(val) = self.viterbi_matrix {
+            let region_start = val.def.target_start;
+
             return Some(
                 val.def
                     .col_range_by_logical_row
                     .iter()
                     .enumerate()
                     .map(|(row, &(start, end))| {
-                        (start..end).map(|col| val.get(row, col)).collect_vec()
+                        let max_arr = (start..=end)
+                            .map(|col| {
+                                *val.data[col]
+                                    .iter()
+                                    .max_by(|a, b| a.partial_cmp(b).unwrap())
+                                    .unwrap_or(&0.0)
+                            })
+                            .collect_vec();
+                        let seq_arr = (start..=end)
+                            .zip(max_arr.iter())
+                            .flat_map(|(col, max_score)| {
+                                (val.get(row, col) - max_score).to_le_bytes()
+                            })
+                            .collect_vec();
+                        let max_arr_enc =
+                            max_arr.iter().flat_map(|v| v.to_le_bytes()).collect_vec();
+
+                        format!(
+                            "{},{},{},{}",
+                            region_start + start,
+                            region_start + end,
+                            BASE64_STANDARD.encode(seq_arr),
+                            BASE64_STANDARD.encode(max_arr_enc)
+                        )
                     })
                     .collect_vec(),
             );

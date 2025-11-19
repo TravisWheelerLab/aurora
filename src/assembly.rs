@@ -82,6 +82,10 @@ fn link_assemblies(
 
                 let target_distance = b.target_start as isize - a.target_end as isize;
 
+                let a_length = a.query_end.abs_diff(a.query_start);
+                let b_length = b.query_end.abs_diff(b.query_start);
+                let min_length = a_length.min(b_length);
+
                 let (consensus_distance, link_type) = match (a.strand, b.strand) {
                     (Strand::Forward, Strand::Forward) => (
                         b.query_start as isize - a.query_end as isize,
@@ -119,10 +123,13 @@ fn link_assemblies(
                     }
                 };
 
-                // let weight = consensus_distance.abs() as f64;
+                // TODO: Hardcoded, change later...
+                let is_significant =
+                    min_length >= 10 && -consensus_distance <= ((min_length / 2) as isize);
+
                 let weight = target_distance.abs() as f64;
 
-                if within_target_distance_threshold && consensus_is_colinear {
+                if within_target_distance_threshold && consensus_is_colinear && is_significant {
                     graph[a_idx].insert(Edge {
                         edge_to: b_idx,
                         weight,
@@ -177,7 +184,7 @@ impl AssemblyGraph {
                 )
             })
             .for_each(|(_query_id, alignments)| {
-                link_assemblies(&mut link_graph, &alignments.collect_vec(), &annotation_args);
+                link_assemblies(&mut link_graph, &alignments.collect_vec(), annotation_args);
             });
 
         Self { link_graph }

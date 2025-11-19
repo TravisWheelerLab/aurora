@@ -622,7 +622,7 @@ function run(data) {
         remainingQueryIds.forEach(layoutFn);
 
         this.layout = {
-          row: (d) => dpRowToChartRow.get(d.a.row),
+          row: (d) => dpRowToChartRow.get(d.a.row) ?? -1,
           rowCount,
         };
       },
@@ -765,7 +765,41 @@ function run(data) {
         }
 
         if (domainWidth < state.aliThresh) {
-          let annotations = domainFilter(params.sequences);
+          let annotations = domainFilter(params.alignmentScores);
+          annotations = annotations.map((v) => {
+            let offset = v.start;
+            let start = Math.max(Math.floor(this.initialDomain[0]), v.start);
+            let end = Math.min(Math.ceil(this.initialDomain[1]), v.end);
+            return {
+              start: start - 0.5,
+              end: end + 0.5,
+              values: v.scores.slice(start - offset, end + 1 - offset).map(Math.exp),
+              row: v.row
+            }
+          })
+          soda.heatmap({
+            chart: this,
+            selector: "ali-seq-conf",
+            annotations,
+            y,
+            height: 12,
+          });
+
+          soda.hoverBehavior({
+            chart: this,
+            annotations: annotations,
+            // this function is evaluated when a glyph is moused over
+            mouseover: (s, d) => s.style("stroke", "black"),
+            // this function is evaluated when a glyph is no longer moused over
+            mouseout: (s, d) => s.style("stroke", "none")
+          });
+          soda.tooltip({
+            chart: this,
+            annotations: annotations,
+            text: (d) => "YEP!",
+          });
+
+          annotations = domainFilter(params.sequences);
           soda.sequence({
             chart: this,
             selector: "ali-seq",
@@ -782,6 +816,15 @@ function run(data) {
             annotations,
             y: (d) => y(d) - 11,
             fillColor: "red",
+          });
+        }
+        else {
+          soda.heatmap({
+            chart: this,
+            selector: "ali-seq-conf",
+            annotations: [],
+            y,
+            height: 12,
           });
         }
 
@@ -896,6 +939,7 @@ function run(data) {
         inactiveSegments: params.inactiveSegments[state.traceIteration],
         confidenceSegments:
           params.confidenceSegments[state.traceIteration].filter(queryFilter),
+        alignmentScores: params.alignmentScores.filter(queryFilter),
       };
 
       this.renderParams = filteredParams;
@@ -1259,6 +1303,57 @@ function run(data) {
     return new_block_links;
   }
 
+  function isLittleEndian() {
+    let arr = new Uint32Array([0x11223344]);
+    let view = new Uint8Array(arr.buffer);
+    return view[0] == 0x44;
+  }
+
+  function base64ToFloats(data) {
+      let dataString = atob(data);
+      let intView = new Uint8Array(dataString.length);
+      for(let i = 0; i < dataString.length; i++) intView[i] = dataString.charCodeAt(i);
+      if(!isLittleEndian()) {
+        for(let i = 0; i < intView.length; i += 8) {
+          for(let j = 0; j < 8; j++) {
+            let tmp = intView[i + (7 - j)];
+            intView[i + (7 - j)] = intView[i + j];
+            intView[i + j] = tmp;
+          }
+        }
+      }
+      return new Float64Array(intView.buffer);
+  }
+
+  function prepareAlignmentScores(alScores) {
+    if(alScores == null) return alScores;
+
+    let alignment_scores = [];
+    let i = 0;
+
+    for(const entry of alScores) {
+      let tokens = entry.split(",");
+
+      let start = parseInt(tokens[0]);
+      let end = parseInt(tokens[1]);
+      let scores = base64ToFloats(tokens[2]);
+      let norms = base64ToFloats(tokens[3]);
+
+      alignment_scores.push({
+        start,
+        end,
+        scores,
+        norms,
+        row: i,
+        average: scores.reduce((acc, v) => acc + v, 0) / scores.length,
+      });
+
+      i++;
+    }
+
+    return alignment_scores;
+  }
+
   function prepareData() {
     let coords = {
       start: data.targetStart - LABEL_WIDTH,
@@ -1317,6 +1412,7 @@ function run(data) {
       historySegments: prepareSegments(data.historySegments, data.targetStart),
       historyBlocks: prepareBlocks(data.historyBlocks, data.targetStart),
       blockLinks: prepareBlockLinks(data.blockLinks),
+      alignmentScores: prepareAlignmentScores(data.alignmentScores),
     };
 
     alignments.proxy.forEach((a) => {
