@@ -338,7 +338,14 @@ where
 
     pub fn initial_active_cols(&self) -> Vec<usize> {
         (0..self.num_cols())
-            .filter(|&col_idx| self.def.ali_ids_by_col[col_idx].iter().any(|&id| id != 0))
+            .filter(|&col_idx| {
+                let current_active = self.def.ali_ids_by_col[col_idx].iter().any(|&id| id != 0);
+                // If the prior collumn was active, we include this cell to. This forces viterbi into the skip state for a gap...
+                let prior_active = self.def.ali_ids_by_col[col_idx.saturating_sub(1)]
+                    .iter()
+                    .any(|&id| id != 0);
+                current_active || prior_active
+            })
             .collect()
     }
 

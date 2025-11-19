@@ -576,8 +576,8 @@ function run(data) {
     let alignments = new soda.Chart({
       ...chartConf,
       zoomable: true,
-      rowColors: ["whitesmoke", "white"],
-      rowHeight: 30,
+      rowHeight: 50,
+      rowColors: ["white"],
 
       updateLayout(params) {
         let queryIds = [...new Set(params.proxy.map((a) => a.queryId))];
@@ -766,37 +766,24 @@ function run(data) {
 
         if (domainWidth < state.aliThresh) {
           let annotations = domainFilter(params.alignmentScores);
-          annotations = annotations.map((v) => {
-            let offset = v.start;
-            let start = Math.max(Math.floor(this.initialDomain[0]), v.start);
-            let end = Math.min(Math.ceil(this.initialDomain[1]), v.end);
-            return {
-              start: start - 0.5,
-              end: end + 0.5,
-              values: v.scores.slice(start - offset, end + 1 - offset).map(Math.exp),
-              row: v.row
-            }
-          })
+          annotations = soda.slicePlotAnnotations({
+            annotations, 
+            start: this.domain[0], 
+            end: this.domain[1],
+          });
+          annotations.annotations.forEach((v) => {
+            v.row = parseInt(v.id);
+            v.values = v.values.map(Math.exp);
+            v.start = Math.floor(v.start) - 0.5;
+            v.end = Math.ceil(v.end) + 0.5
+          });
+          
           soda.heatmap({
             chart: this,
             selector: "ali-seq-conf",
-            annotations,
+            annotations: annotations.annotations,
             y,
             height: 12,
-          });
-
-          soda.hoverBehavior({
-            chart: this,
-            annotations: annotations,
-            // this function is evaluated when a glyph is moused over
-            mouseover: (s, d) => s.style("stroke", "black"),
-            // this function is evaluated when a glyph is no longer moused over
-            mouseout: (s, d) => s.style("stroke", "none")
-          });
-          soda.tooltip({
-            chart: this,
-            annotations: annotations,
-            text: (d) => "YEP!",
           });
 
           annotations = domainFilter(params.sequences);
@@ -1336,16 +1323,17 @@ function run(data) {
 
       let start = parseInt(tokens[0]);
       let end = parseInt(tokens[1]);
-      let scores = base64ToFloats(tokens[2]);
+      let values = base64ToFloats(tokens[2]);
       let norms = base64ToFloats(tokens[3]);
 
       alignment_scores.push({
         start,
         end,
-        scores,
+        values,
         norms,
+        id: `${i}`,
         row: i,
-        average: scores.reduce((acc, v) => acc + v, 0) / scores.length,
+        average: values.reduce((acc, v) => acc + v, 0) / values.length,
       });
 
       i++;
