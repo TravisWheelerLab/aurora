@@ -8,6 +8,7 @@ use itertools::Itertools;
 use crate::{
     alignment::{Alignment, AlignmentData, Strand},
     chunks::ProximityGroup,
+    score_params::{self, ScoreParams},
     AnnotationArgs,
 };
 
@@ -54,6 +55,7 @@ impl Hash for Edge {
 fn link_assemblies(
     graph: &mut [HashSet<Edge>],
     alignments: &[(usize, &Alignment)],
+    score_params: &ScoreParams,
     args: &AnnotationArgs,
 ) {
     // this relies on the alignments being sorted by target start
@@ -156,7 +158,7 @@ pub struct AssemblyGraph {
 impl AssemblyGraph {
     pub fn new(
         group: &ProximityGroup,
-        confidence_avg_by_id: &HashMap<usize, f64>,
+        score_params: &ScoreParams,
         annotation_args: &AnnotationArgs,
     ) -> Self {
         let mut query_ids: Vec<usize> = group
@@ -184,7 +186,12 @@ impl AssemblyGraph {
                 )
             })
             .for_each(|(_query_id, alignments)| {
-                link_assemblies(&mut link_graph, &alignments.collect_vec(), annotation_args);
+                link_assemblies(
+                    &mut link_graph,
+                    &alignments.collect_vec(),
+                    score_params,
+                    annotation_args,
+                );
             });
 
         Self { link_graph }

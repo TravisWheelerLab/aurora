@@ -135,11 +135,7 @@ pub fn run_pipeline(
     confidence(&mut confidence_matrix);
     let (confidence_avg_by_id, _confidence_by_id) = windowed_confidence(&mut confidence_matrix);
 
-    let assembly_graph = AssemblyGraph::new(
-        proximity_group,
-        &confidence_avg_by_id,
-        &args.annotation_args,
-    );
+    let assembly_graph = AssemblyGraph::new(proximity_group, &score_params, &args.annotation_args);
 
     let segments;
     let mut viterbi_matrix = Matrix::<f64>::new(&matrix_def);
