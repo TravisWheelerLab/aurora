@@ -576,8 +576,7 @@ function run(data) {
     let alignments = new soda.Chart({
       ...chartConf,
       zoomable: true,
-      rowHeight: 50,
-      rowColors: ["white"],
+      rowHeight: 44,
 
       updateLayout(params) {
         let queryIds = [...new Set(params.proxy.map((a) => a.queryId))];
@@ -628,7 +627,13 @@ function run(data) {
       },
 
       draw(params) {
+        let d3 = soda.internalD3;
         this.clear();
+        // Doesn't work correctly....
+        this.removeRowStripes();
+        d3.select(this.highlightSelection.node().parentNode.parentNode)
+          .style("background", `repeating-linear-gradient(to bottom, whitesmoke 0px, whitesmoke ${this.rowHeight}px, white  ${this.rowHeight}px, white ${this.rowHeight * 2}px)`);
+        
         let domainWidth = this.domain[1] - this.domain[0];
 
         let domainFilter = (ann) =>
@@ -765,26 +770,92 @@ function run(data) {
         }
 
         if (domainWidth < state.aliThresh) {
-          let annotations = domainFilter(params.alignmentScores);
-          annotations = soda.slicePlotAnnotations({
-            annotations, 
-            start: this.domain[0], 
-            end: this.domain[1],
-          });
-          annotations.annotations.forEach((v) => {
-            v.row = parseInt(v.id);
-            v.values = v.values.map(Math.exp);
-            v.start = Math.floor(v.start) - 0.5;
-            v.end = Math.ceil(v.end) + 0.5
+          let annotations = (params.alignmentScores != null)? domainFilter(params.alignmentScores): [];
+          annotations = annotations.map((val) => {
+            let offset = val.start;
+            let domain = this.domain;
+            let start = Math.max(Math.floor(domain[0]), val.start);
+            let end = Math.min(Math.ceil(domain[1]), val.end);
+            return {
+              id: val.id,
+              row: val.row,
+              values: val.values.slice(start - offset, end + 1 - offset).map(Math.exp),
+              scores: val.values.slice(start - offset, end + 1 - offset),
+              norms: val.norms.slice(start - offset, end + 1 - offset),
+              start: start - 0.5,
+              end: end + 0.5
+            };
           });
           
-          soda.heatmap({
+          let heatmap_selection = soda.heatmap({
             chart: this,
             selector: "ali-seq-conf",
-            annotations: annotations.annotations,
-            y,
+            annotations: annotations,
+            y: (d) => y(d) + 12,
             height: 12,
           });
+
+          heatmap_selection
+            .selectAll(function () {
+              return this.children;
+            })
+            .on("mouseover", function(data) {
+              let element = this;
+              let d3 = soda.internalD3;
+              let bbox = element.getBoundingClientRect();
+              let x = d3.event.clientX - bbox.left;
+              let y = d3.event.clientY - bbox.top;
+
+              let cell = Math.floor((x / bbox.width) * data.a.scores.length);
+
+              d3.select(document.body)
+                .select(".heatmap-hover-tooltip")
+                .remove();
+
+              d3.select(document.body)
+                .select(".heatmap-highlight-tooltip")
+                .remove();
+
+              let cellX = Math.round(bbox.left + (cell * (bbox.width / data.a.scores.length)));
+              let cellY = bbox.top;
+              let cellWidth = Math.round(bbox.width / data.a.scores.length);
+              let cellHeight = Math.round(bbox.height);
+
+              d3.select(document.body)
+                .append("div")
+                .attr("class", "heatmap-highlight-tooltip")
+                .style("position", "fixed")
+                .style("left", `${cellX}px`)
+                .style("top", `${cellY}px`)
+                .style("width", `${cellWidth}px`)
+                .style("height", `${cellHeight}px`)
+                .style("z-index", "1000")
+                .style("pointer-events", "none")
+                .style("background-color", "rgba(0, 255, 255, 0.4)");
+
+              d3.select(document.body)
+                .append("div")
+                .attr("class", "heatmap-hover-tooltip")
+                .style("position", "fixed")
+                .style("z-index", "1000")
+                .style("left", `${Math.round(cellX + cellWidth / 2)}px`)
+                .style("top", `${cellY - 5}px`)
+                .style("background-color", "lightblue")
+                .style("border-radius", "3px")
+                .style("transform", "translate(-50%, -100%)")
+                .style("padding", "3px")
+                .html(`Log Score: ${data.a.scores[cell] + data.a.norms[cell]}<br>Normalized Log Score: ${data.a.scores[cell]}<br>Normalized Score: ${data.a.values[cell]}`);
+            })
+            .on("mouseout", function() {
+              let d3 = soda.internalD3;
+              d3.select(document.body)
+                .select(".heatmap-hover-tooltip")
+                .remove();
+
+              d3.select(document.body)
+                .select(".heatmap-highlight-tooltip")
+                .remove();
+            });
 
           annotations = domainFilter(params.sequences);
           soda.sequence({
@@ -803,15 +874,6 @@ function run(data) {
             annotations,
             y: (d) => y(d) - 11,
             fillColor: "red",
-          });
-        }
-        else {
-          soda.heatmap({
-            chart: this,
-            selector: "ali-seq-conf",
-            annotations: [],
-            y,
-            height: 12,
           });
         }
 
