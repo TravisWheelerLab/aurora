@@ -1,14 +1,14 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, usize};
 
 use crate::{
     alignment::Strand,
     assembly::{AssemblyGraph, Direction, Edge, LinkType},
     matrix::Matrix,
     score_params::ScoreParams,
-    segments::{Block, BlockType, SegmentedMatrix},
+    segments::{Block, BlockType, SegmentedMatrix, Segment},
 };
 
-use itertools::multizip;
+use itertools::{Itertools, multizip};
 
 pub fn viterbi_collapsed(
     confidence_matrix: &Matrix<f64>,
@@ -329,7 +329,8 @@ pub fn print_viterbi_with_sources(viterbi_matrix: &Matrix<f64>, sources_matrix: 
 #[derive(Debug)]
 pub struct HistoryInfo {
     pub segment: usize,
-    pub block: usize,
+    pub start_block: usize,
+    pub block_count: usize,
     pub prior_block_history: usize,
     pub prior_history: usize,
     pub join_history: usize,
@@ -338,8 +339,8 @@ pub struct HistoryInfo {
 
 impl PartialEq for HistoryInfo {
     fn eq(&self, other: &Self) -> bool {
-        self.segment == other.segment
-            && self.block == other.block
+        self.start_block == other.start_block
+            && self.block_count == other.block_count
             && self.prior_history == other.prior_history
     }
 }
@@ -348,11 +349,11 @@ impl Eq for HistoryInfo {}
 
 impl Ord for HistoryInfo {
     fn cmp(&self, other: &Self) -> Ordering {
-        match self.segment.cmp(&other.segment) {
+        match self.start_block.cmp(&other.start_block) {
             Ordering::Equal => {}
             ord => return ord,
         }
-        match self.block.cmp(&other.block) {
+        match self.block_count.cmp(&other.block_count) {
             Ordering::Equal => {}
             ord => return ord,
         }
@@ -404,6 +405,7 @@ impl PartialOrd for HistoryEntry {
 
 #[derive(Debug)]
 pub struct History {
+    pub segment_groups: Vec<SegmentGroups>,
     pub segment_offsets: Vec<usize>,
     pub entries: Vec<HistoryEntry>,
 }
@@ -486,34 +488,85 @@ fn check_for_forward_link(
     }
 }
 
+fn get_valid_joins_for_current_group(
+    current_segment: &Segment,
+    current_group: &[usize],
+    current_segment_index: usize,
+    prior_segment: &Segment,
+    prior_group: &[usize],
+    assembly_graph: &AssemblyGraph
+) -> Vec<usize> {
+    let mut values: Vec<usize> = Vec::new();
+
+    let mut current_idx = 0;
+    let mut prior_idx = 0;
+
+    while current_idx < current_group.len() && prior_idx < prior_group.len() {
+        let current_block = &current_segment.blocks[current_group[current_idx]];
+        let prior_block = &prior_segment.blocks[prior_group[current_idx]];
+
+        if let (Some(query_id1), Some(query_id2)) = (current_block.query_id, prior_block.query_id) {
+            if query_id1 == query_id2 {
+                if prior_block.can_join_up_to >= current_segment_index && check_for_forward_link(assembly_graph, prior_block, current_block) {
+                    values.push(current_group[current_idx]);
+                }
+
+                current_idx += 1;
+                prior_idx += 1;
+                continue;
+            }
+        } 
+
+        let is_first_smaller = current_block.query_id < prior_block.query_id;
+        current_idx += is_first_smaller as usize;
+        prior_idx += !is_first_smaller as usize;
+    }
+
+    values
+}
+
 fn check_for_join(
     histories: &[HistoryEntry],
     segments: &SegmentedMatrix,
+    segment_groups: &[SegmentGroups],
     assembly_graph: &AssemblyGraph,
-    current_block_index: (usize, usize),
+    current_group_reference: (usize, usize),
     start_entry: usize,
     history_depth: usize,
-) -> Option<usize> {
+) -> Option<(usize, Vec<usize>)> {
     let mut last_hist = start_entry;
-    let current_block = &segments[current_block_index.0].blocks[current_block_index.1];
-    let segment_idx = current_block_index.0;
+    let segment_idx = current_group_reference.0;
+    let group_idx = current_group_reference.1;
+    let current_group_indexes = segment_groups[segment_idx].get_group(group_idx);
 
-    if let Some(current_query_id) = current_block.query_id {
+    let joinable_blocks = current_group_indexes.iter().filter_map(|&v| {
+        let block = &segments[segment_idx].blocks[v];
+        if let Some(_) = block.query_id {
+            Some(v)
+        } else {
+            None
+        }
+    }).collect_vec();
+
+    if !joinable_blocks.is_empty() {
         for _ in 0..history_depth {
             match &histories[last_hist] {
                 HistoryEntry::Root => return None,
                 HistoryEntry::Append(val) | HistoryEntry::Join(val) => {
                     let cur_hist = last_hist;
                     last_hist = val.prior_history;
-                    let blk = &segments[val.segment].blocks[val.block];
+                    
+                    let valid_group = get_valid_joins_for_current_group(
+                        &segments[segment_idx], 
+                        &joinable_blocks, 
+                        segment_idx, 
+                        &segments[val.segment], 
+                        &segment_groups[val.segment].indexes[val.start_block..val.start_block + val.block_count], 
+                        assembly_graph
+                    );
 
-                    if let Some(prior_query_id) = blk.query_id {
-                        if prior_query_id == current_query_id
-                            && blk.can_join_up_to >= segment_idx
-                            && check_for_forward_link(assembly_graph, blk, current_block)
-                        {
-                            return Some(cur_hist);
-                        }
+                    if !valid_group.is_empty() {
+                        return Some((cur_hist, valid_group));
                     }
                 }
             }
@@ -523,12 +576,77 @@ fn check_for_join(
     None
 }
 
-fn get_owning_block(history_entry: &HistoryEntry) -> Option<usize> {
-    match history_entry {
-        HistoryEntry::Append(val) | HistoryEntry::Join(val) => Some(val.block),
-        HistoryEntry::Root => None,
+
+#[derive(Debug)]
+pub struct SegmentGroups {
+    pub offsets: Vec<usize>,
+    pub indexes: Vec<usize>
+}
+
+impl SegmentGroups {
+    fn from_segment(segment: &Segment, delta_threshold: f64) -> Self {
+        // Sort the blocks by score, collected the indexes for that...
+        let mut score_ordered = (0..segment.blocks.len())
+            .sorted_by(|&a, &b| f64::total_cmp(&segment.blocks[a].confidence, &segment.blocks[b].confidence))
+            .collect_vec();
+
+        // Merge segments if they are close enough in score...
+        let mut last_index = 0;
+        let multi_segment_offsets = (0..score_ordered.len())
+            .filter_map(|next_index| {
+                if last_index == next_index || (segment.blocks[score_ordered[next_index]].confidence - segment.blocks[score_ordered[last_index]].confidence).abs() > delta_threshold {
+                    last_index = next_index;
+                    Some(last_index)
+                } else {
+                    None
+                }
+            })
+            .collect_vec();
+
+        // Resort each grouping by it's row index...
+        multi_segment_offsets.iter().zip(multi_segment_offsets.iter().skip(1).chain(Some(multi_segment_offsets.len()).iter())).for_each(|(&start, &end)| {
+            score_ordered[start..end].sort_by_key(|&v| segment.blocks[v].row_idx);
+        });
+
+        // Resort all groups by numeric order, this allows for binary and log(n) runtime for adding a new group without duplication...
+        
+
+        return Self {
+            offsets: multi_segment_offsets, 
+            indexes: score_ordered 
+        }
+    }
+
+    fn get_range(&self, group_idx: usize) -> (usize, usize) {
+        (self.offsets[group_idx], if group_idx + 1 >= self.offsets.len() {self.block_count()} else {self.offsets[group_idx + 1]})
+    }
+
+    fn get_group(&self, group_idx: usize) -> &[usize] {
+        let range = self.get_range(group_idx);
+        &self.indexes[range.0..range.1]
+    }
+
+    fn iter_group_ranges(&self) -> impl Iterator<Item = (usize, usize)> + use<'_> {
+        (0..self.offsets.len()).map(|v| self.get_range(v))
+    }
+
+    fn iter_groups(&self) -> impl Iterator<Item = &[usize]> {
+        (0..self.offsets.len()).map(|v| self.get_group(v))
+    }
+
+    fn group_count(&self) -> usize {
+        self.offsets.len()
+    }
+
+    fn add_group(&mut self, group: &[usize]) {
+        let idx = self.offsets.binary_search_by(||)
+    }
+
+    fn block_count(&self) -> usize {
+        self.indexes.len()
     }
 }
+
 
 pub fn history_viterbi_on_segments(
     segments: &SegmentedMatrix,
@@ -540,6 +658,7 @@ pub fn history_viterbi_on_segments(
 
     let mut histories: Vec<HistoryEntry> = Vec::with_capacity(block_count + 1);
     let mut seg_offsets: Vec<usize> = Vec::with_capacity(segments.len() + 1);
+    let mut segment_groups: Vec<SegmentGroups> = Vec::with_capacity(segments.len());
 
     histories.push(HistoryEntry::Root);
     seg_offsets.push(0);
@@ -547,6 +666,13 @@ pub fn history_viterbi_on_segments(
 
     // For every segment...
     for segment_idx in 0..segments.len() {
+        // Group the blocks in the next segment so ones with basically identical score combine into a single history...
+        // TOOD: Parameterize the score threshold...
+        let segment_group = group_blocks_in_segment(&segments[segment_idx], 0.001);
+        segment_groups.push(segment_group);
+
+        for seg_range in 
+
         for (block_idx, current_block) in segments[segment_idx].blocks.iter().enumerate() {
             for prior_hist_idx in (*seg_offsets.last().unwrap())..prior_step_end {
                 // Add a join and no join history...
@@ -621,6 +747,7 @@ pub fn history_viterbi_on_segments(
     }
 
     History {
+        segment_groups,
         segment_offsets: seg_offsets,
         entries: histories,
     }
