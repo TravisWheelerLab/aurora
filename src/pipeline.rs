@@ -1,4 +1,4 @@
-use std::{fmt::Display, fs};
+use std::fs;
 
 use itertools::{izip, Itertools};
 
@@ -14,7 +14,7 @@ use crate::{
     support::windowed_confidence,
     viterbi::{
         backtrace_histories, history_viterbi_on_segments, trace_segments, traceback,
-        viterbi_collapsed, HistoryEntry, RefinedTraceSegment,
+        viterbi_collapsed, RefinedTraceSegment,
     },
     viz::AdjudicationSodaData,
     windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
@@ -195,23 +195,6 @@ pub fn run_pipeline(
         )
         .map(|(a, b)| b - a)
         .collect_vec();
-    let join_count = history
-        .segment_offsets
-        .iter()
-        .zip(history.segment_offsets.iter().skip(1))
-        .map(|(&a, &b)| {
-            history.entries[a..b]
-                .iter()
-                .map(|b| match b {
-                    HistoryEntry::Append(val) | HistoryEntry::Join(val) => {
-                        (segments[val.segment].blocks[val.block].can_join_up_to - val.segment)
-                            as u64
-                    }
-                    _ => 0,
-                })
-                .max()
-                .unwrap()
-        });
     let segment_ranges = segments.iter().map(|s| {
         (
             proximity_group.target_start + s.start_col,
@@ -223,7 +206,6 @@ pub fn run_pipeline(
         (0..segments.len()),
         history_lengths.iter(),
         segment_lengths,
-        join_count,
         segment_ranges
     )
     .for_each(|v| println!("{}: {:?}", region_idx, v));

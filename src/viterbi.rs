@@ -1,15 +1,14 @@
-use std::{cell::UnsafeCell, cmp::Ordering, collections::{BTreeMap, BTreeSet}, usize};
+use std::{cmp::Ordering, usize};
 
 use crate::{
     alignment::Strand,
     assembly::{AssemblyGraph, Direction, Edge, LinkType},
     matrix::Matrix,
     score_params::ScoreParams,
-    segments::{Block, BlockType, SegmentedMatrix, Segment},
+    segments::{Block, BlockType, Segment, SegmentedMatrix},
 };
 
-use itertools::{Group, Itertools, multizip};
-use serde_json::value::Index;
+use itertools::{multizip, Itertools};
 
 pub fn viterbi_collapsed(
     confidence_matrix: &Matrix<f64>,
@@ -494,9 +493,8 @@ fn get_valid_joins_for_current_group(
     current_segment_index: usize,
     prior_segment: &Segment,
     prior_group: &[usize],
-    assembly_graph: &AssemblyGraph
+    assembly_graph: &AssemblyGraph,
 ) -> Vec<usize> {
-
     // TODO: This implementation is wrong!
     let mut values: Vec<usize> = Vec::with_capacity(current_group.len());
 
@@ -509,7 +507,9 @@ fn get_valid_joins_for_current_group(
 
         if let (Some(query_id1), Some(query_id2)) = (current_block.query_id, prior_block.query_id) {
             if query_id1 == query_id2 {
-                if prior_block.can_join_up_to >= current_segment_index && check_for_forward_link(assembly_graph, prior_block, current_block) {
+                if prior_block.can_join_up_to >= current_segment_index
+                    && check_for_forward_link(assembly_graph, prior_block, current_block)
+                {
                     values.push(current_group[current_idx]);
                 }
 
@@ -526,7 +526,6 @@ fn get_valid_joins_for_current_group(
 
     values
 }
-
 
 fn get_valid_appends_for_current_group(
     current_segment: &Segment,
@@ -550,7 +549,7 @@ fn get_valid_appends_for_current_group(
             current_idx += 1;
             prior_idx += 1;
             continue;
-        } 
+        }
 
         let is_current_smaller = current_block.row_idx < prior_block.row_idx;
         if is_current_smaller {
@@ -562,7 +561,6 @@ fn get_valid_appends_for_current_group(
 
     (matching_values, different_values)
 }
-
 
 fn check_for_join(
     histories: &[HistoryEntry],
@@ -578,14 +576,17 @@ fn check_for_join(
     let group_idx = current_group_reference.1;
     let current_group_indexes = segment_groups[segment_idx].get_group(group_idx);
 
-    let joinable_blocks = current_group_indexes.iter().filter_map(|&v| {
-        let block = &segments[segment_idx].blocks[v];
-        if let Some(_) = block.query_id {
-            Some(v)
-        } else {
-            None
-        }
-    }).collect_vec();
+    let joinable_blocks = current_group_indexes
+        .iter()
+        .filter_map(|&v| {
+            let block = &segments[segment_idx].blocks[v];
+            if let Some(_) = block.query_id {
+                Some(v)
+            } else {
+                None
+            }
+        })
+        .collect_vec();
 
     if !joinable_blocks.is_empty() {
         for _ in 0..history_depth {
@@ -594,14 +595,14 @@ fn check_for_join(
                 HistoryEntry::Append(val) | HistoryEntry::Join(val) => {
                     let cur_hist = last_hist;
                     last_hist = val.prior_history;
-                    
+
                     let valid_group = get_valid_joins_for_current_group(
-                        &segments[segment_idx], 
-                        &joinable_blocks, 
-                        segment_idx, 
-                        &segments[val.segment], 
-                        &segment_groups[val.segment].get_group(val.group_index), 
-                        assembly_graph
+                        &segments[segment_idx],
+                        &joinable_blocks,
+                        segment_idx,
+                        &segments[val.segment],
+                        &segment_groups[val.segment].get_group(val.group_index),
+                        assembly_graph,
                     );
 
                     if !valid_group.is_empty() {
@@ -615,34 +616,51 @@ fn check_for_join(
     None
 }
 
-
 #[derive(Debug)]
 pub struct SegmentGroups {
     num_origin_groups: usize,
     pub offset_order: Vec<usize>,
     pub group_offsets: Vec<usize>,
     pub can_join_to: Vec<usize>,
-    pub indexes: Vec<usize>
+    pub indexes: Vec<usize>,
 }
 
-
-fn get_offset_range_from_vector(offset_vector: &[usize], array_length: usize, index: usize) -> (usize, usize) {
-    (offset_vector[index], if index + 1 < offset_vector.len() {offset_vector[index + 1]} else {array_length})
+fn get_offset_range_from_vector(
+    offset_vector: &[usize],
+    array_length: usize,
+    index: usize,
+) -> (usize, usize) {
+    (
+        offset_vector[index],
+        if index + 1 < offset_vector.len() {
+            offset_vector[index + 1]
+        } else {
+            array_length
+        },
+    )
 }
-
 
 impl SegmentGroups {
     fn from_segment(segment: &Segment, delta_threshold: f64) -> Self {
         // Sort the blocks by score, collected the indexes for that...
         let mut score_ordered = (0..segment.blocks.len())
-            .sorted_by(|&a, &b| f64::total_cmp(&segment.blocks[a].confidence, &segment.blocks[b].confidence))
+            .sorted_by(|&a, &b| {
+                f64::total_cmp(&segment.blocks[a].confidence, &segment.blocks[b].confidence)
+            })
             .collect_vec();
 
         // Merge segments if they are close enough in score...
         let mut last_index = 0;
         let multi_segment_offsets = (0..score_ordered.len())
             .filter_map(|next_index| {
-                if last_index == next_index || (segment.blocks[score_ordered[next_index]].confidence - segment.blocks[score_ordered[last_index]].confidence).abs() > delta_threshold {
+                if last_index == next_index
+                    || segment.blocks[next_index].row_idx == 0
+                    || segment.blocks[last_index].row_idx == 0
+                    || (segment.blocks[score_ordered[next_index]].confidence
+                        - segment.blocks[score_ordered[last_index]].confidence)
+                        .abs()
+                        > delta_threshold
+                {
                     last_index = next_index;
                     Some(last_index)
                 } else {
@@ -651,33 +669,44 @@ impl SegmentGroups {
             })
             .collect_vec();
 
-        let mut can_join_to_vec = score_ordered.iter().map(|&i| segment.blocks[i].can_join_up_to).collect_vec();
-        
+        let mut can_join_to_vec = score_ordered
+            .iter()
+            .map(|&i| segment.blocks[i].can_join_up_to)
+            .collect_vec();
+
         // Sort each group so indexes run in increasing order...
         for index in (0..multi_segment_offsets.len()) {
-            let (start, end) = get_offset_range_from_vector(&multi_segment_offsets, score_ordered.len(), index);
+            let (start, end) =
+                get_offset_range_from_vector(&multi_segment_offsets, score_ordered.len(), index);
             score_ordered[start..end].sort_unstable_by_key(|&v| segment.blocks[v].row_idx);
             let max_join = *can_join_to_vec[start..end].iter().max().unwrap_or(&0);
             can_join_to_vec.push(max_join);
         }
 
-        let ordered_group_indexes = (0..multi_segment_offsets.len()).sorted_unstable_by_key(|&v| get_offset_range_from_vector(&multi_segment_offsets, score_ordered.len(), v)).collect_vec();
+        let ordered_group_indexes = (0..multi_segment_offsets.len())
+            .sorted_unstable_by_key(|&v| {
+                get_offset_range_from_vector(&multi_segment_offsets, score_ordered.len(), v)
+            })
+            .collect_vec();
 
         Self {
             num_origin_groups: ordered_group_indexes.len(),
             can_join_to: can_join_to_vec,
             offset_order: ordered_group_indexes,
             group_offsets: multi_segment_offsets,
-            indexes: score_ordered
+            indexes: score_ordered,
         }
     }
 
     fn get_first_block<'a>(&self, segment: &'a Segment, group_idx: usize) -> &'a Block {
-        &segment.blocks[*self.get_group(group_idx).first().expect("Empty group, should be impossible.")]
+        &segment.blocks[*self
+            .get_group(group_idx)
+            .first()
+            .expect("Empty group, should be impossible.")]
     }
 
     fn get_range(&self, group_idx: usize) -> (usize, usize) {
-        (self.group_offsets[group_idx], if group_idx + 1 >= self.group_offsets.len() {self.block_count()} else {self.group_offsets[group_idx + 1]})
+        get_offset_range_from_vector(&self.group_offsets, self.block_count(), group_idx)
     }
 
     fn get_group(&self, group_idx: usize) -> &[usize] {
@@ -698,7 +727,10 @@ impl SegmentGroups {
     }
 
     fn add_group(&mut self, new_segment: &[usize]) -> usize {
-        match self.offset_order.binary_search_by(|&probe_idx| self.get_group(probe_idx).cmp(new_segment)) {
+        match self
+            .offset_order
+            .binary_search_by(|&probe_idx| self.get_group(probe_idx).cmp(new_segment))
+        {
             Result::Ok(idx) => idx,
             Result::Err(idx) => {
                 let new_group_idx = self.group_count();
@@ -706,7 +738,11 @@ impl SegmentGroups {
                 self.offset_order.insert(idx, new_group_idx);
                 self.group_offsets.push(new_offset);
                 self.indexes.extend_from_slice(new_segment);
-                let max_join = new_segment.iter().map(|&i| self.can_join_to[i]).max().unwrap_or(0);
+                let max_join = new_segment
+                    .iter()
+                    .map(|&i| self.can_join_to[i])
+                    .max()
+                    .unwrap_or(0);
                 self.can_join_to.push(max_join);
 
                 new_group_idx
@@ -722,7 +758,6 @@ impl SegmentGroups {
         self.indexes.len()
     }
 }
-
 
 pub fn history_viterbi_on_segments(
     segments: &SegmentedMatrix,
@@ -789,7 +824,9 @@ pub fn history_viterbi_on_segments(
                         join_history: join_index,
                         score: history_score(&histories[prior_hist_idx])
                             + score_params.query_loop_score
-                            + segment_groups[segment_idx].get_first_block(&segments[segment_idx], new_group_index).confidence,
+                            + segment_groups[segment_idx]
+                                .get_first_block(&segments[segment_idx], new_group_index)
+                                .confidence,
                     }));
                 }
 
@@ -804,32 +841,49 @@ pub fn history_viterbi_on_segments(
                             prior_history: other_index,
                             join_history: prior_hist_idx,
                             score: history_score(&histories[prior_hist_idx])
-                                + &segment_groups[segment_idx].get_first_block(&segments[segment_idx], group_idx).confidence,
+                                + &segment_groups[segment_idx]
+                                    .get_first_block(&segments[segment_idx], group_idx)
+                                    .confidence,
                         }));
-                    },
+                    }
                     HistoryEntry::Append(val) | HistoryEntry::Join(val) => {
-                        // Can add up to two append events for blocks with multiple alignments: 
-                        let prior_block = &segment_groups[val.segment].get_first_block(&segments[val.segment], val.group_index);
-                        score_params.transition(
-                            current_block.row_idx == 0,
-                            prior_block.row_idx != current_block.row_idx,
-                        )
+                        // Can add up to two append events for blocks with multiple alignments:
+                        let current_rep_block = &segment_groups[segment_idx]
+                            .get_first_block(&segments[segment_idx], group_idx);
+                        let is_skip = current_rep_block.row_idx == 0;
 
-                        let (matching_blocks, different_blocks) = get_valid_appends_for_current_group(current_segment, current_group, prior_segment, prior_group)
+                        let (matching_blocks, different_blocks) =
+                            get_valid_appends_for_current_group(
+                                &segments[segment_idx],
+                                segment_groups[segment_idx].get_group(group_idx),
+                                &segments[val.segment],
+                                segment_groups[val.segment].get_group(val.group_index),
+                            );
+
+                        let has_matching = !matching_blocks.is_empty();
+                        let new_group = if has_matching {
+                            matching_blocks
+                        } else {
+                            different_blocks
+                        };
+
+                        if !new_group.is_empty() {
+                            let new_group_idx = segment_groups[segment_idx].add_group(&new_group);
+
+                            // Add append event for matching blocks, this will have no transition penalty...
+                            histories.push(HistoryEntry::Append(HistoryInfo {
+                                segment: segment_idx,
+                                group_index: new_group_idx,
+                                prior_block_history: prior_hist_idx,
+                                prior_history: other_index,
+                                join_history: prior_hist_idx,
+                                score: history_score(&histories[prior_hist_idx])
+                                    + score_params.transition(is_skip, has_matching)
+                                    + current_rep_block.confidence,
+                            }));
+                        }
                     }
                 };
-
-                // Add append event...
-                histories.push(HistoryEntry::Append(HistoryInfo {
-                    segment: segment_idx,
-                    block: block_idx,
-                    prior_block_history: prior_hist_idx,
-                    prior_history: other_index,
-                    join_history: prior_hist_idx,
-                    score: history_score(&histories[prior_hist_idx])
-                        + trans_score
-                        + segments[segment_idx].blocks[block_idx].confidence,
-                }));
             }
         }
 
