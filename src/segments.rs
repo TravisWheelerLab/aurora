@@ -41,7 +41,7 @@ impl<T> From<T> for Unordered<T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum BlockType {
     Skip,
     Alignment,
@@ -232,7 +232,7 @@ pub fn segments_from_matrix_trace(
 
         // Compute scores and start/end points for all rows in this segment....
         for column in seg.col_start..=seg.col_end {
-            let rows = &matrix_definition.active_rows_by_col[column];
+            let rows = matrix_definition.active_rows_by_col[column];
             let row_iter = rows
                 .iter()
                 .enumerate()
@@ -272,7 +272,7 @@ pub fn segments_from_matrix_trace(
             last_segment_seen[row_idx] = last_segment_seen[row_idx].max(segments.len());
         });
 
-        segments.push(Segment {
+        let mut new_segment = Segment {
             start_col: seg.col_start,
             end_col: seg.col_end,
             blocks: valid_rows
@@ -310,7 +310,13 @@ pub fn segments_from_matrix_trace(
                     }
                 })
                 .collect_vec(),
-        });
+        };
+        // Order blocks by query id, then row... This order allows for really fast intersection checks in history code...
+        new_segment
+            .blocks
+            .sort_unstable_by_key(|b| (b.query_id, b.row_idx));
+
+        segments.push(new_segment);
     }
 
     // Allow each alignment block to farthest segment it can be linked to...
