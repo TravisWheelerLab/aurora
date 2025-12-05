@@ -1,4 +1,4 @@
-use std::{fmt::Debug, iter::Fuse};
+use std::{cmp::Ordering, fmt::Debug, iter::Fuse};
 
 use crate::{
     assembly::AssemblyGraph, chunks::ProximityGroup, matrix::Matrix, score_params::ScoreParams,
@@ -59,6 +59,29 @@ pub struct Block {
     pub can_join_up_to: usize,
 }
 
+impl Ord for Block {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.query_id.cmp(&other.query_id) {
+            Ordering::Equal => self.row_idx.cmp(&other.row_idx),
+            val => val,
+        }
+    }
+}
+
+impl PartialOrd for Block {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for Block {}
+
+impl PartialEq for Block {
+    fn eq(&self, other: &Self) -> bool {
+        matches!(self.cmp(other), Ordering::Equal)
+    }
+}
+
 #[derive(Debug)]
 pub struct Segment {
     pub start_col: usize,
@@ -69,14 +92,42 @@ pub struct Segment {
 // type SegmentedMatrix = Vec<Segment>;
 pub type SegmentedMatrix = Vec<Segment>;
 
-#[derive(Eq, Ord, PartialEq, PartialOrd, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 enum MergeEntry<T> {
     Start,
     Some(T),
     End,
 }
 
+impl<T> Ord for MergeEntry<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.to_number().cmp(&other.to_number())
+    }
+}
+
+impl<T> PartialOrd for MergeEntry<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T> Eq for MergeEntry<T> {}
+
+impl<T> PartialEq for MergeEntry<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_number().eq(&other.to_number())
+    }
+}
+
 impl<T> MergeEntry<T> {
+    fn to_number(&self) -> u8 {
+        match self {
+            MergeEntry::Start => 0,
+            MergeEntry::Some(_) => 1,
+            MergeEntry::End => 2,
+        }
+    }
+
     fn is_start(&self) -> bool {
         matches!(self, Self::Start)
     }
@@ -104,32 +155,47 @@ impl<T> From<MergeEntry<T>> for Option<T> {
     }
 }
 
-struct MergeIterator<I: Iterator, J: Iterator<Item = I::Item>> {
+pub struct MergeIterator<
+    I: Iterator,
+    J: Iterator<Item = I::Item>,
+    F: Fn(&I::Item, &I::Item) -> Ordering,
+> {
     iter1: Fuse<I>,
     iter2: Fuse<J>,
     val1: MergeEntry<I::Item>,
     val2: MergeEntry<I::Item>,
     prior_val: MergeEntry<I::Item>,
+    comparator: F,
 }
 
-impl<I: Iterator, J: Iterator<Item = I::Item>> MergeIterator<I, J>
+impl<I: Iterator, J: Iterator<Item = I::Item>, F: Fn(&I::Item, &I::Item) -> Ordering>
+    MergeIterator<I, J, F>
 where
     I::Item: Copy,
 {
-    pub fn new(iter1: I, iter2: J) -> Self {
+    pub fn new(iter1: I, iter2: J, comparator: F) -> Self {
         Self {
             iter1: iter1.fuse(),
             iter2: iter2.fuse(),
             val1: MergeEntry::Start,
             val2: MergeEntry::Start,
             prior_val: MergeEntry::Start,
+            comparator,
+        }
+    }
+
+    fn compare(&self, item1: &MergeEntry<I::Item>, item2: &MergeEntry<I::Item>) -> Ordering {
+        match (item1, item2) {
+            (MergeEntry::Some(val1), MergeEntry::Some(val2)) => (self.comparator)(val1, val2),
+            (val1, val2) => val1.cmp(val2),
         }
     }
 }
 
-impl<I: Iterator, J: Iterator<Item = I::Item>> Iterator for MergeIterator<I, J>
+impl<I: Iterator, J: Iterator<Item = I::Item>, F: Fn(&I::Item, &I::Item) -> Ordering> Iterator
+    for MergeIterator<I, J, F>
 where
-    I::Item: Copy + Ord,
+    I::Item: Copy,
 {
     type Item = I::Item;
 
@@ -140,8 +206,13 @@ where
 
         let mut next_val: MergeEntry<Self::Item> = self.prior_val;
 
-        while next_val.is_start() || next_val == self.prior_val {
-            if self.val1 <= self.val2 {
+        while next_val.is_start()
+            || matches!(self.compare(&self.prior_val, &next_val), Ordering::Equal)
+        {
+            if matches!(
+                self.compare(&self.val1, &self.val2),
+                Ordering::Equal | Ordering::Less
+            ) {
                 next_val = self.val1;
                 self.val1 = self.iter1.next().into();
             } else {
@@ -167,14 +238,14 @@ where
     }
 }
 
-fn unique_merging_iterator<I: Iterator, J: Iterator<Item = I::Item>>(
+pub fn unique_merging_iterator<I: Iterator, J: Iterator<Item = I::Item>>(
     list1: I,
     list2: J,
-) -> MergeIterator<I, J>
+) -> MergeIterator<I, J, impl Fn(&I::Item, &I::Item) -> Ordering>
 where
-    I::Item: Copy,
+    I::Item: Copy + Ord,
 {
-    MergeIterator::new(list1, list2)
+    MergeIterator::new(list1, list2, |a, b| a.cmp(b))
 }
 
 fn logsumexp(a: f64, b: f64) -> f64 {
@@ -232,7 +303,7 @@ pub fn segments_from_matrix_trace(
 
         // Compute scores and start/end points for all rows in this segment....
         for column in seg.col_start..=seg.col_end {
-            let rows = matrix_definition.active_rows_by_col[column];
+            let rows = &matrix_definition.active_rows_by_col[column];
             let row_iter = rows
                 .iter()
                 .enumerate()
@@ -312,9 +383,7 @@ pub fn segments_from_matrix_trace(
                 .collect_vec(),
         };
         // Order blocks by query id, then row... This order allows for really fast intersection checks in history code...
-        new_segment
-            .blocks
-            .sort_unstable_by_key(|b| (b.query_id, b.row_idx));
+        new_segment.blocks.sort_unstable();
 
         segments.push(new_segment);
     }

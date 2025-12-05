@@ -5,7 +5,9 @@ use crate::{
     assembly::{AssemblyGraph, Direction, Edge, LinkType},
     matrix::Matrix,
     score_params::ScoreParams,
-    segments::{Block, BlockType, Segment, SegmentedMatrix},
+    segments::{
+        unique_merging_iterator, Block, BlockType, MergeIterator, Segment, SegmentedMatrix,
+    },
 };
 
 use itertools::{multizip, Itertools};
@@ -660,7 +662,9 @@ impl SegmentGroups {
         // Sort the blocks by score, collect the indexes for that...
         let mut score_ordered = (0..segment.blocks.len())
             .sorted_by(|&a, &b| {
-                let type_cmp = segment.blocks[a].block_type.cmp(&segment.blocks[b].confidence);
+                let type_cmp = segment.blocks[a]
+                    .block_type
+                    .cmp(&segment.blocks[b].block_type);
                 if matches!(type_cmp, Ordering::Equal) {
                     f64::total_cmp(&segment.blocks[a].confidence, &segment.blocks[b].confidence)
                 } else {
@@ -833,7 +837,8 @@ pub fn history_viterbi_on_segments(
                         history_depth,
                     );
 
-                    let new_group_index = segment_groups[segment_idx].add_group(&join_group);
+                    let new_group_index =
+                        segment_groups[segment_idx].add_group(&segments[segment_idx], &join_group);
 
                     histories.push(HistoryEntry::Join(HistoryInfo {
                         segment: segment_idx,
@@ -886,7 +891,8 @@ pub fn history_viterbi_on_segments(
                         };
 
                         if !new_group.is_empty() {
-                            let new_group_idx = segment_groups[segment_idx].add_group(&new_group);
+                            let new_group_idx = segment_groups[segment_idx]
+                                .add_group(&segments[segment_idx], &new_group);
 
                             // Add append event for matching blocks, this will have no transition penalty...
                             histories.push(HistoryEntry::Append(HistoryInfo {
@@ -942,33 +948,13 @@ fn get_max_history(history_range: &[HistoryEntry]) -> usize {
         .0
 }
 
-fn has_any_matching<T: Ord>(seq1: &mut impl Iterator<Item = T>, seq2: &mut impl Iterator<Item = T>) -> bool {
-    let mut seq1_fused = seq1.fuse();
-    let mut seq2_fused = seq2.fuse();
-    let mut item1 = None;
-    let mut item2 = None;
-
-    loop {
-        if item1.is_none() {
-            item1 = seq1_fused.next();
-        }
-        if item2.is_none() {
-            item2 = seq2_fused.next();
-        }
-
-        if item1.is_none() && item2.is_none() {
-            break;
-        }
-
-        match item1.cmp(&item2) {
-            Ordering::Equal => return true,
-            Ordering::Less => item1 = None,
-            Ordering::Greater => item2 = None,
-        }
-    }
-
-    false
+fn get_matching<T: Ord + Copy>(
+    seq1: impl Iterator<Item = T>,
+    seq2: impl Iterator<Item = T>,
+) -> Vec<usize> {
 }
+
+fn get_target_start(blocks: &[&Block]) {}
 
 // Return is the assigned index of the new block
 pub fn history_backtrace_append_block(
@@ -977,27 +963,45 @@ pub fn history_backtrace_append_block(
     blocks: &[&Block],
     current_index: usize,
     join_index: usize,
-    segment_bounds: (usize, usize)
+    segment_bounds: (usize, usize),
 ) -> (Option<usize>, usize) {
+    let new_target_start = blocks
+        .iter()
+        .map(|b| b.target_start)
+        .min()
+        .unwrap_or(segment_bounds.0);
+    let new_target_end = blocks
+        .iter()
+        .map(|b| b.target_end)
+        .max()
+        .unwrap_or(segment_bounds.1);
+
     // Case 1: Same row index and touches start of segment in front of it, extend the segment backwards to include this...
     if let Some(ref_seg) = refined_segments.last_mut() {
-        if ref_seg.row_idx.contains(x)
-            && block.target_end >= (ref_seg.col_start.saturating_sub(1))
-        {
-            ref_seg.col_start = blocks.iter().map(|b| b.target_start).min().unwrap_or(segment_bounds.0);
+        let mut merge_iter =
+            unique_merging_iterator(blocks.iter(), ref_seg.row_idx.iter()).peekable();
+
+        if merge_iter.peek().is_some() && new_target_end >= (ref_seg.col_start.saturating_sub(1)) {
+            ref_seg.col_start = new_target_start;
             return (Some(ref_seg.join_index), join_index);
         }
     }
 
-    if let BlockType::TandemRepeat | BlockType::Alignment = block.block_type {
+    if blocks
+        .iter()
+        .any(|&b| matches!(b.block_type, BlockType::Alignment | BlockType::TandemRepeat))
+    {
+        let row_idxs = blocks.iter().map(|b| b.row_idx).collect_vec();
+        let query_ids = blocks.iter().map(|b| b.query_id).collect_vec();
+
         // Case 2: Is part of a join, use shared join index...
         if let Some(&(check_idx, _hist_idx, group_join_idx)) = join_stack.last() {
             if current_index == check_idx {
                 refined_segments.push(RefinedTraceSegment {
-                    query_id: block.query_id,
-                    row_idx: block.row_idx,
-                    col_start: block.target_start,
-                    col_end: block.target_end,
+                    query_id: query_ids,
+                    row_idx: row_idxs,
+                    col_start: new_target_start,
+                    col_end: new_target_end,
                     join_index: group_join_idx,
                 });
 
@@ -1008,10 +1012,10 @@ pub fn history_backtrace_append_block(
 
         // Case 3: New segment not part of a join...
         refined_segments.push(RefinedTraceSegment {
-            query_id: block.query_id,
-            row_idx: block.row_idx,
-            col_start: block.target_start,
-            col_end: block.target_end,
+            query_id: query_ids,
+            row_idx: row_idxs,
+            col_start: new_target_start,
+            col_end: new_target_end,
             join_index,
         });
 
@@ -1054,6 +1058,10 @@ pub fn backtrace_histories(
             &blocks,
             current_idx,
             join_idx,
+            (
+                segments[entry_info.segment].start_col,
+                segments[entry_info.segment].end_col,
+            ),
         );
 
         // If this is a join, add it so the segment it joins to can be constructed correctly later...

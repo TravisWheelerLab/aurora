@@ -1,14 +1,11 @@
-use std::{
-    collections::{HashMap, HashSet},
-    hash::Hash,
-};
+use std::{collections::HashSet, hash::Hash};
 
 use itertools::Itertools;
 
 use crate::{
-    alignment::{Alignment, AlignmentData, Strand},
+    alignment::{Alignment, Strand},
     chunks::ProximityGroup,
-    score_params::{self, ScoreParams},
+    score_params::ScoreParams,
     AnnotationArgs,
 };
 
