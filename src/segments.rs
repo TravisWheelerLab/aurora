@@ -82,6 +82,12 @@ impl PartialEq for Block {
     }
 }
 
+impl Block {
+    pub fn to_comparable(&self) -> (Option<usize>, usize) {
+        (self.query_id, self.row_idx)
+    }
+}
+
 #[derive(Debug)]
 pub struct Segment {
     pub start_col: usize,

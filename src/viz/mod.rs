@@ -5,31 +5,28 @@ use bed::*;
 use block::*;
 
 use std::{
-    collections::HashMap,
     fs::File,
     io::{BufRead, BufReader},
     num::ParseIntError,
     path::Path,
 };
 
-use itertools::Itertools;
-use serde::Serialize;
-
 use crate::{
-    alignment::{Alignment, AlignmentData, Strand},
+    alignment::{Alignment, AlignmentData},
     alphabet::{
         NucleotideByteUtils, ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
         SPACE_UTF8,
     },
-    annotation::Annotation,
+    annotation::AmbiguousAnnotation,
     assembly::AssemblyGraph,
     chunks::ProximityGroup,
     matrix::Matrix,
     segments::{BlockType, SegmentedMatrix},
-    viterbi::{RefinedTraceSegment, TraceSegment},
+    viterbi::RefinedTraceSegment,
     AuroraArgs,
 };
 use base64::prelude::*;
+use itertools::Itertools;
 
 const SODA_JS: &str = include_str!("../../fixtures/soda/soda.js");
 
@@ -132,7 +129,7 @@ pub struct AdjudicationSodaData<'a> {
     confidence_matrix: &'a Matrix<'a, f64>,
     alignment_data: &'a AlignmentData,
     target_seq: &'a [u8],
-    annotations: Vec<Annotation>,
+    annotations: Vec<AmbiguousAnnotation>,
     trace: &'a Vec<RefinedTraceSegment>,
     maybe_constraint: Option<&'a VizConstraint>,
     segments: &'a SegmentedMatrix,
@@ -347,7 +344,7 @@ impl<'a> AdjudicationSodaData<'a> {
             .collect()
     }
 
-    pub fn set_annotations(&mut self, annotations: Vec<Annotation>) {
+    pub fn set_annotations(&mut self, annotations: Vec<AmbiguousAnnotation>) {
         self.annotations = annotations;
     }
 
@@ -398,7 +395,7 @@ impl<'a> AdjudicationSodaData<'a> {
                         .annotations
                         .iter()
                         .filter(|&a| a.join_id == id)
-                        .collect::<Vec<&Annotation>>(),
+                        .collect::<Vec<&AmbiguousAnnotation>>(),
                     &self.alignment_data.query_lengths,
                 )
             })

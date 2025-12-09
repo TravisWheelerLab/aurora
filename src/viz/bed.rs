@@ -1,4 +1,4 @@
-use crate::{alignment::Strand, annotation::Annotation};
+use crate::{alignment::Strand, annotation::AmbiguousAnnotation};
 
 use super::BlockGroup;
 
@@ -114,7 +114,7 @@ impl BedRecord {
     }
 
     #[allow(dead_code)]
-    pub fn from_joined_annotations(joins: &mut [&Annotation]) -> Self {
+    pub fn from_joined_annotations(joins: &mut [&AmbiguousAnnotation]) -> Self {
         joins.sort_by_key(|a| a.target_start);
 
         let first = joins.first().unwrap();

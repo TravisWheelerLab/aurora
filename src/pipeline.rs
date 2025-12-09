@@ -4,7 +4,7 @@ use itertools::{izip, Itertools};
 
 use crate::{
     alignment::AlignmentData,
-    annotation::Annotation,
+    annotation::{AmbiguousAnnotation, SimpleAnnotation},
     assembly::AssemblyGraph,
     chunks::ProximityGroup,
     confidence::confidence,
@@ -27,46 +27,63 @@ pub fn to_annotations(
     confidence_matrix: &Matrix<f64>,
     trace_segments: &[RefinedTraceSegment],
     region_idx: usize,
-) -> Vec<Annotation> {
+) -> Vec<AmbiguousAnnotation> {
     trace_segments
         .iter()
-        .filter(|v| v.row_idx != 0)
+        .filter(|v| v.annotated.iter().any(|a| a.row_idx != 0))
         .map(|s| {
-            let query_id = s.query_id.unwrap_or(0);
+            let confidence = s
+                .annotated
+                .iter()
+                .map(|a| {
+                    (a.col_start..=a.col_end)
+                        .map(|col_idx| confidence_matrix.get(a.row_idx, col_idx))
+                        .sum::<f64>()
+                        / (a.col_end - a.col_start + 1) as f64
+                })
+                .sum::<f64>()
+                / (s.annotated.len().max(1) as f64);
 
-            Annotation {
+            AmbiguousAnnotation {
                 target_name: alignment_data
                     .target_name_map
                     .get(proximity_group.target_id)
                     .clone(),
-                target_start: s.col_start + proximity_group.target_start,
-                target_end: s.col_end + proximity_group.target_start,
-                query_id,
-                query_name: match s.row_idx {
-                    // 0 is the skip state row
-                    // then 1..=(num_assemblies) are alignment rows
-                    // so anything >(num_assemblies) is a tandem repeat
-                    r if r > proximity_group.alignments.len() => {
-                        //
-                        let tandem_repeat_idx = s.row_idx - proximity_group.alignments.len() - 1;
-                        let repeat = &proximity_group.tandem_repeats[tandem_repeat_idx];
-                        format!(
-                            "({}:{})#tandem repeat",
-                            repeat.period, repeat.consensus_pattern,
-                        )
-                    }
-                    _ => alignment_data
-                        .query_name_map
-                        .get(s.query_id.expect("Annotation has no query id!"))
-                        .clone(),
-                },
-                query_start: confidence_matrix.consensus_position(s.row_idx, s.col_start),
-                query_end: confidence_matrix.consensus_position(s.row_idx, s.col_end),
-                strand: confidence_matrix.strand_of_row(s.row_idx),
-                confidence: (s.col_start..=s.col_end)
-                    .map(|col_idx| confidence_matrix.get(s.row_idx, col_idx))
-                    .sum::<f64>()
-                    / (s.col_end - s.col_start + 1) as f64,
+                annotations: s
+                    .annotated
+                    .iter()
+                    .map(|a| {
+                        SimpleAnnotation {
+                            target_start: a.col_start + proximity_group.target_start,
+                            target_end: a.col_end + proximity_group.target_start,
+                            query_id: a.query_id.unwrap_or(0),
+                            query_name: match a.row_idx {
+                                // 0 is the skip state row
+                                // then 1..=(num_assemblies) are alignment rows
+                                // so anything >(num_assemblies) is a tandem repeat
+                                r if r > proximity_group.alignments.len() => {
+                                    //
+                                    let tandem_repeat_idx =
+                                        a.row_idx - proximity_group.alignments.len() - 1;
+                                    let repeat = &proximity_group.tandem_repeats[tandem_repeat_idx];
+                                    format!(
+                                        "({}:{})#tandem repeat",
+                                        repeat.period, repeat.consensus_pattern,
+                                    )
+                                }
+                                _ => alignment_data
+                                    .query_name_map
+                                    .get(a.query_id.expect("Annotation has no query id!"))
+                                    .clone(),
+                            },
+                            query_start: confidence_matrix
+                                .consensus_position(a.row_idx, a.col_start),
+                            query_end: confidence_matrix.consensus_position(a.row_idx, a.col_end),
+                            strand: confidence_matrix.strand_of_row(a.row_idx),
+                        }
+                    })
+                    .collect_vec(),
+                confidence,
                 join_id: s.join_index,
                 region_id: region_idx,
             }
@@ -232,7 +249,7 @@ pub fn run_pipeline(
     );
 
     // Grab the annotations...
-    let mut annotations: Vec<Annotation> = to_annotations(
+    let mut annotations: Vec<AmbiguousAnnotation> = to_annotations(
         proximity_group,
         alignment_data,
         &confidence_matrix,
@@ -274,8 +291,8 @@ pub fn run_pipeline(
         });
     }
 
-    annotations.sort_by_key(|r| r.target_start);
-    annotations.retain(|r| r.query_name != "skip");
+    annotations.sort_by_key(|r| r.annotations.iter().map(|a| a.target_start).min());
+    annotations.retain(|r| r.annotations.iter().any(|a| a.query_name != "skip"));
 
-    Annotation::write(&annotations, &mut std::io::stdout());
+    AmbiguousAnnotation::write(&annotations, &mut std::io::stdout());
 }

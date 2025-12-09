@@ -5,9 +5,7 @@ use crate::{
     assembly::{AssemblyGraph, Direction, Edge, LinkType},
     matrix::Matrix,
     score_params::ScoreParams,
-    segments::{
-        unique_merging_iterator, Block, BlockType, MergeIterator, Segment, SegmentedMatrix,
-    },
+    segments::{Block, BlockType, Segment, SegmentedMatrix},
 };
 
 use itertools::{multizip, Itertools};
@@ -923,13 +921,25 @@ pub fn history_viterbi_on_segments(
     }
 }
 
-#[derive(Debug)]
-pub struct RefinedTraceSegment {
-    pub query_id: Vec<Option<usize>>,
-    pub row_idx: Vec<usize>,
+#[derive(Debug, Clone)]
+pub struct AnnotatedRange {
+    pub query_id: Option<usize>,
+    pub row_idx: usize,
     pub col_start: usize,
     pub col_end: usize,
+}
+
+#[derive(Debug)]
+pub struct RefinedTraceSegment {
+    pub annotated: Vec<AnnotatedRange>,
     pub join_index: usize,
+}
+
+fn to_comparable(annot: Option<&AnnotatedRange>) -> Option<(Option<usize>, usize)> {
+    if let Some(inner_annot) = annot {
+        return Some((inner_annot.query_id, inner_annot.row_idx));
+    }
+    None
 }
 
 fn get_max_history(history_range: &[HistoryEntry]) -> usize {
@@ -950,72 +960,89 @@ fn get_max_history(history_range: &[HistoryEntry]) -> usize {
 
 fn get_matching_blocks<'a>(
     new_blocks: impl Iterator<Item = &'a Block>,
-    prior_entries: impl Iterator<Item = (Option<usize>, usize)>,
-    exact_match: bool
-) -> impl Iterator<Item = &'a Block> {
-    
-    let start = true;
+    prior_entries: impl Iterator<Item = &'a AnnotatedRange>,
+    exact_match: bool,
+) -> impl Iterator<Item = (&'a Block, &'a AnnotatedRange)> {
+    let mut start = true;
     let mut prior_iter = prior_entries.fuse();
-    let mut prior_val: Option<(Option<usize>, usize)> = None;
+    let mut prior_val: Option<&AnnotatedRange> = None;
 
-    new_blocks.filter(move |b| {
-        let new_val = (b.query_id, b.row_idx);
+    new_blocks.filter_map(move |b| {
+        let new_val = b.to_comparable();
 
-        while start || Some(new_val) < prior_val {
+        while start || Some(new_val) < to_comparable(prior_val) {
             if let Some(next_val) = prior_iter.next() {
                 prior_val = Some(next_val);
             } else {
                 break;
             }
+            start = false;
         }
 
-        if exact_match {
-            Some(new_val) == prior_val
-        } else if let Some(prior_val_extract) = prior_val {
-            new_val.0 == prior_val_extract.0
+        if let Some(annot_range) = prior_val {
+            let is_match = if exact_match || new_val.0.is_none() {
+                new_val == (annot_range.query_id, annot_range.row_idx)
+            } else {
+                new_val.0 == annot_range.query_id
+            };
+
+            if is_match {
+                Some((b, annot_range))
+            } else {
+                None
+            }
         } else {
-            false
+            None
         }
     })
 }
 
-fn get_matching<'a>(
+fn get_possible_extensions<'a>(
     new_blocks: impl Iterator<Item = &'a Block>,
-    prior_entries: impl Iterator<Item = (Option<usize>, usize)>,
-    segment_bounds: (usize, usize)
-) -> (bool, usize, usize) {
-    let mut one_found = false;
-    let mut min_start = None;
-    let mut max_end = None;
+    prior_entries: impl Iterator<Item = &'a AnnotatedRange>,
+) -> Vec<AnnotatedRange> {
+    get_matching_blocks(new_blocks, prior_entries, true)
+        .filter_map(|(b, a)| {
+            let mut annot = a.clone();
 
-    get_matching_blocks(new_blocks, prior_entries, true).for_each(|b| {
-        one_found = true;
-        min_start = Some(min_start.unwrap_or(b.target_start).min(b.target_start));
-        max_end = Some(max_end.unwrap_or(b.target_end).max(b.target_end));
-    });
-
-    (one_found, min_start.unwrap_or(segment_bounds.0), max_end.unwrap_or(segment_bounds.1))
+            if b.target_end >= annot.col_start.saturating_sub(1) {
+                annot.col_start = b.target_start;
+                return Some(annot);
+            }
+            None
+        })
+        .collect_vec()
 }
 
-// Return is the assigned index of the new block
+fn get_joinable_extensions<'a>(
+    new_blocks: impl Iterator<Item = &'a Block>,
+    prior_entries: impl Iterator<Item = &'a AnnotatedRange>,
+) -> Vec<AnnotatedRange> {
+    get_matching_blocks(new_blocks, prior_entries, false)
+        .map(|(b, a)| AnnotatedRange {
+            query_id: b.query_id,
+            row_idx: b.row_idx,
+            col_start: b.target_start,
+            col_end: b.target_end,
+        })
+        .collect_vec()
+}
+
+// Return is the assigned index of the new block, and the new join index to use for the following block...
 pub fn history_backtrace_append_block(
     refined_segments: &mut Vec<RefinedTraceSegment>,
-    join_stack: &mut Vec<(usize, usize, usize)>,
+    join_stack: &mut Vec<(usize, usize, usize, usize)>,
     blocks: &[&Block],
     current_index: usize,
     join_index: usize,
-    segment_bounds: (usize, usize),
 ) -> (Option<usize>, usize) {
     // Case 1: Same row index and touches start of segment in front of it, extend the segment backwards to include this...
     if let Some(ref_seg) = refined_segments.last_mut() {
-        let (has_overlap, start, end) = get_matching(
-            blocks.iter().copied(), 
-            ref_seg.query_id.iter().zip(ref_seg.row_idx.iter()).map(|(&a, &b)| (a, b)), 
-            segment_bounds
-        );
+        let direct_extensions =
+            get_possible_extensions(blocks.iter().copied(), ref_seg.annotated.iter());
 
-        if has_overlap && end >= (ref_seg.col_start.saturating_sub(1)) {
-            ref_seg.col_start = start;
+        if direct_extensions.len() > 0 {
+            ref_seg.annotated = direct_extensions;
             return (Some(ref_seg.join_index), join_index);
         }
     }
@@ -1025,19 +1052,23 @@ pub fn history_backtrace_append_block(
         .any(|&b| matches!(b.block_type, BlockType::Alignment | BlockType::TandemRepeat))
     {
         // Case 2: Is part of a join, use shared join index...
-        if let Some(&(check_idx, _hist_idx, group_join_idx)) = join_stack.last() {
+        if let Some(&(check_idx, _hist_idx, stack_idx, group_join_idx)) = join_stack.last() {
             if current_index == check_idx {
-                let (row_idxs, query_ids, starts, ends) = get_matching_blocks(
-                    blocks.iter().copied(), 
-                    ref_seg.query_id.iter().zip(ref_seg.row_idx.iter()).map(|(&a, &b)| (a, b)), 
-                    false
-                ).collect_vec();
+                let joins = get_joinable_extensions(
+                    blocks.iter().copied(),
+                    refined_segments[stack_idx].annotated.iter(),
+                );
+
+                // Sanity check...
+                // should not be possible assuming a join was allowed in the first place...
+                if joins.len() == 0 {
+                    panic!(
+                        "Annotation from join made with 0 elements! This should not be possible!"
+                    );
+                }
 
                 refined_segments.push(RefinedTraceSegment {
-                    query_id: query_ids,
-                    row_idx: row_idxs,
-                    col_start: new_target_start,
-                    col_end: new_target_end,
+                    annotated: joins,
                     join_index: group_join_idx,
                 });
 
@@ -1046,17 +1077,17 @@ pub fn history_backtrace_append_block(
             }
         }
 
-        let row_idxs = blocks.iter().map(|b| b.row_idx).collect_vec();
-        let query_ids = blocks.iter().map(|b| b.query_id).collect_vec();
-        let new_target_start = blocks.iter().map(|b| b.target_start).min().unwrap_or(segment_bounds.0);
-        let new_target_end = blocks.iter().map(|b| b.target_start).max().unwrap_or(segment_bounds.1);
-
         // Case 3: New segment not part of a join...
         refined_segments.push(RefinedTraceSegment {
-            query_id: query_ids,
-            row_idx: row_idxs,
-            col_start: new_target_start,
-            col_end: new_target_end,
+            annotated: blocks
+                .iter()
+                .map(|&b| AnnotatedRange {
+                    query_id: b.query_id,
+                    row_idx: b.row_idx,
+                    col_start: b.target_start,
+                    col_end: b.target_end,
+                })
+                .collect_vec(),
             join_index,
         });
 
@@ -1074,7 +1105,7 @@ pub fn backtrace_histories(
     debug_assert!(segments.len() == history.segment_offsets.len() - 1);
 
     let mut refined_segments: Vec<RefinedTraceSegment> = Vec::new();
-    let mut join_stack: Vec<(usize, usize, usize)> = Vec::new();
+    let mut join_stack: Vec<(usize, usize, usize, usize)> = Vec::new();
 
     let last_segment = history.segment_offsets.len() - 1;
     // Find the max in the first row....
@@ -1099,16 +1130,17 @@ pub fn backtrace_histories(
             &blocks,
             current_idx,
             join_idx,
-            (
-                segments[entry_info.segment].start_col,
-                segments[entry_info.segment].end_col,
-            ),
         );
 
         // If this is a join, add it so the segment it joins to can be constructed correctly later...
         if let HistoryEntry::Join(_) = current_entry {
             if let Some(new_node_join_index) = new_node_join_index {
-                join_stack.push((entry_info.join_history, current_idx, new_node_join_index));
+                join_stack.push((
+                    entry_info.join_history,
+                    current_idx,
+                    refined_segments.len() - 1,
+                    new_node_join_index,
+                ));
             }
         }
 

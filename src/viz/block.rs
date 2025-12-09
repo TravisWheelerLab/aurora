@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Serialize, Serializer};
 
-use crate::{alignment::Strand, annotation::Annotation};
+use crate::{alignment::Strand, annotation::AmbiguousAnnotation};
 
 use super::BedRecord;
 
@@ -54,7 +54,7 @@ pub struct BlockGroup {
 
 impl BlockGroup {
     pub fn from_joined_annotations(
-        joins: &mut [&Annotation],
+        joins: &mut [&AmbiguousAnnotation],
         query_lengths: &HashMap<usize, usize>,
     ) -> Self {
         joins.sort_by_key(|a| a.target_start);

@@ -1,8 +1,9 @@
+use itertools::Itertools;
+
 use crate::alignment::Strand;
 
 #[derive(Clone)]
-pub struct Annotation {
-    pub target_name: String,
+pub struct SimpleAnnotation {
     pub target_start: usize,
     pub target_end: usize,
     pub query_id: usize,
@@ -10,6 +11,12 @@ pub struct Annotation {
     pub query_start: usize,
     pub query_end: usize,
     pub strand: Strand,
+}
+
+#[derive(Clone)]
+pub struct AmbiguousAnnotation {
+    pub target_name: String,
+    pub annotations: Vec<SimpleAnnotation>,
     pub confidence: f64,
     pub join_id: usize,
     pub region_id: usize,
@@ -26,17 +33,33 @@ pub struct LineWidths {
     join_id_width: usize,
 }
 
-impl Annotation {
+fn get_strings(simple_annotations: &[SimpleAnnotation]) -> [String; 6] {
+    [
+        simple_annotations.iter().map(|v| v.target_start).join(","),
+        simple_annotations.iter().map(|v| v.target_end).join(","),
+        simple_annotations
+            .iter()
+            .map(|v| v.query_name.clone())
+            .join(","),
+        simple_annotations.iter().map(|v| v.query_start).join(","),
+        simple_annotations.iter().map(|v| v.query_end).join(","),
+        simple_annotations.iter().map(|v| v.strand).join(","),
+    ]
+}
+
+impl AmbiguousAnnotation {
     pub fn line(&self, widths: &LineWidths) -> String {
+        let [ts, te, qn, qs, qe, strand] = get_strings(&self.annotations);
+
         format!(
             "{:w0$} {:w1$} {:w2$} {:w3$} {:w4$} {:w5$} {} {:4.3} {:w6$} {}",
             self.target_name,
-            self.target_start,
-            self.target_end,
-            self.query_name,
-            self.query_start,
-            self.query_end,
-            self.strand,
+            ts,
+            te,
+            qn,
+            qs,
+            qe,
+            strand,
             self.confidence,
             self.join_id,
             self.region_id,
@@ -50,24 +73,18 @@ impl Annotation {
         )
     }
 
-    pub fn write(results: &Vec<Annotation>, out: &mut impl std::io::Write) {
+    pub fn write(results: &Vec<AmbiguousAnnotation>, out: &mut impl std::io::Write) {
         let mut widths = LineWidths::default();
 
         for result in results {
+            let [ts, te, qn, qs, qe, ..] = get_strings(&result.annotations);
+
             widths.target_name_width = widths.target_name_width.max(result.target_name.len());
-            widths.target_start_width = widths
-                .target_start_width
-                .max(result.target_start.to_string().len());
-            widths.target_end_width = widths
-                .target_end_width
-                .max(result.target_end.to_string().len());
-            widths.query_name_width = widths.query_name_width.max(result.query_name.len());
-            widths.query_start_width = widths
-                .query_start_width
-                .max(result.query_start.to_string().len());
-            widths.query_end_width = widths
-                .query_end_width
-                .max(result.query_end.to_string().len());
+            widths.target_start_width = widths.target_start_width.max(ts.len());
+            widths.target_end_width = widths.target_end_width.max(te.len());
+            widths.query_name_width = widths.query_name_width.max(qn.len());
+            widths.query_start_width = widths.query_start_width.max(qs.to_string().len());
+            widths.query_end_width = widths.query_end_width.max(qe.to_string().len());
             widths.join_id_width = widths.join_id_width.max(result.join_id.to_string().len())
         }
 
@@ -77,7 +94,7 @@ impl Annotation {
     }
 }
 
-impl std::fmt::Display for Annotation {
+impl std::fmt::Display for AmbiguousAnnotation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.line(&LineWidths::default()))
     }
