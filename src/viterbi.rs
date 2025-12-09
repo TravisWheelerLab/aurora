@@ -948,13 +948,54 @@ fn get_max_history(history_range: &[HistoryEntry]) -> usize {
         .0
 }
 
-fn get_matching<T: Ord + Copy>(
-    seq1: impl Iterator<Item = T>,
-    seq2: impl Iterator<Item = T>,
-) -> Vec<usize> {
+fn get_matching_blocks<'a>(
+    new_blocks: impl Iterator<Item = &'a Block>,
+    prior_entries: impl Iterator<Item = (Option<usize>, usize)>,
+    exact_match: bool
+) -> impl Iterator<Item = &'a Block> {
+    
+    let start = true;
+    let mut prior_iter = prior_entries.fuse();
+    let mut prior_val: Option<(Option<usize>, usize)> = None;
+
+    new_blocks.filter(move |b| {
+        let new_val = (b.query_id, b.row_idx);
+
+        while start || Some(new_val) < prior_val {
+            if let Some(next_val) = prior_iter.next() {
+                prior_val = Some(next_val);
+            } else {
+                break;
+            }
+        }
+
+        if exact_match {
+            Some(new_val) == prior_val
+        } else if let Some(prior_val_extract) = prior_val {
+            new_val.0 == prior_val_extract.0
+        } else {
+            false
+        }
+    })
 }
 
-fn get_target_start(blocks: &[&Block]) {}
+fn get_matching<'a>(
+    new_blocks: impl Iterator<Item = &'a Block>,
+    prior_entries: impl Iterator<Item = (Option<usize>, usize)>,
+    segment_bounds: (usize, usize)
+) -> (bool, usize, usize) {
+    let mut one_found = false;
+    let mut min_start = None;
+    let mut max_end = None;
+
+    get_matching_blocks(new_blocks, prior_entries, true).for_each(|b| {
+        one_found = true;
+        min_start = Some(min_start.unwrap_or(b.target_start).min(b.target_start));
+        max_end = Some(max_end.unwrap_or(b.target_end).max(b.target_end));
+    });
+
+    (one_found, min_start.unwrap_or(segment_bounds.0), max_end.unwrap_or(segment_bounds.1))
+}
 
 // Return is the assigned index of the new block
 pub fn history_backtrace_append_block(
@@ -965,24 +1006,16 @@ pub fn history_backtrace_append_block(
     join_index: usize,
     segment_bounds: (usize, usize),
 ) -> (Option<usize>, usize) {
-    let new_target_start = blocks
-        .iter()
-        .map(|b| b.target_start)
-        .min()
-        .unwrap_or(segment_bounds.0);
-    let new_target_end = blocks
-        .iter()
-        .map(|b| b.target_end)
-        .max()
-        .unwrap_or(segment_bounds.1);
-
     // Case 1: Same row index and touches start of segment in front of it, extend the segment backwards to include this...
     if let Some(ref_seg) = refined_segments.last_mut() {
-        let mut merge_iter =
-            unique_merging_iterator(blocks.iter(), ref_seg.row_idx.iter()).peekable();
+        let (has_overlap, start, end) = get_matching(
+            blocks.iter().copied(), 
+            ref_seg.query_id.iter().zip(ref_seg.row_idx.iter()).map(|(&a, &b)| (a, b)), 
+            segment_bounds
+        );
 
-        if merge_iter.peek().is_some() && new_target_end >= (ref_seg.col_start.saturating_sub(1)) {
-            ref_seg.col_start = new_target_start;
+        if has_overlap && end >= (ref_seg.col_start.saturating_sub(1)) {
+            ref_seg.col_start = start;
             return (Some(ref_seg.join_index), join_index);
         }
     }
@@ -991,12 +1024,15 @@ pub fn history_backtrace_append_block(
         .iter()
         .any(|&b| matches!(b.block_type, BlockType::Alignment | BlockType::TandemRepeat))
     {
-        let row_idxs = blocks.iter().map(|b| b.row_idx).collect_vec();
-        let query_ids = blocks.iter().map(|b| b.query_id).collect_vec();
-
         // Case 2: Is part of a join, use shared join index...
         if let Some(&(check_idx, _hist_idx, group_join_idx)) = join_stack.last() {
             if current_index == check_idx {
+                let (row_idxs, query_ids, starts, ends) = get_matching_blocks(
+                    blocks.iter().copied(), 
+                    ref_seg.query_id.iter().zip(ref_seg.row_idx.iter()).map(|(&a, &b)| (a, b)), 
+                    false
+                ).collect_vec();
+
                 refined_segments.push(RefinedTraceSegment {
                     query_id: query_ids,
                     row_idx: row_idxs,
@@ -1009,6 +1045,11 @@ pub fn history_backtrace_append_block(
                 return (Some(group_join_idx), join_index);
             }
         }
+
+        let row_idxs = blocks.iter().map(|b| b.row_idx).collect_vec();
+        let query_ids = blocks.iter().map(|b| b.query_id).collect_vec();
+        let new_target_start = blocks.iter().map(|b| b.target_start).min().unwrap_or(segment_bounds.0);
+        let new_target_end = blocks.iter().map(|b| b.target_start).max().unwrap_or(segment_bounds.1);
 
         // Case 3: New segment not part of a join...
         refined_segments.push(RefinedTraceSegment {
