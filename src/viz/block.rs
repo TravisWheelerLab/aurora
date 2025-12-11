@@ -57,7 +57,7 @@ impl BlockGroup {
         joins: &mut [&AmbiguousAnnotation],
         query_lengths: &HashMap<usize, usize>,
     ) -> Self {
-        joins.sort_by_key(|a| a.target_start);
+        joins.sort_by_key(|a| a.annotations.iter().map(|v| v.target_start).min());
 
         let first = joins.first().unwrap();
         let last = joins.last().unwrap();

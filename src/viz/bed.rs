@@ -114,7 +114,7 @@ impl BedRecord {
     }
 
     #[allow(dead_code)]
-    pub fn from_joined_annotations(joins: &mut [&AmbiguousAnnotation]) -> Self {
+    pub fn from_joined_annotations(joins: &[&AmbiguousAnnotation]) -> Self {
         joins.sort_by_key(|a| a.target_start);
 
         let first = joins.first().unwrap();
