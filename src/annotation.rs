@@ -1,6 +1,5 @@
-use itertools::Itertools;
-
 use crate::alignment::Strand;
+use itertools::Itertools;
 
 #[derive(Clone)]
 pub struct SimpleAnnotation {
@@ -17,6 +16,20 @@ pub struct SimpleAnnotation {
 pub struct AmbiguousAnnotation {
     pub target_name: String,
     pub annotations: Vec<SimpleAnnotation>,
+    pub confidence: f64,
+    pub join_id: usize,
+    pub region_id: usize,
+}
+
+pub struct ConcreteAnnotation {
+    pub target_name: String,
+    pub target_start: usize,
+    pub target_end: usize,
+    pub query_id: usize,
+    pub query_name: String,
+    pub query_start: usize,
+    pub query_end: usize,
+    pub strand: Strand,
     pub confidence: f64,
     pub join_id: usize,
     pub region_id: usize,
@@ -90,6 +103,51 @@ impl AmbiguousAnnotation {
 
         for result in results {
             writeln!(out, "{}", result.line(&widths)).expect("failed to write result line");
+        }
+    }
+
+    pub fn get_target_bounds(&self) -> (usize, usize) {
+        (
+            self.annotations
+                .iter()
+                .map(|a| a.target_start)
+                .min()
+                .unwrap_or(0),
+            self.annotations
+                .iter()
+                .map(|a| a.target_end)
+                .max()
+                .unwrap_or(0),
+        )
+    }
+}
+
+pub enum AnnotationConversionError {
+    NotConcrete,
+}
+
+impl TryFrom<&AmbiguousAnnotation> for ConcreteAnnotation {
+    type Error = AnnotationConversionError;
+
+    fn try_from(value: &AmbiguousAnnotation) -> Result<Self, Self::Error> {
+        if value.annotations.len() != 1 {
+            Result::Err(AnnotationConversionError::NotConcrete)
+        } else {
+            let inner_val = &value.annotations[0];
+
+            Result::Ok(ConcreteAnnotation {
+                target_name: value.target_name.clone(),
+                target_start: inner_val.target_start,
+                target_end: inner_val.target_end,
+                query_id: inner_val.query_id,
+                query_name: inner_val.query_name.clone(),
+                query_start: inner_val.query_start,
+                query_end: inner_val.query_end,
+                strand: inner_val.strand,
+                confidence: value.confidence,
+                join_id: value.join_id,
+                region_id: value.region_id,
+            })
         }
     }
 }

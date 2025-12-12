@@ -22,7 +22,7 @@ use crate::{
     chunks::ProximityGroup,
     matrix::Matrix,
     segments::{BlockType, SegmentedMatrix},
-    viterbi::RefinedTraceSegment,
+    viterbi::{AnnotatedRange, RefinedTraceSegment},
     AuroraArgs,
 };
 use base64::prelude::*;
@@ -380,8 +380,9 @@ impl<'a> AdjudicationSodaData<'a> {
             .iter()
             // constraint filter
             .filter(|a| {
-                a.target_start <= self.constrained_target_end()
-                    && a.target_end >= self.constrained_target_start()
+                let a_bound = a.get_target_bounds();
+                a_bound.0 <= self.constrained_target_end()
+                    && a_bound.1 >= self.constrained_target_start()
             })
             .map(|a| a.join_id)
             .unique()
@@ -492,7 +493,7 @@ impl<'a> AdjudicationSodaData<'a> {
             .collect()
     }
 
-    fn trace_string(&self, seg: &RefinedTraceSegment) -> String {
+    fn trace_string(&self, seg: &AnnotatedRange) -> String {
         let mut conf = 0.0;
         (seg.col_start..=seg.col_end)
             .for_each(|col_idx| conf += self.confidence_matrix.get(seg.row_idx, col_idx));
@@ -515,10 +516,12 @@ impl<'a> AdjudicationSodaData<'a> {
             .iter()
             // constraint filter
             .filter(|s| {
-                s.col_start + self.target_start() <= self.constrained_target_end()
-                    && s.col_end + self.target_start() >= self.constrained_target_start()
+                let bound = s.max_bounds();
+
+                bound.0 + self.target_start() <= self.constrained_target_end()
+                    && bound.1 + self.target_start() >= self.constrained_target_start()
             })
-            .map(|seg| self.trace_string(seg))
+            .flat_map(|seg| seg.annotated.iter().map(|v| self.trace_string(v)))
             .join("|")]
     }
 
@@ -569,9 +572,10 @@ impl<'a> AdjudicationSodaData<'a> {
             // map each trace segment to
             // target start & end coordinates
             .map(|seg| {
+                let bounds = seg.max_bounds();
                 (
-                    seg.col_start + self.target_start(),
-                    seg.col_end + self.target_start(),
+                    bounds.0 + self.target_start(),
+                    bounds.1 + self.target_start(),
                 )
             })
             .flat_map(|(seg_target_start, seg_target_end)| {

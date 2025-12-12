@@ -935,6 +935,23 @@ pub struct RefinedTraceSegment {
     pub join_index: usize,
 }
 
+impl RefinedTraceSegment {
+    pub fn max_bounds(&self) -> (usize, usize) {
+        (
+            self.annotated
+                .iter()
+                .map(|v| v.col_start)
+                .min()
+                .expect("No start column!"),
+            self.annotated
+                .iter()
+                .map(|v| v.col_end)
+                .max()
+                .expect("No end column!"),
+        )
+    }
+}
+
 fn to_comparable(annot: Option<&AnnotatedRange>) -> Option<(Option<usize>, usize)> {
     if let Some(inner_annot) = annot {
         return Some((inner_annot.query_id, inner_annot.row_idx));

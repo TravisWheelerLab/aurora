@@ -1,8 +1,12 @@
 use std::collections::HashMap;
 
+use itertools::Itertools;
 use serde::{Serialize, Serializer};
 
-use crate::{alignment::Strand, annotation::AmbiguousAnnotation};
+use crate::{
+    alignment::Strand,
+    annotation::{AmbiguousAnnotation, ConcreteAnnotation},
+};
 
 use super::BedRecord;
 
@@ -57,7 +61,7 @@ impl BlockGroup {
         joins: &mut [&AmbiguousAnnotation],
         query_lengths: &HashMap<usize, usize>,
     ) -> Self {
-        joins.sort_by_key(|a| a.annotations.iter().map(|v| v.target_start).min());
+        joins.sort_by_key(|a| a.get_target_bounds().0);
 
         let first = joins.first().unwrap();
         let last = joins.last().unwrap();
@@ -74,58 +78,97 @@ impl BlockGroup {
         (0..joins.len() - 1)
             .map(|idx| (joins[idx], joins[idx + 1]))
             .for_each(|(a, b)| {
+                let (a_start, a_end) = a.get_target_bounds();
+                let (_b_start, b_end) = b.get_target_bounds();
+
+                let mut inner_len = None;
+                if let (Result::Ok(a_conc), Result::Ok(b_conc)) = (
+                    ConcreteAnnotation::try_from(a),
+                    ConcreteAnnotation::try_from(b),
+                ) {
+                    inner_len = Some(b_conc.query_start as i32 - a_conc.query_end as i32 + 1)
+                }
+
                 aligned.push(Block {
                     id: id_fn(),
-                    start: a.target_start,
-                    end: a.target_end,
+                    start: a_start,
+                    end: a_end,
                     query_length: None,
                 });
                 inner.push(Block {
                     id: id_fn(),
-                    start: a.target_end,
-                    end: b.target_start,
-                    query_length: Some(b.query_start as i32 - a.query_end as i32 + 1),
+                    start: a_end,
+                    end: b_end,
+                    query_length: inner_len,
                 });
             });
 
+        let last_bounds = last.get_target_bounds();
         aligned.push(Block {
             id: id_fn(),
-            start: last.target_start,
-            end: last.target_end,
+            start: last_bounds.0,
+            end: last_bounds.1,
             query_length: None,
         });
 
-        let align_start = first.target_start;
-        let align_end = last.target_end;
-
-        let query_length = query_lengths
-            .get(&joins[0].query_id)
-            .expect("no query length found");
-
-        // TODO: off by one too?
-        let query_remaining = query_length.saturating_sub(last.query_end);
+        let first_bounds = first.get_target_bounds();
+        let last_bounds = last.get_target_bounds();
+        let align_start = first_bounds.0;
+        let align_end = last_bounds.1;
 
         // TODO: off by one?
         // the visual start is (<target start> - <num unaligned model positions to the left>)
         // *note: saturating sub for the rare case in which the
         //        alignment is at the start of the chromosome
-        let visual_start = first.target_start.saturating_sub(first.query_start);
-        let visual_end = last.target_end + query_remaining;
+        let visual_start = first
+            .annotations
+            .iter()
+            .map(|a| first_bounds.0.saturating_sub(a.query_start))
+            .min()
+            .unwrap_or(first_bounds.0);
+        let visual_end = last
+            .annotations
+            .iter()
+            .filter_map(|a| {
+                if let Some(&query_length) = query_lengths.get(&a.query_id) {
+                    Some(a.target_end + query_length.saturating_sub(a.query_end))
+                } else {
+                    None
+                }
+            })
+            .max()
+            .expect("no query length found");
 
         let left = Block {
             id: id_fn(),
             start: visual_start,
-            end: first.target_start,
+            end: first_bounds.0,
             query_length: None,
         };
 
         let right = Block {
             id: id_fn(),
-            start: last.target_end,
+            start: last_bounds.1,
             // TODO: need model length information to get this
-            end: last.target_end,
+            end: last_bounds.1,
             query_length: None,
         };
+
+        let query_name = first.annotations.iter().map(|a| &a.query_name).join(",");
+
+        let mut first_loop = true;
+        let mut strand = Strand::Unset;
+
+        for a in first.annotations.iter() {
+            if first_loop {
+                strand = a.strand;
+                first_loop = false;
+            }
+            if a.strand != strand {
+                strand = Strand::Unset;
+                break;
+            }
+        }
 
         Self {
             id: format!("{}-{}", first.region_id, first.join_id),
@@ -133,8 +176,8 @@ impl BlockGroup {
             visual_end,
             align_start,
             align_end,
-            strand: first.strand,
-            query: first.query_name.clone(),
+            strand,
+            query: query_name,
             target: first.target_name.clone(),
             left,
             right,
