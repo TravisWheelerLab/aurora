@@ -487,6 +487,24 @@ fn check_for_forward_link(
     }
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum OptionalBlock<'a> {
+    Valid(&'a Block),
+    After,
+}
+
+fn get_group_block_optional<'a>(
+    segment: &'a Segment,
+    group: &[usize],
+    index: usize,
+) -> OptionalBlock<'a> {
+    if index < group.len() {
+        OptionalBlock::Valid(&segment.blocks[group[index]])
+    } else {
+        OptionalBlock::After
+    }
+}
+
 fn get_valid_joins_for_current_group(
     current_segment: &Segment,
     current_group: &[usize],
@@ -501,27 +519,29 @@ fn get_valid_joins_for_current_group(
     let mut current_idx = 0;
     let mut prior_idx = 0;
 
-    while current_idx < current_group.len() && prior_idx < prior_group.len() {
-        let current_block = &current_segment.blocks[current_group[current_idx]];
-        let prior_block = &prior_segment.blocks[prior_group[current_idx]];
+    while current_idx < current_group.len() || prior_idx < prior_group.len() {
+        let current_block = &get_group_block_optional(current_segment, current_group, current_idx);
+        let prior_block = &get_group_block_optional(prior_segment, prior_group, prior_idx);
 
-        if let (Some(query_id1), Some(query_id2)) = (current_block.query_id, prior_block.query_id) {
-            if query_id1 == query_id2 {
-                if prior_block.can_join_up_to >= current_segment_index
-                    && check_for_forward_link(assembly_graph, prior_block, current_block)
-                {
-                    values.push(current_group[current_idx]);
+        if let (&OptionalBlock::Valid(c_block), &OptionalBlock::Valid(p_block)) =
+            (current_block, prior_block)
+        {
+            if let (Some(query_id1), Some(query_id2)) = (c_block.query_id, p_block.query_id) {
+                if query_id1 == query_id2 {
+                    if p_block.can_join_up_to >= current_segment_index
+                        && check_for_forward_link(assembly_graph, p_block, c_block)
+                    {
+                        values.push(current_group[current_idx]);
+                    }
+
+                    current_idx += 1;
+                    prior_idx += 1;
+                    continue;
                 }
-
-                current_idx += 1;
-                prior_idx += 1;
-                continue;
             }
         }
 
-        let is_first_smaller = current_block.query_id < prior_block.query_id
-            || (current_block.query_id == prior_block.query_id
-                && current_block.row_idx < prior_block.row_idx);
+        let is_first_smaller = current_block < prior_block;
         current_idx += is_first_smaller as usize;
         prior_idx += !is_first_smaller as usize;
     }
@@ -542,32 +562,33 @@ fn get_valid_appends_for_current_group(
     let mut current_idx = 0;
     let mut prior_idx = 0;
 
-    while current_idx < current_group.len() && prior_idx < prior_group.len() {
-        let current_block = &current_segment.blocks[current_group[current_idx]];
-        let prior_block = &prior_segment.blocks[prior_group[current_idx]];
+    while current_idx < current_group.len() || prior_idx < prior_group.len() {
+        let current_block = &get_group_block_optional(current_segment, current_group, current_idx);
+        let prior_block = &get_group_block_optional(prior_segment, prior_group, prior_idx);
 
-        if current_block.row_idx == prior_block.row_idx {
-            current_values[split_point] = current_group[current_idx];
-            split_point += 1;
+        if let (&OptionalBlock::Valid(c_block), &OptionalBlock::Valid(p_block)) =
+            (current_block, prior_block)
+        {
+            if c_block.row_idx == p_block.row_idx {
+                current_values[split_point] = current_group[current_idx];
+                split_point += 1;
 
-            current_idx += 1;
-            prior_idx += 1;
-            continue;
+                current_idx += 1;
+                prior_idx += 1;
+                continue;
+            }
         }
 
-        let is_current_smaller = current_block.query_id < prior_block.query_id
-            || (current_block.query_id == prior_block.query_id
-                && current_block.row_idx < prior_block.row_idx);
+        let is_current_smaller = current_block < prior_block;
         if is_current_smaller {
             current_values[different_insert_point] = current_group[current_idx];
-            different_insert_point -= 1;
+            different_insert_point = different_insert_point.saturating_sub(1);
         }
         current_idx += is_current_smaller as usize;
         prior_idx += !is_current_smaller as usize;
     }
 
-    debug_assert!(different_insert_point == split_point);
-    current_values[different_insert_point..].reverse();
+    current_values[split_point..].reverse();
 
     (current_values, split_point)
 }
@@ -656,7 +677,7 @@ fn get_offset_range_from_vector(
 }
 
 impl SegmentGroups {
-    fn from_segment(segment: &Segment, delta_threshold: f64) -> Self {
+    pub fn from_segment(segment: &Segment, delta_threshold: f64) -> Self {
         // Sort the blocks by score, collect the indexes for that...
         let mut score_ordered = (0..segment.blocks.len())
             .sorted_by(|&a, &b| {
@@ -719,35 +740,35 @@ impl SegmentGroups {
         }
     }
 
-    fn get_first_block<'a>(&self, segment: &'a Segment, group_idx: usize) -> &'a Block {
+    pub fn get_first_block<'a>(&self, segment: &'a Segment, group_idx: usize) -> &'a Block {
         &segment.blocks[*self
             .get_group(group_idx)
             .first()
             .expect("Empty group, should be impossible.")]
     }
 
-    fn get_range(&self, group_idx: usize) -> (usize, usize) {
-        get_offset_range_from_vector(&self.group_offsets, self.block_count(), group_idx)
+    pub fn get_range(&self, group_idx: usize) -> (usize, usize) {
+        get_offset_range_from_vector(&self.group_offsets, self.index_count(), group_idx)
     }
 
-    fn get_group(&self, group_idx: usize) -> &[usize] {
+    pub fn get_group(&self, group_idx: usize) -> &[usize] {
         let range = self.get_range(group_idx);
         &self.indexes[range.0..range.1]
     }
 
-    fn can_join_up_to(&self, group_idx: usize) -> usize {
+    pub fn can_join_up_to(&self, group_idx: usize) -> usize {
         self.can_join_to[group_idx]
     }
 
-    fn iter_group_ranges(&self) -> impl Iterator<Item = (usize, usize)> + use<'_> {
+    pub fn iter_group_ranges(&self) -> impl Iterator<Item = (usize, usize)> + use<'_> {
         (0..self.group_offsets.len()).map(|v| self.get_range(v))
     }
 
-    fn iter_groups(&self) -> impl Iterator<Item = &[usize]> {
+    pub fn iter_groups(&self) -> impl Iterator<Item = &[usize]> {
         (0..self.group_offsets.len()).map(|v| self.get_group(v))
     }
 
-    fn add_group(&mut self, segment: &Segment, new_segment: &[usize]) -> usize {
+    pub fn add_group(&mut self, segment: &Segment, new_segment: &[usize]) -> usize {
         match self
             .groups_ordered
             .binary_search_by(|&probe_idx| self.get_group(probe_idx).cmp(new_segment))
@@ -755,7 +776,7 @@ impl SegmentGroups {
             Result::Ok(idx) => idx,
             Result::Err(idx) => {
                 let new_group_idx = self.group_count();
-                let new_offset = self.block_count();
+                let new_offset = self.index_count();
                 self.groups_ordered.insert(idx, new_group_idx);
                 self.group_offsets.push(new_offset);
                 self.indexes.extend_from_slice(new_segment);
@@ -771,11 +792,11 @@ impl SegmentGroups {
         }
     }
 
-    fn group_count(&self) -> usize {
+    pub fn group_count(&self) -> usize {
         self.group_offsets.len()
     }
 
-    fn block_count(&self) -> usize {
+    pub fn index_count(&self) -> usize {
         self.indexes.len()
     }
 }

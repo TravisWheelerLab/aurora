@@ -219,9 +219,12 @@ pub fn run_pipeline(
         )
     });
 
+    let group_sizes = history.segment_groups.iter().map(|s| s.index_count());
+
     izip!(
         (0..segments.len()),
         history_lengths.iter(),
+        group_sizes,
         segment_lengths,
         segment_ranges
     )
