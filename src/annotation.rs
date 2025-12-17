@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::alignment::Strand;
 use itertools::Itertools;
 
@@ -46,17 +48,30 @@ pub struct LineWidths {
     join_id_width: usize,
 }
 
+fn get_mutli_option_string<B: Display + Eq, F>(
+    simple_annotations: &[SimpleAnnotation],
+    prop: F,
+) -> String
+where
+    F: Fn(&SimpleAnnotation) -> B,
+{
+    let prop_ref = &prop;
+
+    if let Result::Ok(val) = simple_annotations.iter().map(prop_ref).all_equal_value() {
+        val.to_string()
+    } else {
+        simple_annotations.iter().map(prop_ref).join(",")
+    }
+}
+
 fn get_strings(simple_annotations: &[SimpleAnnotation]) -> [String; 6] {
     [
-        simple_annotations.iter().map(|v| v.target_start).join(","),
-        simple_annotations.iter().map(|v| v.target_end).join(","),
-        simple_annotations
-            .iter()
-            .map(|v| v.query_name.clone())
-            .join(","),
-        simple_annotations.iter().map(|v| v.query_start).join(","),
-        simple_annotations.iter().map(|v| v.query_end).join(","),
-        simple_annotations.iter().map(|v| v.strand).join(","),
+        get_mutli_option_string(simple_annotations, |v| v.target_start),
+        get_mutli_option_string(simple_annotations, |v| v.target_end),
+        get_mutli_option_string(simple_annotations, |v| v.query_name.clone()),
+        get_mutli_option_string(simple_annotations, |v| v.query_start),
+        get_mutli_option_string(simple_annotations, |v| v.query_end),
+        get_mutli_option_string(simple_annotations, |v| v.strand),
     ]
 }
 

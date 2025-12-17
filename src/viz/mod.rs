@@ -305,7 +305,8 @@ impl<'a> AdjudicationSodaData<'a> {
                             .to_string(),
                         BlockType::TandemRepeat => format!(
                             "repeat#{}",
-                            self.group.tandem_repeats[b.row_idx].consensus_pattern
+                            self.group.tandem_repeats[b.row_idx - self.group.alignments.len() - 1]
+                                .consensus_pattern
                         ),
                     };
 
