@@ -23,6 +23,7 @@ pub struct AmbiguousAnnotation {
     pub region_id: usize,
 }
 
+#[allow(dead_code)]
 pub struct ConcreteAnnotation {
     pub target_name: String,
     pub target_start: usize,
