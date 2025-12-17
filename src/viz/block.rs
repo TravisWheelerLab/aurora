@@ -79,7 +79,7 @@ impl BlockGroup {
             .map(|idx| (joins[idx], joins[idx + 1]))
             .for_each(|(a, b)| {
                 let (a_start, a_end) = a.get_target_bounds();
-                let (_b_start, b_end) = b.get_target_bounds();
+                let (b_start, b_end) = b.get_target_bounds();
 
                 let mut inner_len = None;
                 if let (Result::Ok(a_conc), Result::Ok(b_conc)) = (
@@ -98,7 +98,7 @@ impl BlockGroup {
                 inner.push(Block {
                     id: id_fn(),
                     start: a_end,
-                    end: b_end,
+                    end: b_start,
                     query_length: inner_len,
                 });
             });

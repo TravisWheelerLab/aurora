@@ -218,12 +218,13 @@ pub fn run_pipeline(
             proximity_group.target_start + s.end_col,
         )
     });
-
+    let num_groups = history.segment_groups.iter().map(|s| s.index_count());
     let group_sizes = history.segment_groups.iter().map(|s| s.index_count());
 
     izip!(
         (0..segments.len()),
         history_lengths.iter(),
+        num_groups,
         group_sizes,
         segment_lengths,
         segment_ranges

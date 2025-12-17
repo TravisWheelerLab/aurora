@@ -535,7 +535,7 @@ fn get_valid_joins_for_current_group(
                     }
 
                     current_idx += 1;
-                    prior_idx += 1;
+                    //prior_idx += 1;
                     continue;
                 }
             }
@@ -574,7 +574,7 @@ fn get_valid_appends_for_current_group(
                 split_point += 1;
 
                 current_idx += 1;
-                prior_idx += 1;
+                //prior_idx += 1;
                 continue;
             }
         }
@@ -893,7 +893,10 @@ pub fn history_viterbi_on_segments(
                         // Can add up to two append events for blocks with multiple alignments:
                         let current_rep_block = &segment_groups[segment_idx]
                             .get_first_block(&segments[segment_idx], group_idx);
-                        let is_skip = current_rep_block.row_idx == 0;
+                        let prior_rep_block = &segment_groups[val.segment]
+                            .get_first_block(&segments[val.segment], val.group_index);
+                        let is_skip =
+                            current_rep_block.row_idx == 0 || prior_rep_block.row_idx == 0;
 
                         let (current_blocks, split_point) = get_valid_appends_for_current_group(
                             &segments[segment_idx],
@@ -921,7 +924,7 @@ pub fn history_viterbi_on_segments(
                                 prior_history: other_index,
                                 join_history: prior_hist_idx,
                                 score: history_score(&histories[prior_hist_idx])
-                                    + score_params.transition(is_skip, has_matching)
+                                    + score_params.transition(is_skip, !has_matching)
                                     + current_rep_block.confidence,
                             }));
                         }
@@ -1008,7 +1011,7 @@ fn get_matching_blocks<'a>(
     new_blocks.filter_map(move |b| {
         let new_val = b.to_comparable();
 
-        while start || Some(new_val) < to_comparable(prior_val) {
+        while start || (prior_val.is_some() && to_comparable(prior_val) < Some(new_val)) {
             if let Some(next_val) = prior_iter.next() {
                 prior_val = Some(next_val);
             } else {
@@ -1097,8 +1100,7 @@ pub fn history_backtrace_append_block(
                     refined_segments[stack_idx].annotated.iter(),
                 );
 
-                // Sanity check...
-                // should not be possible assuming a join was allowed in the first place...
+                // Should not be possible assuming a join was allowed in the first place...
                 if joins.len() == 0 {
                     panic!(
                         "Annotation from join made with 0 elements! This should not be possible!"

@@ -58,6 +58,9 @@ impl ScoreParams {
         }
     }
 
+    /// Compute the log-probability (base e) of transitioning between 2 states, given the following:
+    ///  - Is one of the two states a skip state?
+    ///  - Is the prior state a different row than the current state (different alignment).
     pub fn transition(&self, is_skip: bool, prior_is_different: bool) -> f64 {
         fast_select(
             fast_select(self.query_to_skip_score, self.query_jump_score, is_skip),

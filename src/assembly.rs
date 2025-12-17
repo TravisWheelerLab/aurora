@@ -85,13 +85,14 @@ fn link_assemblies(
                 let b_length = b.query_end.abs_diff(b.query_start);
                 let min_length = a_length.min(b_length);
 
+                // Query bounds are reversed for reverse sequences, so the start is actually greater than the end (Ex. start: 1510 -> end: 105)
                 let (consensus_distance, link_type) = match (a.strand, b.strand) {
                     (Strand::Forward, Strand::Forward) => (
                         b.query_start as isize - a.query_end as isize,
                         LinkType::Forward,
                     ),
                     (Strand::Reverse, Strand::Reverse) => (
-                        b.query_end as isize - a.query_start as isize,
+                        a.query_end as isize - b.query_start as isize,
                         LinkType::Reverse,
                     ),
                     (Strand::Forward, Strand::Reverse) => (
@@ -99,10 +100,10 @@ fn link_assemblies(
                         LinkType::FRInversion,
                     ),
                     (Strand::Reverse, Strand::Forward) => (
-                        b.query_start as isize - a.query_start as isize,
+                        a.query_end as isize - b.query_end as isize,
                         LinkType::RFInversion,
                     ),
-                    _ => panic!(),
+                    _ => panic!("Invalid strand types!"),
                 };
 
                 let within_target_distance_threshold = match link_type {
