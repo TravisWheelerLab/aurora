@@ -443,6 +443,13 @@ fn history_score(entry: &HistoryEntry) -> f64 {
     }
 }
 
+fn prior_history(entry: &HistoryEntry) -> usize {
+    match entry {
+        HistoryEntry::Root => 0,
+        HistoryEntry::Append(val) | HistoryEntry::Join(val) => val.prior_history,
+    }
+}
+
 fn keep_unique_histories(histories: &mut Vec<HistoryEntry>, start_offset: usize) {
     // Sort top entries in-place...
     let h_len = histories.len();
@@ -541,9 +548,9 @@ fn get_valid_joins_for_current_group(
             }
         }
 
-        let is_first_smaller = current_block < prior_block;
-        current_idx += is_first_smaller as usize;
-        prior_idx += !is_first_smaller as usize;
+        let current_is_smaller = current_block < prior_block;
+        current_idx += current_is_smaller as usize;
+        prior_idx += !current_is_smaller as usize;
     }
 
     values
@@ -607,19 +614,12 @@ fn check_for_join(
     let group_idx = current_group_reference.1;
     let current_group_indexes = segment_groups[segment_idx].get_group(group_idx);
 
-    let joinable_blocks = current_group_indexes
-        .iter()
-        .filter_map(|&v| {
-            let block = &segments[segment_idx].blocks[v];
-            if let Some(_) = block.query_id {
-                Some(v)
-            } else {
-                None
-            }
-        })
-        .collect_vec();
+    let has_joinable_blocks = current_group_indexes.iter().any(|&v| {
+        let block = &segments[segment_idx].blocks[v];
+        block.query_id.is_some()
+    });
 
-    if !joinable_blocks.is_empty() {
+    if has_joinable_blocks {
         for _ in 0..history_depth {
             match &histories[last_hist] {
                 HistoryEntry::Root => return None,
@@ -629,10 +629,10 @@ fn check_for_join(
 
                     let valid_group = get_valid_joins_for_current_group(
                         &segments[segment_idx],
-                        &joinable_blocks,
+                        current_group_indexes,
                         segment_idx,
                         &segments[val.segment],
-                        &segment_groups[val.segment].get_group(val.group_index),
+                        segment_groups[val.segment].get_group(val.group_index),
                         assembly_graph,
                     );
 
@@ -760,10 +760,12 @@ impl SegmentGroups {
         self.can_join_to[group_idx]
     }
 
+    #[allow(dead_code)]
     pub fn iter_group_ranges(&self) -> impl Iterator<Item = (usize, usize)> + use<'_> {
         (0..self.group_offsets.len()).map(|v| self.get_range(v))
     }
 
+    #[allow(dead_code)]
     pub fn iter_groups(&self) -> impl Iterator<Item = &[usize]> {
         (0..self.group_offsets.len()).map(|v| self.get_group(v))
     }
@@ -773,7 +775,7 @@ impl SegmentGroups {
             .groups_ordered
             .binary_search_by(|&probe_idx| self.get_group(probe_idx).cmp(new_segment))
         {
-            Result::Ok(idx) => idx,
+            Result::Ok(idx) => self.groups_ordered[idx],
             Result::Err(idx) => {
                 let new_group_idx = self.group_count();
                 let new_offset = self.index_count();
@@ -852,7 +854,7 @@ pub fn history_viterbi_on_segments(
                         &histories,
                         &segment_groups,
                         segment_idx,
-                        join_index,
+                        prior_history(&histories[join_index]),
                         history_depth,
                     );
 
@@ -884,7 +886,7 @@ pub fn history_viterbi_on_segments(
                             prior_history: other_index,
                             join_history: prior_hist_idx,
                             score: history_score(&histories[prior_hist_idx])
-                                + &segment_groups[segment_idx]
+                                + segment_groups[segment_idx]
                                     .get_first_block(&segments[segment_idx], group_idx)
                                     .confidence,
                         }));
@@ -914,7 +916,7 @@ pub fn history_viterbi_on_segments(
 
                         if !new_group.is_empty() {
                             let new_group_idx = segment_groups[segment_idx]
-                                .add_group(&segments[segment_idx], &new_group);
+                                .add_group(&segments[segment_idx], new_group);
 
                             // Add append event for matching blocks, this will have no transition penalty...
                             histories.push(HistoryEntry::Append(HistoryInfo {
@@ -1060,7 +1062,7 @@ fn get_joinable_extensions<'a>(
     prior_entries: impl Iterator<Item = &'a AnnotatedRange>,
 ) -> Vec<AnnotatedRange> {
     get_matching_blocks(new_blocks, prior_entries, false)
-        .map(|(b, a)| AnnotatedRange {
+        .map(|(b, _a)| AnnotatedRange {
             query_id: b.query_id,
             row_idx: b.row_idx,
             col_start: b.target_start,
@@ -1082,7 +1084,7 @@ pub fn history_backtrace_append_block(
         let direct_extensions =
             get_possible_extensions(blocks.iter().copied(), ref_seg.annotated.iter());
 
-        if direct_extensions.len() > 0 {
+        if !direct_extensions.is_empty() {
             ref_seg.annotated = direct_extensions;
             return (Some(ref_seg.join_index), join_index);
         }
@@ -1090,7 +1092,7 @@ pub fn history_backtrace_append_block(
 
     if blocks
         .iter()
-        .any(|&b| matches!(b.block_type, BlockType::Alignment | BlockType::TandemRepeat))
+        .any(|&b| matches!(b.block_type, BlockType::Alignment))
     {
         // Case 2: Is part of a join, use shared join index...
         if let Some(&(check_idx, _hist_idx, stack_idx, group_join_idx)) = join_stack.last() {
@@ -1101,7 +1103,7 @@ pub fn history_backtrace_append_block(
                 );
 
                 // Should not be possible assuming a join was allowed in the first place...
-                if joins.len() == 0 {
+                if joins.is_empty() {
                     panic!(
                         "Annotation from join made with 0 elements! This should not be possible!"
                     );

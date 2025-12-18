@@ -14,7 +14,7 @@ use crate::{
     support::windowed_confidence,
     viterbi::{
         backtrace_histories, history_viterbi_on_segments, trace_segments, traceback,
-        viterbi_collapsed, RefinedTraceSegment,
+        viterbi_collapsed, HistoryEntry, RefinedTraceSegment,
     },
     viz::AdjudicationSodaData,
     windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
@@ -218,7 +218,7 @@ pub fn run_pipeline(
             proximity_group.target_start + s.end_col,
         )
     });
-    let num_groups = history.segment_groups.iter().map(|s| s.index_count());
+    let num_groups = history.segment_groups.iter().map(|s| s.group_count());
     let group_sizes = history.segment_groups.iter().map(|s| s.index_count());
 
     izip!(
