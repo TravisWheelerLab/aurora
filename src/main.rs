@@ -220,9 +220,9 @@ pub struct VisualizationArgs {
     )]
     pub viz_constraints: Vec<VizConstraint>,
 
-    /// Enable output of viterbi scores vizual.
-    #[arg(long = "viz-view-viterbi")]
-    pub viz_view_viterbi: bool,
+    /// Enable output of per position scores to the visual.
+    #[arg(long = "viz-enable-scores")]
+    pub viz_enable_scores: bool,
 
     /// The path to the BED file that contains
     /// reference annotations for visualization
@@ -384,7 +384,7 @@ fn main() -> Result<()> {
         &proximity_groups,
         args.annotation_args.target_join_distance
     ));
-    /*
+
     rayon::ThreadPoolBuilder::new()
         .num_threads(args.performance_args.num_threads)
         .build_global()
@@ -394,13 +394,6 @@ fn main() -> Result<()> {
         .par_iter()
         .panic_fuse()
         // .inspect(|g| println!("{g:?}"))
-        .enumerate()
-        .for_each(|(region_idx, group)| {
-            run_pipeline(group, &alignment_data, region_idx, args.clone());
-        });
-    */
-    proximity_groups
-        .iter()
         .enumerate()
         .for_each(|(region_idx, group)| {
             run_pipeline(group, &alignment_data, region_idx, args.clone());

@@ -135,7 +135,7 @@ pub struct AdjudicationSodaData<'a> {
     segments: &'a SegmentedMatrix,
     history_counts: &'a [usize],
     links: &'a AssemblyGraph,
-    viterbi_matrix: Option<&'a Matrix<'a, f64>>,
+    dump_confidences: bool,
     args: &'a AuroraArgs,
 }
 
@@ -152,7 +152,7 @@ impl<'a> AdjudicationSodaData<'a> {
         segments: &'a SegmentedMatrix,
         history_counts: &'a [usize],
         links: &'a AssemblyGraph,
-        viterbi_matrix: Option<&'a Matrix<'a, f64>>,
+        dump_confidences: bool,
         args: &'a AuroraArgs,
     ) -> Self {
         Self {
@@ -166,7 +166,7 @@ impl<'a> AdjudicationSodaData<'a> {
             segments,
             history_counts,
             links,
-            viterbi_matrix,
+            dump_confidences,
             args,
         }
     }
@@ -224,7 +224,8 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 
     fn alignment_scores(&self) -> Option<Vec<String>> {
-        if let Some(val) = self.viterbi_matrix {
+        if self.dump_confidences {
+            let val = self.confidence_matrix;
             let region_start = val.def.target_start;
 
             return Some(

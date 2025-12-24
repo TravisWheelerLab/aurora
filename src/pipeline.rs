@@ -153,14 +153,12 @@ pub fn run_pipeline(
     let (confidence_avg_by_id, _confidence_by_id) = windowed_confidence(&mut confidence_matrix);
 
     let assembly_graph = AssemblyGraph::new(proximity_group, &score_params, &args.annotation_args);
-
     let segments;
-    let mut viterbi_matrix = Matrix::<f64>::new(&matrix_def);
 
     // In a new block so initial viterbi matricies/sources are freed right after being used...
     {
-        // let mut collapsed_confidence_matrix = Matrix::<f64>::new(&collapsed_matrix_def);
         let mut sources_matrix = Matrix::<usize>::new(&matrix_def);
+        let mut viterbi_matrix = Matrix::<f64>::new(&matrix_def);
         // the initial active cols just removes the dead space between alignments
         let active_cols = confidence_matrix.initial_active_cols();
 
@@ -244,11 +242,7 @@ pub fn run_pipeline(
         &segments,
         &history_lengths,
         &assembly_graph,
-        if args.visualization_args.viz_view_viterbi {
-            Some(&viterbi_matrix)
-        } else {
-            None
-        },
+        args.visualization_args.viz_enable_scores,
         &args,
     );
 
