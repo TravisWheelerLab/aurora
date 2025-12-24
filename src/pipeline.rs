@@ -14,7 +14,7 @@ use crate::{
     support::windowed_confidence,
     viterbi::{
         backtrace_histories, history_viterbi_on_segments, trace_segments, traceback,
-        viterbi_collapsed, HistoryEntry, RefinedTraceSegment,
+        viterbi_collapsed, AnnotatedRange, HistoryEntry, RefinedTraceSegment,
     },
     viz::AdjudicationSodaData,
     windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
@@ -154,6 +154,7 @@ pub fn run_pipeline(
 
     let assembly_graph = AssemblyGraph::new(proximity_group, &score_params, &args.annotation_args);
     let segments;
+    let simple_trace;
 
     // In a new block so initial viterbi matricies/sources are freed right after being used...
     {
@@ -177,11 +178,11 @@ pub fn run_pipeline(
             &active_cols,
         );
 
-        let trace_segments = trace_segments(&trace);
+        simple_trace = trace_segments(&trace);
 
         segments = segments_from_matrix_trace(
             proximity_group,
-            &trace_segments,
+            &simple_trace,
             &confidence_matrix,
             &score_params,
             &assembly_graph,
@@ -189,6 +190,7 @@ pub fn run_pipeline(
         );
     }
 
+    /*
     let history = history_viterbi_on_segments(
         &segments,
         &score_params,
@@ -229,7 +231,41 @@ pub fn run_pipeline(
     )
     .for_each(|v| println!("{}: {:?}", region_idx, v));
 
+    history
+        .segment_offsets
+        .iter()
+        .skip(1)
+        .zip(
+            history
+                .segment_offsets
+                .iter()
+                .skip(2)
+                .chain([history.entries.len()].iter())
+        ).for_each(|(&start, &end)| {
+            for entry in history.entries[start..end].iter() {
+                if let HistoryEntry::Append(val) | HistoryEntry::Join(val) = entry {
+                    print!("{:e} ", val.score);
+                }
+            }
+            println!();
+        });
+
     let refined_trace_segments = backtrace_histories(&segments, &history);
+    */
+    let refined_trace_segments = simple_trace
+        .iter()
+        .enumerate()
+        .map(|(i, v)| RefinedTraceSegment {
+            annotated: vec![AnnotatedRange {
+                query_id: Some(v.query_id),
+                row_idx: v.row_idx,
+                col_start: v.col_start,
+                col_end: v.col_end,
+            }],
+            join_index: i,
+        })
+        .collect_vec();
+    let history_lengths = vec![0; segments.len()];
 
     // if we're going to produce visualizations, this will
     // keep track of all of the data needed to do so
