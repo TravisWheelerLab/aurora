@@ -1,3 +1,4 @@
+use core::f64;
 use std::{cmp::Ordering, fmt::Debug, iter::Fuse};
 
 use crate::{
@@ -92,6 +93,7 @@ impl Block {
 pub struct Segment {
     pub start_col: usize,
     pub end_col: usize,
+    pub upper_score_bound: f64,
     pub blocks: Vec<Block>,
 }
 
@@ -260,6 +262,13 @@ fn logsumexp(a: f64, b: f64) -> f64 {
     max + (min - max).exp().ln_1p()
 }
 
+struct SegmentInfo {
+    can_join_back_to: usize,
+    max_block_score: f64,
+    first_pass_score: f64,
+    max_resolution_segment: usize,
+}
+
 pub fn segments_from_matrix_trace(
     group: &ProximityGroup,
     trace_segments: &[TraceSegment],
@@ -276,6 +285,8 @@ pub fn segments_from_matrix_trace(
 
     let matrix_definition = confidence_matrix.def;
     let mut segments: SegmentedMatrix = Vec::with_capacity(trace_segments.len());
+    let mut segments_info: Vec<SegmentInfo> = Vec::with_capacity(trace_segments.len());
+    let mut visited_segment_info = vec![false; trace_segments.len()];
 
     // Monitor alignment scores, note we'll preallocate for performance...
     let mut row_scores: Vec<f64> = vec![0.0; matrix_definition.num_rows];
@@ -352,6 +363,7 @@ pub fn segments_from_matrix_trace(
         let mut new_segment = Segment {
             start_col: seg.col_start,
             end_col: seg.col_end,
+            upper_score_bound: row_scores[trace_segments[s_idx].row_idx],
             blocks: valid_rows
                 .iter()
                 .filter(row_filter)
@@ -396,8 +408,20 @@ pub fn segments_from_matrix_trace(
 
     // Allow each alignment block to farthest segment it can be linked to...
     for (s_idx, seg) in segments.iter_mut().enumerate() {
+        // Used for gathering segment info, this is used for computing a lower bound on valid history scores...
+        let mut farthest_back = s_idx;
+        let mut max_block_score = f64::NEG_INFINITY;
+        let prior_score = segments_info.last().map(|v| v.first_pass_score).unwrap_or(0.0);
+        let transition_score = if s_idx > 0 {
+            let prior_row = trace_segments[s_idx].row_idx;
+            let current_row = trace_segments[s_idx].row_idx;
+            score_params.transition(current_row == 0 || prior_row == 0, current_row != prior_row)
+        } else { 0.0 };
+
         for b_idx in 0..seg.blocks.len() {
             let block = &seg.blocks[b_idx];
+            max_block_score = max_block_score.max(block.confidence);
+
             if block.row_idx == 0 || s_idx != last_segment_seen[block.row_idx] {
                 continue;
             }
@@ -406,15 +430,55 @@ pub fn segments_from_matrix_trace(
             if let BlockType::TandemRepeat | BlockType::Skip = block.block_type {
                 continue;
             }
-            let mut best_idx = s_idx;
+            let mut farthest_forward = s_idx;
+            let mut fas
 
             for e in assembly_graph.link_graph[block.row_idx - 1].iter() {
-                best_idx = best_idx.max(first_segment_seen[e.edge_to + 1]);
+                farthest_forward = farthest_forward.max(first_segment_seen[e.edge_to + 1]);
+                
+                farthest_back = farthest_back.min(first_segment_seen[e.edge_to + 1]);
             }
 
-            seg.blocks[b_idx].can_join_up_to = best_idx;
+            seg.blocks[b_idx].can_join_up_to = farthest_forward;
+        }
+
+        segments_info.push(SegmentInfo { 
+            can_join_back_to: farthest_back, 
+            max_block_score, 
+            first_pass_score: prior_score + transition_score + seg.upper_score_bound, 
+            max_resolution_segment: s_idx, // This is resolved in the next step... 
+        });
+
+        seg.upper_score_bound = f64::NEG_INFINITY;
+    }
+
+    // Run DFS-like algorithm to determine sections with joins that can be resolved seperately...
+    for s_idx in (0..segments_info.len()).rev() {
+        if visited_segment_info[s_idx] {
+            continue;
+        }
+        visited_segment_info[s_idx] = true;
+
+        let mut farthest_back = segments_info[s_idx].can_join_back_to;
+        let mut i = s_idx;
+
+        while i > 0 && i > farthest_back {
+            visited_segment_info[i - 1] = true;
+            segments_info[i - 1].max_resolution_segment = s_idx;
+            farthest_back = farthest_back.min(segments_info[i - 1].can_join_back_to);
+            i -= 1;
         }
     }
+
+    // Compute lower bounds per segment...
+    // TODO: test
+    let mut prior_score = f64::NEG_INFINITY;
+
+    for s_idx in (0..segments_info.len()).rev() {
+        let seg = &segments_info[s_idx];
+        let resolved_score = if seg.max_resolution_segment == s_idx { seg.first_pass_score } else { f64::NEG_INFINITY };
+        segments[s_idx].upper_score_bound = resolved_score.max(prior_score - seg.max_block_score);
+    } 
 
     segments
 }

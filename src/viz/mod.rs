@@ -238,18 +238,20 @@ impl<'a> AdjudicationSodaData<'a> {
                             .map(|col| {
                                 *val.data[col]
                                     .iter()
-                                    .max_by(|a, b| a.partial_cmp(b).unwrap())
+                                    .max_by(|a, b| a.total_cmp(b))
                                     .unwrap_or(&0.0)
                             })
                             .collect_vec();
                         let seq_arr = (start..=end)
                             .zip(max_arr.iter())
                             .flat_map(|(col, max_score)| {
-                                (val.get(row, col) - max_score).to_le_bytes()
+                                (val.get(row, col).ln() - max_score.ln()).to_le_bytes()
                             })
                             .collect_vec();
-                        let max_arr_enc =
-                            max_arr.iter().flat_map(|v| v.to_le_bytes()).collect_vec();
+                        let max_arr_enc = max_arr
+                            .iter()
+                            .flat_map(|v| v.ln().to_le_bytes())
+                            .collect_vec();
 
                         format!(
                             "{},{},{},{}",

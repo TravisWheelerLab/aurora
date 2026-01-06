@@ -40,6 +40,7 @@ pub struct ConcreteAnnotation {
 
 #[derive(Default)]
 pub struct LineWidths {
+    ambiguous_count_width: usize,
     target_name_width: usize,
     target_start_width: usize,
     target_end_width: usize,
@@ -52,36 +53,43 @@ pub struct LineWidths {
 fn get_mutli_option_string<B: Display + Eq, F>(
     simple_annotations: &[SimpleAnnotation],
     prop: F,
+    simplify: bool,
 ) -> String
 where
     F: Fn(&SimpleAnnotation) -> B,
 {
     let prop_ref = &prop;
 
-    if let Result::Ok(val) = simple_annotations.iter().map(prop_ref).all_equal_value() {
-        val.to_string()
+    if !simplify {
+        if let Result::Ok(val) = simple_annotations.iter().map(prop_ref).all_equal_value() {
+            val.to_string()
+        } else {
+            simple_annotations.iter().map(prop_ref).join(",")
+        }
     } else {
-        simple_annotations.iter().map(prop_ref).join(",")
+        // Only allow 1 element...
+        simple_annotations.iter().take(1).map(prop_ref).join(",")
     }
 }
 
-fn get_strings(simple_annotations: &[SimpleAnnotation]) -> [String; 6] {
+fn get_strings(simple_annotations: &[SimpleAnnotation], simplify: bool) -> [String; 6] {
     [
-        get_mutli_option_string(simple_annotations, |v| v.target_start),
-        get_mutli_option_string(simple_annotations, |v| v.target_end),
-        get_mutli_option_string(simple_annotations, |v| v.query_name.clone()),
-        get_mutli_option_string(simple_annotations, |v| v.query_start),
-        get_mutli_option_string(simple_annotations, |v| v.query_end),
-        get_mutli_option_string(simple_annotations, |v| v.strand),
+        get_mutli_option_string(simple_annotations, |v| v.target_start, simplify),
+        get_mutli_option_string(simple_annotations, |v| v.target_end, simplify),
+        get_mutli_option_string(simple_annotations, |v| v.query_name.clone(), simplify),
+        get_mutli_option_string(simple_annotations, |v| v.query_start, simplify),
+        get_mutli_option_string(simple_annotations, |v| v.query_end, simplify),
+        get_mutli_option_string(simple_annotations, |v| v.strand, simplify),
     ]
 }
 
 impl AmbiguousAnnotation {
-    pub fn line(&self, widths: &LineWidths) -> String {
-        let [ts, te, qn, qs, qe, strand] = get_strings(&self.annotations);
+    pub fn line(&self, widths: &LineWidths, simplify: bool) -> String {
+        let [ts, te, qn, qs, qe, strand] = get_strings(&self.annotations, simplify);
 
         format!(
-            "{:w0$} {:w1$} {:w2$} {:w3$} {:w4$} {:w5$} {} {:4.3} {:w6$} {}",
+            "{:w0$} {:w1$} {:w2$} {:w3$} {:w4$} {:w5$} {:w6$} {} {:4.3} {:w7$} {}",
+            self.annotations.len(),
             self.target_name,
             ts,
             te,
@@ -92,22 +100,26 @@ impl AmbiguousAnnotation {
             self.confidence,
             self.join_id,
             self.region_id,
-            w0 = widths.target_name_width,
-            w1 = widths.target_start_width,
-            w2 = widths.target_end_width,
-            w3 = widths.query_name_width,
-            w4 = widths.query_start_width,
-            w5 = widths.query_end_width,
-            w6 = widths.join_id_width,
+            w0 = widths.ambiguous_count_width,
+            w1 = widths.target_name_width,
+            w2 = widths.target_start_width,
+            w3 = widths.target_end_width,
+            w4 = widths.query_name_width,
+            w5 = widths.query_start_width,
+            w6 = widths.query_end_width,
+            w7 = widths.join_id_width,
         )
     }
 
-    pub fn write(results: &Vec<AmbiguousAnnotation>, out: &mut impl std::io::Write) {
+    pub fn write(results: &[AmbiguousAnnotation], out: &mut impl std::io::Write, simplified: bool) {
         let mut widths = LineWidths::default();
 
         for result in results {
-            let [ts, te, qn, qs, qe, ..] = get_strings(&result.annotations);
+            let [ts, te, qn, qs, qe, ..] = get_strings(&result.annotations, simplified);
 
+            widths.ambiguous_count_width = widths
+                .ambiguous_count_width
+                .max(result.annotations.len().to_string().len());
             widths.target_name_width = widths.target_name_width.max(result.target_name.len());
             widths.target_start_width = widths.target_start_width.max(ts.len());
             widths.target_end_width = widths.target_end_width.max(te.len());
@@ -118,7 +130,8 @@ impl AmbiguousAnnotation {
         }
 
         for result in results {
-            writeln!(out, "{}", result.line(&widths)).expect("failed to write result line");
+            writeln!(out, "{}", result.line(&widths, simplified))
+                .expect("failed to write result line");
         }
     }
 
@@ -170,6 +183,6 @@ impl TryFrom<&AmbiguousAnnotation> for ConcreteAnnotation {
 
 impl std::fmt::Display for AmbiguousAnnotation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.line(&LineWidths::default()))
+        write!(f, "{}", self.line(&LineWidths::default(), false))
     }
 }

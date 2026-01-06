@@ -184,6 +184,14 @@ pub struct AnnotationArgs {
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct IoArgs {
+    /// Specify path to save aurora annotations to. 
+    /// Defaults to sending results to standard output.
+    #[arg(short = 'o', long = "output", value_name = "path")]
+    pub output_path: Option<PathBuf>,
+    /// Specify path to dump verbose annotations (with all ambiguous annotation options) to. 
+    /// Defaults to not saving verbose annotations.
+    #[arg(short = 'a', long = "ambiguity-file", value_name = "path")]
+    pub ambiguity_path: Option<PathBuf>,
     /// Produce a file that describes the regions
     #[arg(long = "regions", value_name = "path")]
     pub regions_path: Option<PathBuf>,
@@ -385,6 +393,18 @@ fn main() -> Result<()> {
         args.annotation_args.target_join_distance
     ));
 
+    let output_file = if let Some(path) = &args.io_args.output_path {
+        Some(File::create(path)?)
+    } else {
+        None
+    };
+
+    let ambiguity_file = if let Some(path) = &args.io_args.ambiguity_path {
+        Some(File::create(path)?)
+    } else {
+        None
+    };
+
     rayon::ThreadPoolBuilder::new()
         .num_threads(args.performance_args.num_threads)
         .build_global()
@@ -396,7 +416,29 @@ fn main() -> Result<()> {
         // .inspect(|g| println!("{g:?}"))
         .enumerate()
         .for_each(|(region_idx, group)| {
-            run_pipeline(group, &alignment_data, region_idx, args.clone());
+            let mut ambiguity_file_clone = ambiguity_file
+                .as_ref()
+                .map(|file| file.try_clone().expect("Error cloning ambiguity file!"));
+
+            if let Some(file) = &output_file {
+                run_pipeline(
+                    group,
+                    &alignment_data,
+                    region_idx,
+                    args.clone(),
+                    &mut file.try_clone().expect("Error cloning output file handle!"),
+                    ambiguity_file_clone.as_mut(),
+                );
+            } else {
+                run_pipeline(
+                    group,
+                    &alignment_data,
+                    region_idx,
+                    args.clone(),
+                    &mut std::io::stdout(),
+                    ambiguity_file_clone.as_mut(),
+                );
+            }
         });
 
     Ok(())

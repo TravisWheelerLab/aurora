@@ -1,4 +1,7 @@
-use std::fs;
+use std::{
+    fs::{self},
+    io::Write,
+};
 
 use itertools::{izip, Itertools};
 
@@ -14,11 +17,11 @@ use crate::{
     support::windowed_confidence,
     viterbi::{
         backtrace_histories, history_viterbi_on_segments, trace_segments, traceback,
-        viterbi_collapsed, AnnotatedRange, HistoryEntry, RefinedTraceSegment,
+        viterbi_collapsed, HistoryEntry, RefinedTraceSegment,
     },
     viz::AdjudicationSodaData,
     windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
-    AuroraArgs,
+    AuroraArgs, IoArgs,
 };
 
 pub fn to_annotations(
@@ -96,6 +99,8 @@ pub fn run_pipeline(
     alignment_data: &AlignmentData,
     region_idx: usize,
     mut args: AuroraArgs,
+    output_file: &mut impl Write,
+    ambiguity_file: Option<&mut impl Write>,
 ) {
     let annot_args = &args.annotation_args;
 
@@ -190,7 +195,6 @@ pub fn run_pipeline(
         );
     }
 
-    /*
     let history = history_viterbi_on_segments(
         &segments,
         &score_params,
@@ -240,8 +244,9 @@ pub fn run_pipeline(
                 .segment_offsets
                 .iter()
                 .skip(2)
-                .chain([history.entries.len()].iter())
-        ).for_each(|(&start, &end)| {
+                .chain([history.entries.len()].iter()),
+        )
+        .for_each(|(&start, &end)| {
             for entry in history.entries[start..end].iter() {
                 if let HistoryEntry::Append(val) | HistoryEntry::Join(val) = entry {
                     print!("{:e} ", val.score);
@@ -251,7 +256,8 @@ pub fn run_pipeline(
         });
 
     let refined_trace_segments = backtrace_histories(&segments, &history);
-    */
+
+    /*
     let refined_trace_segments = simple_trace
         .iter()
         .enumerate()
@@ -266,6 +272,7 @@ pub fn run_pipeline(
         })
         .collect_vec();
     let history_lengths = vec![0; segments.len()];
+    */
 
     // if we're going to produce visualizations, this will
     // keep track of all of the data needed to do so
@@ -328,5 +335,8 @@ pub fn run_pipeline(
     annotations.sort_by_key(|r| r.annotations.iter().map(|a| a.target_start).min());
     annotations.retain(|r| r.annotations.iter().any(|a| a.query_name != "skip"));
 
-    AmbiguousAnnotation::write(&annotations, &mut std::io::stdout());
+    AmbiguousAnnotation::write(&annotations, output_file, true);
+    if let Some(ambig_file) = ambiguity_file {
+        AmbiguousAnnotation::write(&annotations, ambig_file, false);
+    }
 }

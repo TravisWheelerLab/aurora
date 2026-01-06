@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct ScoreParams {
     /// T_m from the paper
     pub query_jump_score: f64,
@@ -66,19 +67,6 @@ impl ScoreParams {
             fast_select(self.query_to_skip_score, self.query_jump_score, is_skip),
             fast_select(self.skip_loop_score, self.query_loop_score, is_skip),
             prior_is_different,
-        )
-    }
-}
-
-impl std::fmt::Debug for ScoreParams {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(
-            f,
-            "{}\n{}\n{}\n{}",
-            self.query_jump_score,
-            self.query_to_skip_score,
-            self.query_loop_score,
-            self.skip_loop_score
         )
     }
 }
