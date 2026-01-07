@@ -184,11 +184,11 @@ pub struct AnnotationArgs {
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct IoArgs {
-    /// Specify path to save aurora annotations to. 
+    /// Specify path to save aurora annotations to.
     /// Defaults to sending results to standard output.
     #[arg(short = 'o', long = "output", value_name = "path")]
     pub output_path: Option<PathBuf>,
-    /// Specify path to dump verbose annotations (with all ambiguous annotation options) to. 
+    /// Specify path to dump verbose annotations (with all ambiguous annotation options) to.
     /// Defaults to not saving verbose annotations.
     #[arg(short = 'a', long = "ambiguity-file", value_name = "path")]
     pub ambiguity_path: Option<PathBuf>,

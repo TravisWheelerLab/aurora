@@ -411,12 +411,17 @@ pub fn segments_from_matrix_trace(
         // Used for gathering segment info, this is used for computing a lower bound on valid history scores...
         let mut farthest_back = s_idx;
         let mut max_block_score = f64::NEG_INFINITY;
-        let prior_score = segments_info.last().map(|v| v.first_pass_score).unwrap_or(0.0);
+        let prior_score = segments_info
+            .last()
+            .map(|v| v.first_pass_score)
+            .unwrap_or(0.0);
         let transition_score = if s_idx > 0 {
             let prior_row = trace_segments[s_idx].row_idx;
             let current_row = trace_segments[s_idx].row_idx;
             score_params.transition(current_row == 0 || prior_row == 0, current_row != prior_row)
-        } else { 0.0 };
+        } else {
+            0.0
+        };
 
         for b_idx in 0..seg.blocks.len() {
             let block = &seg.blocks[b_idx];
@@ -431,22 +436,23 @@ pub fn segments_from_matrix_trace(
                 continue;
             }
             let mut farthest_forward = s_idx;
-            let mut fas
+            let is_first = s_idx == first_segment_seen[block.row_idx];
 
             for e in assembly_graph.link_graph[block.row_idx - 1].iter() {
                 farthest_forward = farthest_forward.max(first_segment_seen[e.edge_to + 1]);
-                
-                farthest_back = farthest_back.min(first_segment_seen[e.edge_to + 1]);
+                if is_first {
+                    farthest_back = farthest_back.min(first_segment_seen[e.edge_to + 1]);
+                }
             }
 
             seg.blocks[b_idx].can_join_up_to = farthest_forward;
         }
 
-        segments_info.push(SegmentInfo { 
-            can_join_back_to: farthest_back, 
-            max_block_score, 
-            first_pass_score: prior_score + transition_score + seg.upper_score_bound, 
-            max_resolution_segment: s_idx, // This is resolved in the next step... 
+        segments_info.push(SegmentInfo {
+            can_join_back_to: farthest_back,
+            max_block_score,
+            first_pass_score: prior_score + transition_score + seg.upper_score_bound,
+            max_resolution_segment: s_idx, // This is resolved in the next step...
         });
 
         seg.upper_score_bound = f64::NEG_INFINITY;
@@ -476,9 +482,14 @@ pub fn segments_from_matrix_trace(
 
     for s_idx in (0..segments_info.len()).rev() {
         let seg = &segments_info[s_idx];
-        let resolved_score = if seg.max_resolution_segment == s_idx { seg.first_pass_score } else { f64::NEG_INFINITY };
+        let resolved_score = if seg.max_resolution_segment == s_idx {
+            seg.first_pass_score
+        } else {
+            f64::NEG_INFINITY
+        };
         segments[s_idx].upper_score_bound = resolved_score.max(prior_score - seg.max_block_score);
-    } 
+        prior_score = segments[s_idx].upper_score_bound;
+    }
 
     segments
 }
