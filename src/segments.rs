@@ -407,8 +407,6 @@ pub fn segments_from_matrix_trace(
         segments.push(new_segment);
     }
 
-    println!("{:#?}", segments);
-
     // Allow each alignment block to farthest segment it can be linked to...
     for (s_idx, seg) in segments.iter_mut().enumerate() {
         // Used for gathering segment info, this is used for computing a lower bound on valid history scores...
@@ -479,10 +477,7 @@ pub fn segments_from_matrix_trace(
         }
     }
 
-    println!("{:#?}", segments_info);
-
     // Compute lower bounds per segment...
-    // TODO: test
     let mut prior_score = f64::NEG_INFINITY;
 
     for s_idx in (0..segments_info.len()).rev() {
@@ -490,21 +485,12 @@ pub fn segments_from_matrix_trace(
         let resolved_score = if seg.max_resolution_segment == s_idx {
             seg.first_pass_score
         } else {
-            prior_score - seg.max_block_score
+            prior_score
         };
+        // Don't remove best score until the next segment, otherwise we reach a point where 0 histories make it through. TODO: explore why this is needed...
         segments[s_idx].absolute_score_bound = resolved_score;
-        prior_score = resolved_score;
+        prior_score = resolved_score - seg.max_block_score;
     }
-
-    println!(
-        "{:?}",
-        segments
-            .iter()
-            .map(|v| v.absolute_score_bound)
-            .collect_vec()
-    );
-
-    println!("{:#?}", segments);
 
     segments
 }
