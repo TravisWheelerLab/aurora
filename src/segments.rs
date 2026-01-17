@@ -93,7 +93,7 @@ impl Block {
 pub struct Segment {
     pub start_col: usize,
     pub end_col: usize,
-    pub upper_score_bound: f64,
+    pub absolute_score_bound: f64,
     pub blocks: Vec<Block>,
 }
 
@@ -262,6 +262,7 @@ fn logsumexp(a: f64, b: f64) -> f64 {
     max + (min - max).exp().ln_1p()
 }
 
+#[derive(Debug)]
 struct SegmentInfo {
     can_join_back_to: usize,
     max_block_score: f64,
@@ -363,7 +364,7 @@ pub fn segments_from_matrix_trace(
         let mut new_segment = Segment {
             start_col: seg.col_start,
             end_col: seg.col_end,
-            upper_score_bound: row_scores[trace_segments[s_idx].row_idx],
+            absolute_score_bound: row_scores[trace_segments[s_idx].row_idx],
             blocks: valid_rows
                 .iter()
                 .filter(row_filter)
@@ -406,6 +407,8 @@ pub fn segments_from_matrix_trace(
         segments.push(new_segment);
     }
 
+    println!("{:#?}", segments);
+
     // Allow each alignment block to farthest segment it can be linked to...
     for (s_idx, seg) in segments.iter_mut().enumerate() {
         // Used for gathering segment info, this is used for computing a lower bound on valid history scores...
@@ -416,7 +419,7 @@ pub fn segments_from_matrix_trace(
             .map(|v| v.first_pass_score)
             .unwrap_or(0.0);
         let transition_score = if s_idx > 0 {
-            let prior_row = trace_segments[s_idx].row_idx;
+            let prior_row = trace_segments[s_idx - 1].row_idx;
             let current_row = trace_segments[s_idx].row_idx;
             score_params.transition(current_row == 0 || prior_row == 0, current_row != prior_row)
         } else {
@@ -451,11 +454,11 @@ pub fn segments_from_matrix_trace(
         segments_info.push(SegmentInfo {
             can_join_back_to: farthest_back,
             max_block_score,
-            first_pass_score: prior_score + transition_score + seg.upper_score_bound,
+            first_pass_score: prior_score + transition_score + seg.absolute_score_bound,
             max_resolution_segment: s_idx, // This is resolved in the next step...
         });
 
-        seg.upper_score_bound = f64::NEG_INFINITY;
+        seg.absolute_score_bound = f64::NEG_INFINITY;
     }
 
     // Run DFS-like algorithm to determine sections with joins that can be resolved seperately...
@@ -476,6 +479,8 @@ pub fn segments_from_matrix_trace(
         }
     }
 
+    println!("{:#?}", segments_info);
+
     // Compute lower bounds per segment...
     // TODO: test
     let mut prior_score = f64::NEG_INFINITY;
@@ -485,11 +490,21 @@ pub fn segments_from_matrix_trace(
         let resolved_score = if seg.max_resolution_segment == s_idx {
             seg.first_pass_score
         } else {
-            f64::NEG_INFINITY
+            prior_score - seg.max_block_score
         };
-        segments[s_idx].upper_score_bound = resolved_score.max(prior_score - seg.max_block_score);
-        prior_score = segments[s_idx].upper_score_bound;
+        segments[s_idx].absolute_score_bound = resolved_score;
+        prior_score = resolved_score;
     }
+
+    println!(
+        "{:?}",
+        segments
+            .iter()
+            .map(|v| v.absolute_score_bound)
+            .collect_vec()
+    );
+
+    println!("{:#?}", segments);
 
     segments
 }

@@ -803,6 +803,21 @@ impl SegmentGroups {
     }
 }
 
+pub fn try_add_history_entry(
+    history_entries: &mut Vec<HistoryEntry>,
+    segment: &Segment,
+    entry: HistoryEntry,
+) -> bool {
+    if let HistoryEntry::Append(info) | HistoryEntry::Join(info) = &entry {
+        if info.score >= segment.absolute_score_bound {
+            history_entries.push(entry);
+            return true;
+        }
+    }
+
+    false
+}
+
 pub fn history_viterbi_on_segments(
     segments: &SegmentedMatrix,
     score_params: &ScoreParams,
@@ -861,35 +876,47 @@ pub fn history_viterbi_on_segments(
                     let new_group_index =
                         segment_groups[segment_idx].add_group(&segments[segment_idx], &join_group);
 
-                    histories.push(HistoryEntry::Join(HistoryInfo {
-                        segment: segment_idx,
-                        group_index: new_group_index,
-                        prior_block_history: prior_hist_idx,
-                        prior_history: simplified_join_index,
-                        join_history: join_index,
-                        score: history_score(&histories[prior_hist_idx])
-                            + score_params.query_loop_score
-                            + segment_groups[segment_idx]
-                                .get_first_block(&segments[segment_idx], new_group_index)
-                                .confidence,
-                    }));
+                    let new_score = history_score(&histories[prior_hist_idx])
+                        + score_params.query_loop_score
+                        + segment_groups[segment_idx]
+                            .get_first_block(&segments[segment_idx], new_group_index)
+                            .confidence;
+
+                    try_add_history_entry(
+                        &mut histories,
+                        &segments[segment_idx],
+                        HistoryEntry::Join(HistoryInfo {
+                            segment: segment_idx,
+                            group_index: new_group_index,
+                            prior_block_history: prior_hist_idx,
+                            prior_history: simplified_join_index,
+                            join_history: join_index,
+                            score: new_score,
+                        }),
+                    );
                 }
 
                 match &histories[prior_hist_idx] {
                     // First step, no cost to start in a row...
                     HistoryEntry::Root => {
                         // Add append event with 0 transition score since were coming from the root...
-                        histories.push(HistoryEntry::Append(HistoryInfo {
-                            segment: segment_idx,
-                            group_index: group_idx,
-                            prior_block_history: prior_hist_idx,
-                            prior_history: other_index,
-                            join_history: prior_hist_idx,
-                            score: history_score(&histories[prior_hist_idx])
-                                + segment_groups[segment_idx]
-                                    .get_first_block(&segments[segment_idx], group_idx)
-                                    .confidence,
-                        }));
+                        let new_score = history_score(&histories[prior_hist_idx])
+                            + segment_groups[segment_idx]
+                                .get_first_block(&segments[segment_idx], group_idx)
+                                .confidence;
+
+                        try_add_history_entry(
+                            &mut histories,
+                            &segments[segment_idx],
+                            HistoryEntry::Append(HistoryInfo {
+                                segment: segment_idx,
+                                group_index: group_idx,
+                                prior_block_history: prior_hist_idx,
+                                prior_history: other_index,
+                                join_history: prior_hist_idx,
+                                score: new_score,
+                            }),
+                        );
                     }
                     HistoryEntry::Append(val) | HistoryEntry::Join(val) => {
                         // Can add up to two append events for blocks with multiple alignments:
@@ -917,18 +944,23 @@ pub fn history_viterbi_on_segments(
                         if !new_group.is_empty() {
                             let new_group_idx = segment_groups[segment_idx]
                                 .add_group(&segments[segment_idx], new_group);
+                            let new_score = history_score(&histories[prior_hist_idx])
+                                + score_params.transition(is_skip, !has_matching)
+                                + current_rep_block.confidence;
 
                             // Add append event for matching blocks, this will have no transition penalty...
-                            histories.push(HistoryEntry::Append(HistoryInfo {
-                                segment: segment_idx,
-                                group_index: new_group_idx,
-                                prior_block_history: prior_hist_idx,
-                                prior_history: other_index,
-                                join_history: prior_hist_idx,
-                                score: history_score(&histories[prior_hist_idx])
-                                    + score_params.transition(is_skip, !has_matching)
-                                    + current_rep_block.confidence,
-                            }));
+                            try_add_history_entry(
+                                &mut histories,
+                                &segments[segment_idx],
+                                HistoryEntry::Append(HistoryInfo {
+                                    segment: segment_idx,
+                                    group_index: new_group_idx,
+                                    prior_block_history: prior_hist_idx,
+                                    prior_history: other_index,
+                                    join_history: prior_hist_idx,
+                                    score: new_score,
+                                }),
+                            );
                         }
                     }
                 };
