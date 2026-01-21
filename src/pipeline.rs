@@ -234,7 +234,7 @@ pub fn run_pipeline(
         segment_ranges
     )
     .for_each(|v| println!("{}: {:?}", region_idx, v));
-
+    /*
     history
         .segment_offsets
         .iter()
@@ -254,7 +254,7 @@ pub fn run_pipeline(
             }
             println!();
         });
-
+    */
     let refined_trace_segments = backtrace_histories(&segments, &history);
 
     /*
