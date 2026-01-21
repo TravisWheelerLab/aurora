@@ -180,6 +180,10 @@ pub struct AnnotationArgs {
     /// The max depth of the histories used for identifying joins.
     #[arg(long = "max-history-depth", default_value = "64", value_name = "n")]
     pub max_history_depth: usize,
+
+    /// The max number of allowed annotations an annotation can consider linking to independantly in front of it...
+    #[arg(long = "max-forward-links", default_value = "3", value_name = "n")]
+    pub max_forward_links: usize,
 }
 
 #[derive(Args, Debug, Clone, Default)]

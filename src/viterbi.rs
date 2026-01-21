@@ -450,6 +450,33 @@ fn prior_history(entry: &HistoryEntry) -> usize {
     }
 }
 
+fn remove_low_scoring_histories(
+    histories: &mut Vec<HistoryEntry>,
+    start_offset: usize,
+    relative_score_bound: f64,
+) {
+    let h_len = histories.len();
+    let limited_bound = relative_score_bound.min(0.0);
+    let best_history_score = histories[start_offset..h_len]
+        .iter()
+        .map(history_score)
+        .max_by(f64::total_cmp)
+        .unwrap_or(0.0);
+
+    let mut next_insertion_point = start_offset;
+
+    for next_index in start_offset..h_len {
+        if (history_score(&histories[next_index]) - best_history_score) >= limited_bound {
+            histories.swap(next_index, next_insertion_point);
+            next_insertion_point += 1
+        }
+    }
+
+    while histories.len() > next_insertion_point {
+        histories.pop();
+    }
+}
+
 fn keep_unique_histories(histories: &mut Vec<HistoryEntry>, start_offset: usize) {
     // Sort top entries in-place...
     let h_len = histories.len();
@@ -967,6 +994,11 @@ pub fn history_viterbi_on_segments(
             }
         }
 
+        remove_low_scoring_histories(
+            &mut histories,
+            prior_step_end,
+            segments[segment_idx].relative_score_bound,
+        );
         keep_unique_histories(&mut histories, prior_step_end);
         seg_offsets.push(prior_step_end);
         prior_step_end = histories.len();
