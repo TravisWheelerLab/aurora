@@ -241,6 +241,14 @@ pub struct VisualizationArgs {
     #[arg(short = 'R', long = "viz-ref-bed", value_name = "path")]
     pub viz_reference_bed_path: Option<PathBuf>,
 
+    /// Dump additional debug files to the visualization.
+    #[arg(long = "debug")]
+    pub debug: bool,
+
+    /// Disable history tracing entirely, dumping only visuals.
+    #[arg(long = "disable-tracing")]
+    pub disable_tracing: bool,
+
     #[clap(skip)]
     pub viz_reference_bed_index: HashMap<String, usize>,
 }

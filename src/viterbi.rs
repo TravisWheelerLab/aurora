@@ -436,7 +436,7 @@ fn remove_expired_history_entries(
     0
 }
 
-fn history_score(entry: &HistoryEntry) -> f64 {
+pub fn history_score(entry: &HistoryEntry) -> f64 {
     match entry {
         HistoryEntry::Root => 0.0,
         HistoryEntry::Append(val) | HistoryEntry::Join(val) => val.score,
@@ -994,12 +994,22 @@ pub fn history_viterbi_on_segments(
             }
         }
 
+        let histories_before = histories.len() - prior_step_end;
+
         remove_low_scoring_histories(
             &mut histories,
             prior_step_end,
             segments[segment_idx].relative_score_bound,
         );
         keep_unique_histories(&mut histories, prior_step_end);
+
+        println!(
+            "Histories for segment {} Before pruning {} after {}",
+            segment_idx,
+            histories_before,
+            histories.len() - prior_step_end
+        );
+
         seg_offsets.push(prior_step_end);
         prior_step_end = histories.len();
     }
@@ -1023,6 +1033,8 @@ pub struct AnnotatedRange {
 pub struct RefinedTraceSegment {
     pub annotated: Vec<AnnotatedRange>,
     pub join_index: usize,
+    pub score: f64,
+    pub segment: usize,
 }
 
 impl RefinedTraceSegment {
@@ -1142,6 +1154,8 @@ pub fn history_backtrace_append_block(
     blocks: &[&Block],
     current_index: usize,
     join_index: usize,
+    score: f64,
+    segment: usize,
 ) -> (Option<usize>, usize) {
     // Case 1: Same row index and touches start of segment in front of it, extend the segment backwards to include this...
     if let Some(ref_seg) = refined_segments.last_mut() {
@@ -1176,6 +1190,8 @@ pub fn history_backtrace_append_block(
                 refined_segments.push(RefinedTraceSegment {
                     annotated: joins,
                     join_index: group_join_idx,
+                    score,
+                    segment,
                 });
 
                 join_stack.pop();
@@ -1195,6 +1211,8 @@ pub fn history_backtrace_append_block(
                 })
                 .collect_vec(),
             join_index,
+            score,
+            segment,
         });
 
         return (Some(join_index), join_index + 1);
@@ -1236,6 +1254,8 @@ pub fn backtrace_histories(
             &blocks,
             current_idx,
             join_idx,
+            entry_info.score,
+            entry_info.segment,
         );
 
         // If this is a join, add it so the segment it joins to can be constructed correctly later...
