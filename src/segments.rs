@@ -278,6 +278,9 @@ fn compute_segment_score_bounds(
     assembly_graph: &AssemblyGraph,
     alignment_segment_bounds: &[Option<(usize, usize)>],
 ) {
+    // There is some floating point error introduced for the absolute score bound...
+    let epsilon = 1e-2;
+
     let mut visited_segment_info = vec![false; segments.len()];
     let mut segments_info: Vec<SegmentInfo> = Vec::with_capacity(segments.len());
 
@@ -375,7 +378,7 @@ fn compute_segment_score_bounds(
         };
 
         // Don't remove best score until the next segment, otherwise we reach a point where 0 histories make it through. TODO: explore why this is needed...
-        segments[s_idx].absolute_score_bound = resolved_abs_score;
+        segments[s_idx].absolute_score_bound = resolved_abs_score - epsilon;
         prior_abs_score = resolved_abs_score - seg.max_block_score;
 
         segments[s_idx].relative_score_bound = resolved_rel_score;

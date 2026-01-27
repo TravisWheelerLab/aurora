@@ -138,6 +138,7 @@ fn dump_history_scores(history: &History, path: impl AsRef<Path>) -> io::Result<
 
 fn dump_final_trace_statistics(
     history: &History,
+    segments: &SegmentedMatrix,
     trace_segments: &[RefinedTraceSegment],
     path: impl AsRef<Path>,
 ) -> io::Result<()> {
@@ -145,7 +146,7 @@ fn dump_final_trace_statistics(
 
     writeln!(
         &mut file,
-        "Segment, History Count, Trace Score Rank, Relative Trace Score, Absolute Trace Score"
+        "Segment, History Count, Trace Score Rank, Relative Trace Score, Absolute Trace Score, Computed Absolute Bound, Computed Relative Bound"
     )?;
 
     for seg in trace_segments.iter() {
@@ -162,8 +163,6 @@ fn dump_final_trace_statistics(
             .map(history_score)
             .collect_vec();
         sorted_scores.sort_by(f64::total_cmp);
-        println!("{:?}", sorted_scores);
-        println!("{}", seg.score);
         let index = match sorted_scores.binary_search_by(|v| v.total_cmp(&seg.score)) {
             Result::Ok(index) | Result::Err(index) => index,
         };
@@ -172,12 +171,14 @@ fn dump_final_trace_statistics(
 
         writeln!(
             &mut file,
-            "{}, {}, {}, {}, {}",
+            "{}, {}, {}, {}, {}, {}, {}",
             i,
             end_off - start_off,
             rank,
             score_below_best,
-            seg.score
+            seg.score,
+            segments[i].absolute_score_bound,
+            segments[i].relative_score_bound
         )?;
     }
 
@@ -324,14 +325,6 @@ pub fn run_pipeline(
             &assembly_graph,
             &args.annotation_args,
         );
-
-        println!(
-            "{:#?}",
-            segments
-                .iter()
-                .map(|v| (v.absolute_score_bound, v.relative_score_bound))
-                .collect_vec()
-        );
     }
 
     let history_lengths;
@@ -370,6 +363,7 @@ pub fn run_pipeline(
         if args.visualization_args.debug {
             dump_final_trace_statistics(
                 &history,
+                &segments,
                 &refined_trace_segments,
                 vis_args.viz_output_path.join("final_trace_stats.csv"),
             )

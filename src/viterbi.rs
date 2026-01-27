@@ -994,21 +994,12 @@ pub fn history_viterbi_on_segments(
             }
         }
 
-        let histories_before = histories.len() - prior_step_end;
-
         remove_low_scoring_histories(
             &mut histories,
             prior_step_end,
             segments[segment_idx].relative_score_bound,
         );
         keep_unique_histories(&mut histories, prior_step_end);
-
-        println!(
-            "Histories for segment {} Before pruning {} after {}",
-            segment_idx,
-            histories_before,
-            histories.len() - prior_step_end
-        );
 
         seg_offsets.push(prior_step_end);
         prior_step_end = histories.len();
@@ -1073,7 +1064,7 @@ fn get_max_history(history_range: &[HistoryEntry], region_idx: usize) -> usize {
                 (pi, pscore)
             }
         })
-        .expect(&format!("Unable to find a max history, should not be possible! Region: {}", region_idx))
+        .unwrap_or_else(|| panic!("Unable to find a max history, should not be possible! Region: {}", region_idx))
         .0
 }
 
