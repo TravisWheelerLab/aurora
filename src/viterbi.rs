@@ -456,7 +456,7 @@ fn remove_low_scoring_histories(
     relative_score_bound: f64,
 ) {
     let h_len = histories.len();
-    let limited_bound = relative_score_bound.min(0.0);
+    let limited_bound = relative_score_bound.min(0.0).max(-250.0);
     let best_history_score = histories[start_offset..h_len]
         .iter()
         .map(history_score)
