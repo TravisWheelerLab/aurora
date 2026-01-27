@@ -365,8 +365,7 @@ pub fn run_pipeline(
             .ok();
         }
 
-        println!("Performing backtrace for region: {}", region_idx);
-        refined_trace_segments = backtrace_histories(&segments, &history);
+        refined_trace_segments = backtrace_histories(&segments, &history, region_idx);
 
         if args.visualization_args.debug {
             dump_final_trace_statistics(

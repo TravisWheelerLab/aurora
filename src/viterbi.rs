@@ -1061,7 +1061,7 @@ fn to_comparable(annot: Option<&AnnotatedRange>) -> Option<(Option<usize>, usize
     None
 }
 
-fn get_max_history(history_range: &[HistoryEntry]) -> usize {
+fn get_max_history(history_range: &[HistoryEntry], region_idx: usize) -> usize {
     history_range
         .iter()
         .map(history_score)
@@ -1073,7 +1073,7 @@ fn get_max_history(history_range: &[HistoryEntry]) -> usize {
                 (pi, pscore)
             }
         })
-        .expect("Unable to find a max history, should not be possible!")
+        .expect(&format!("Unable to find a max history, should not be possible! Region: {}", region_idx))
         .0
 }
 
@@ -1225,6 +1225,7 @@ pub fn history_backtrace_append_block(
 pub fn backtrace_histories(
     segments: &SegmentedMatrix,
     history: &History,
+    region_idx: usize
 ) -> Vec<RefinedTraceSegment> {
     debug_assert!(segments.len() == history.segment_offsets.len() - 1);
 
@@ -1234,7 +1235,7 @@ pub fn backtrace_histories(
     let last_segment = history.segment_offsets.len() - 1;
     // Find the max in the first row....
     let mut current_idx = history.segment_offsets[last_segment]
-        + get_max_history(&history.entries[history.segment_offsets[last_segment]..]);
+        + get_max_history(&history.entries[history.segment_offsets[last_segment]..], region_idx);
     let mut current_entry = &history.entries[current_idx];
     let mut join_idx: usize = 0;
 
