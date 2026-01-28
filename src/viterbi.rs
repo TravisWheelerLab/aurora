@@ -485,6 +485,11 @@ fn limit_history_count(
     }
 
     let h_len = histories.len();
+
+    if (h_len - start_offset) <= max_history_count {
+        return;
+    }
+
     // Sort in reverse order so best entries are at the front....
     histories[start_offset..h_len]
         .sort_unstable_by(|a, b| history_score(b).total_cmp(&history_score(a)));
