@@ -456,7 +456,7 @@ fn remove_low_scoring_histories(
     relative_score_bound: f64,
 ) {
     let h_len = histories.len();
-    let limited_bound = relative_score_bound.min(0.0).max(-250.0);
+    let limited_bound = relative_score_bound.min(0.0);
     let best_history_score = histories[start_offset..h_len]
         .iter()
         .map(history_score)
@@ -472,9 +472,25 @@ fn remove_low_scoring_histories(
         }
     }
 
-    while histories.len() > next_insertion_point {
-        histories.pop();
+    histories.truncate(next_insertion_point);
+}
+
+fn limit_history_count(
+    histories: &mut Vec<HistoryEntry>,
+    start_offset: usize,
+    max_history_count: usize,
+) {
+    if max_history_count == 0 {
+        return;
     }
+
+    let h_len = histories.len();
+    // Sort in reverse order so best entries are at the front....
+    histories[start_offset..h_len]
+        .sort_unstable_by(|a, b| history_score(b).total_cmp(&history_score(a)));
+
+    // Truncate length of histories to the limit, this removes bad histories...
+    histories.truncate(start_offset + max_history_count);
 }
 
 fn keep_unique_histories(histories: &mut Vec<HistoryEntry>, start_offset: usize) {
@@ -495,9 +511,7 @@ fn keep_unique_histories(histories: &mut Vec<HistoryEntry>, start_offset: usize)
         }
     }
 
-    while histories.len() > (current_unique + 1) {
-        histories.pop();
-    }
+    histories.truncate(current_unique + 1);
 }
 
 fn check_for_forward_link(
@@ -850,7 +864,15 @@ pub fn history_viterbi_on_segments(
     score_params: &ScoreParams,
     assembly_graph: &AssemblyGraph,
     history_depth: usize,
+    max_history_count: usize,
+    min_rel_history_score: f64,
 ) -> History {
+    let corrected_min_history_score = if min_rel_history_score >= 0.0 {
+        f64::NEG_INFINITY
+    } else {
+        min_rel_history_score
+    };
+
     let block_count: usize = segments.iter().map(|s| s.blocks.len()).sum();
 
     let mut histories: Vec<HistoryEntry> = Vec::with_capacity(block_count + 1);
@@ -997,13 +1019,18 @@ pub fn history_viterbi_on_segments(
         remove_low_scoring_histories(
             &mut histories,
             prior_step_end,
-            segments[segment_idx].relative_score_bound,
+            segments[segment_idx]
+                .relative_score_bound
+                .max(corrected_min_history_score),
         );
+        limit_history_count(&mut histories, prior_step_end, max_history_count);
         keep_unique_histories(&mut histories, prior_step_end);
 
         seg_offsets.push(prior_step_end);
         prior_step_end = histories.len();
     }
+
+    histories.shrink_to_fit();
 
     History {
         segment_groups,
@@ -1064,7 +1091,12 @@ fn get_max_history(history_range: &[HistoryEntry], region_idx: usize) -> usize {
                 (pi, pscore)
             }
         })
-        .unwrap_or_else(|| panic!("Unable to find a max history, should not be possible! Region: {}", region_idx))
+        .unwrap_or_else(|| {
+            panic!(
+                "Unable to find a max history, should not be possible! Region: {}",
+                region_idx
+            )
+        })
         .0
 }
 
@@ -1216,7 +1248,7 @@ pub fn history_backtrace_append_block(
 pub fn backtrace_histories(
     segments: &SegmentedMatrix,
     history: &History,
-    region_idx: usize
+    region_idx: usize,
 ) -> Vec<RefinedTraceSegment> {
     debug_assert!(segments.len() == history.segment_offsets.len() - 1);
 
@@ -1226,7 +1258,10 @@ pub fn backtrace_histories(
     let last_segment = history.segment_offsets.len() - 1;
     // Find the max in the first row....
     let mut current_idx = history.segment_offsets[last_segment]
-        + get_max_history(&history.entries[history.segment_offsets[last_segment]..], region_idx);
+        + get_max_history(
+            &history.entries[history.segment_offsets[last_segment]..],
+            region_idx,
+        );
     let mut current_entry = &history.entries[current_idx];
     let mut join_idx: usize = 0;
 

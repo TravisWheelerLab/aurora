@@ -1,5 +1,4 @@
 use std::{
-    fmt::Debug,
     fs::{self, File},
     io::{self, Write},
     path::Path,
@@ -336,6 +335,8 @@ pub fn run_pipeline(
             &score_params,
             &assembly_graph,
             args.annotation_args.max_history_depth,
+            args.annotation_args.max_histories_per_segment,
+            args.annotation_args.min_relative_history_score,
         );
 
         history_lengths = get_history_lengths(&history);

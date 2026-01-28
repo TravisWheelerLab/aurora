@@ -184,6 +184,18 @@ pub struct AnnotationArgs {
     /// The max number of allowed annotations an annotation can consider linking to independantly in front of it...
     #[arg(long = "max-forward-links", default_value = "3", value_name = "n")]
     pub max_forward_links: usize,
+
+    /// The total number of histories allowed in a single segment.
+    /// Additional histories are removed, lowest scoring first.
+    /// Set to 0 to disable.
+    #[arg(long = "max-histories", default_value = "10000", value_name = "n")]
+    pub max_histories_per_segment: usize,
+
+    /// The lowest score a history can have before being pruned.
+    /// This is relative to the best scoring history for a segment.
+    /// Set to 0 or greater to disable.
+    #[arg(long = "min-history-score", default_value = "-300.0", value_name = "f")]
+    pub min_relative_history_score: f64,
 }
 
 #[derive(Args, Debug, Clone, Default)]
