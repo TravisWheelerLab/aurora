@@ -194,7 +194,7 @@ pub struct AnnotationArgs {
     /// The lowest score a history can have before being pruned.
     /// This is relative to the best scoring history for a segment.
     /// Set to 0 or greater to disable.
-    #[arg(long = "min-history-score", default_value = "-300.0", value_name = "f")]
+    #[arg(long = "min-history-score", default_value = "-500.0", value_name = "f")]
     pub min_relative_history_score: f64,
 }
 
