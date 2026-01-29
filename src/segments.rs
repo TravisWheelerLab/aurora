@@ -405,6 +405,8 @@ pub fn segments_from_matrix_trace(
 
     // Monitor alignment scores, note we'll preallocate for performance...
     let mut row_scores: Vec<f64> = vec![0.0; matrix_definition.num_rows];
+    let mut row_conf_sum: Vec<f64> = vec![0.0; matrix_definition.num_rows];
+    let mut row_valid_cell_count: Vec<usize> = vec![0; matrix_definition.num_rows];
     // This tracks the first segment each alignment is found in.
     let mut alignment_segment_bounds: Vec<Option<(usize, usize)>> =
         vec![None; matrix_definition.num_rows];
@@ -415,8 +417,9 @@ pub fn segments_from_matrix_trace(
         // Initialize offsets...
         for i in 0..matrix_definition.num_rows {
             row_scores[i] = 0.0; // ln(1)
-                                 // This causes skip state cost to be calculated correctly for the start of a segment...
-            prior_val[i] = i;
+            row_conf_sum[i] = 0.0;
+            row_valid_cell_count[i] = 0;
+            prior_val[i] = i; // This causes skip state cost to be calculated correctly for the start of a segment...
         }
 
         // Identify alignments actually in this segment, computations are restricted to these values.
@@ -434,6 +437,7 @@ pub fn segments_from_matrix_trace(
             .collect_vec();
 
         // Compute scores and start/end points for all rows in this segment....
+        // TODO: This isn't fully correct, if we want it to be we need to track if this segment starts in, and if the segment ends in a skip state to compute correct transitions for history tracing...
         for column in seg.col_start..=seg.col_end {
             let rows = &matrix_definition.active_rows_by_col[column];
             let row_iter = rows
@@ -443,10 +447,18 @@ pub fn segments_from_matrix_trace(
             let all_row_iter = valid_rows.iter().map(|&v| (v, Unordered(0)));
 
             for (row_idx, Unordered(score_idx)) in unique_merging_iterator(row_iter, all_row_iter) {
-                let trans_cost = score_params
-                    .transition(score_idx == 0, (prior_val[row_idx] > 0) != (score_idx > 0));
-                row_scores[row_idx] +=
-                    trans_cost + confidence_matrix.get_sparse(score_idx, column).ln();
+                let trans_cost = score_params.transition(
+                    score_idx == 0 || prior_val[row_idx] == 0,
+                    (prior_val[row_idx] > 0) != (score_idx > 0),
+                );
+
+                let confidence_value = confidence_matrix.get_sparse(score_idx, column);
+
+                row_scores[row_idx] += trans_cost + confidence_value.ln();
+                if score_idx != 0 {
+                    row_conf_sum[row_idx] += confidence_value;
+                    row_valid_cell_count[row_idx] += 1;
+                }
 
                 // Set for the next column...
                 prior_val[row_idx] = score_idx;
@@ -454,16 +466,18 @@ pub fn segments_from_matrix_trace(
         }
 
         // Compute total confidence of all entries added together for this block (in log space)...
-        let total_confidence = valid_rows
+        let best_conf = valid_rows
             .iter()
-            .map(|&row_idx| row_scores[row_idx])
-            .reduce(logsumexp)
+            .map(|&row_idx| row_conf_sum[row_idx] / (row_valid_cell_count[row_idx].max(1) as f64))
+            .max_by(f64::total_cmp)
             .unwrap_or(0.0);
-        let min_confidence = annotation_args.min_block_confidence.ln();
+        let min_confidence = best_conf * annotation_args.min_block_confidence;
 
         let row_filter = |&&row_idx: &&usize| {
             (row_idx == 0)
-                || (seg.ali_id != 0 && (row_scores[row_idx] - total_confidence) > min_confidence)
+                || (seg.ali_id != 0
+                    && (row_conf_sum[row_idx] / (row_valid_cell_count[row_idx].max(1) as f64))
+                        > min_confidence)
         };
 
         valid_rows.iter().filter(row_filter).for_each(|&row_idx| {

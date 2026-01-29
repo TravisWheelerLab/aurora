@@ -122,7 +122,7 @@ pub struct AnnotationArgs {
     #[arg(
         short = 'O',
         long = "consensus-join-overlap",
-        default_value = "50",
+        default_value = "100",
         value_name = "n"
     )]
     pub consensus_join_overlap: isize,
@@ -172,7 +172,7 @@ pub struct AnnotationArgs {
     /// The minimum cost for keeping an alignment in a segment for history tracing.
     #[arg(
         long = "min-segment-confidence",
-        default_value = "0.01",
+        default_value = "0.1",
         value_name = "f"
     )]
     pub min_block_confidence: f64,
