@@ -2,6 +2,7 @@ mod alignment;
 mod alphabet;
 mod annotation;
 mod assembly;
+mod balanced_tree;
 mod chunks;
 mod confidence;
 mod matrix;

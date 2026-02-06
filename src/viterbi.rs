@@ -1,8 +1,9 @@
-use std::{cmp::Ordering, usize};
+use std::{cmp::Ordering, u16, usize};
 
 use crate::{
     alignment::Strand,
     assembly::{AssemblyGraph, Direction, Edge, LinkType},
+    balanced_tree::AVLIndexSet,
     matrix::Matrix,
     score_params::ScoreParams,
     segments::{Block, BlockType, Segment, SegmentedMatrix},
@@ -651,7 +652,7 @@ fn check_for_join(
 pub struct SegmentGroups {
     // GROUP VECTORS: All contain number of elements matching total number of groups.
     // Search index, this is are used and enforcing uniqueness of groups. log(n) search, linear insertion time. May need to be update, b-tree would get faster insertion time but may have higher constant factor (and also more memory).
-    pub groups_ordered: Vec<usize>,
+    pub groups_ordered: AVLIndexSet<u16>,
     // Stores the starting offset for each group. The next index is the end of this group, exclusive...
     pub group_offsets: Vec<usize>,
     // For each group, what it can join to...
@@ -726,11 +727,25 @@ impl SegmentGroups {
             can_join_to_vec.push(max_join);
         }
 
-        let ordered_group_indexes = (0..multi_segment_offsets.len())
-            .sorted_unstable_by_key(|&v| {
-                get_offset_range_from_vector(&multi_segment_offsets, score_ordered.len(), v)
-            })
-            .collect_vec();
+        let mut ordered_group_indexes = AVLIndexSet::new();
+        for index in 0..multi_segment_offsets.len() {
+            ordered_group_indexes
+                .add(|v| {
+                    let v_slice = get_offset_range_from_vector(
+                        &multi_segment_offsets,
+                        score_ordered.len(),
+                        v,
+                    );
+                    let idx_slice = get_offset_range_from_vector(
+                        &multi_segment_offsets,
+                        score_ordered.len(),
+                        index,
+                    );
+
+                    v_slice.cmp(&idx_slice)
+                })
+                .expect("Error adding block group, hit tree capacity...");
+        }
 
         Self {
             can_join_to: can_join_to_vec,
@@ -771,27 +786,30 @@ impl SegmentGroups {
     }
 
     pub fn add_group(&mut self, segment: &Segment, new_segment: &[usize]) -> usize {
-        match self
-            .groups_ordered
-            .binary_search_by(|&probe_idx| self.get_group(probe_idx).cmp(new_segment))
-        {
-            Result::Ok(idx) => self.groups_ordered[idx],
-            Result::Err(idx) => {
-                let new_group_idx = self.group_count();
-                let new_offset = self.index_count();
-                self.groups_ordered.insert(idx, new_group_idx);
-                self.group_offsets.push(new_offset);
-                self.indexes.extend_from_slice(new_segment);
-                let max_join = new_segment
-                    .iter()
-                    .map(|&i| segment.blocks[i].can_join_up_to)
-                    .max()
-                    .unwrap_or(0);
-                self.can_join_to.push(max_join);
+        let group_offsets = &self.group_offsets;
+        let indexes = &self.indexes;
 
-                new_group_idx
-            }
+        let idx = self
+            .groups_ordered
+            .add(|probe_idx| {
+                let slice = get_offset_range_from_vector(group_offsets, indexes.len(), probe_idx);
+                indexes[slice.0..slice.1].cmp(new_segment)
+            })
+            .expect("Failed to add a new entry! Ran out of space in the block groups tree!");
+
+        if idx > self.group_count() {
+            let new_offset = self.index_count();
+            self.group_offsets.push(new_offset);
+            self.indexes.extend_from_slice(new_segment);
+            let max_join = new_segment
+                .iter()
+                .map(|&i| segment.blocks[i].can_join_up_to)
+                .max()
+                .unwrap_or(0);
+            self.can_join_to.push(max_join);
         }
+
+        idx
     }
 
     pub fn group_count(&self) -> usize {
