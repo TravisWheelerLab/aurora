@@ -988,7 +988,7 @@ function run(data) {
         inactiveSegments: params.inactiveSegments[state.traceIteration],
         confidenceSegments:
           params.confidenceSegments[state.traceIteration].filter(queryFilter),
-        alignmentScores: params.alignmentScores.filter(queryFilter),
+        alignmentScores: (params.alignmentScores != null)? params.alignmentScores.filter(queryFilter): null,
       };
 
       this.renderParams = filteredParams;

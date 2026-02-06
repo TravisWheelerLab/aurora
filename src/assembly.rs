@@ -129,7 +129,17 @@ fn link_assemblies(
 
                 let weight = target_distance.abs() as f64;
 
-                if within_target_distance_threshold && consensus_is_colinear && is_significant {
+                let forward_count: usize = graph[a_idx]
+                    .iter()
+                    .map(|v| matches!(v.direction, Direction::Right) as usize)
+                    .sum();
+                let not_reached_forward_limit = forward_count < args.max_forward_links;
+
+                if within_target_distance_threshold
+                    && consensus_is_colinear
+                    && is_significant
+                    && not_reached_forward_limit
+                {
                     graph[a_idx].insert(Edge {
                         edge_to: b_idx,
                         weight,

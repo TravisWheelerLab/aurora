@@ -123,7 +123,7 @@ pub struct AnnotationArgs {
     #[arg(
         short = 'O',
         long = "consensus-join-overlap",
-        default_value = "50",
+        default_value = "100",
         value_name = "n"
     )]
     pub consensus_join_overlap: isize,
@@ -173,7 +173,7 @@ pub struct AnnotationArgs {
     /// The minimum cost for keeping an alignment in a segment for history tracing.
     #[arg(
         long = "min-segment-confidence",
-        default_value = "0.01",
+        default_value = "0.1",
         value_name = "f"
     )]
     pub min_block_confidence: f64,
@@ -181,6 +181,22 @@ pub struct AnnotationArgs {
     /// The max depth of the histories used for identifying joins.
     #[arg(long = "max-history-depth", default_value = "64", value_name = "n")]
     pub max_history_depth: usize,
+
+    /// The max number of allowed annotations an annotation can consider linking to independantly in front of it...
+    #[arg(long = "max-forward-links", default_value = "3", value_name = "n")]
+    pub max_forward_links: usize,
+
+    /// The total number of histories allowed in a single segment.
+    /// Additional histories are removed, lowest scoring first.
+    /// Set to 0 to disable.
+    #[arg(long = "max-histories", default_value = "10000", value_name = "n")]
+    pub max_histories_per_segment: usize,
+
+    /// The lowest score a history can have before being pruned.
+    /// This is relative to the best scoring history for a segment.
+    /// Set to 0 or greater to disable.
+    #[arg(long = "min-history-score", default_value = "-500.0", value_name = "f")]
+    pub min_relative_history_score: f64,
 }
 
 #[derive(Args, Debug, Clone, Default)]
@@ -237,6 +253,14 @@ pub struct VisualizationArgs {
     /// reference annotations for visualization
     #[arg(short = 'R', long = "viz-ref-bed", value_name = "path")]
     pub viz_reference_bed_path: Option<PathBuf>,
+
+    /// Dump additional debug files to the visualization.
+    #[arg(long = "debug")]
+    pub debug: bool,
+
+    /// Disable history tracing entirely, dumping only visuals.
+    #[arg(long = "disable-tracing")]
+    pub disable_tracing: bool,
 
     #[clap(skip)]
     pub viz_reference_bed_index: HashMap<String, usize>,

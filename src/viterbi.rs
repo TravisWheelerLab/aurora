@@ -437,7 +437,7 @@ fn remove_expired_history_entries(
     0
 }
 
-fn history_score(entry: &HistoryEntry) -> f64 {
+pub fn history_score(entry: &HistoryEntry) -> f64 {
     match entry {
         HistoryEntry::Root => 0.0,
         HistoryEntry::Append(val) | HistoryEntry::Join(val) => val.score,
@@ -449,6 +449,54 @@ fn prior_history(entry: &HistoryEntry) -> usize {
         HistoryEntry::Root => 0,
         HistoryEntry::Append(val) | HistoryEntry::Join(val) => val.prior_history,
     }
+}
+
+fn remove_low_scoring_histories(
+    histories: &mut Vec<HistoryEntry>,
+    start_offset: usize,
+    relative_score_bound: f64,
+) {
+    let h_len = histories.len();
+    let limited_bound = relative_score_bound.min(0.0);
+    let best_history_score = histories[start_offset..h_len]
+        .iter()
+        .map(history_score)
+        .max_by(f64::total_cmp)
+        .unwrap_or(0.0);
+
+    let mut next_insertion_point = start_offset;
+
+    for next_index in start_offset..h_len {
+        if (history_score(&histories[next_index]) - best_history_score) >= limited_bound {
+            histories.swap(next_index, next_insertion_point);
+            next_insertion_point += 1
+        }
+    }
+
+    histories.truncate(next_insertion_point);
+}
+
+fn limit_history_count(
+    histories: &mut Vec<HistoryEntry>,
+    start_offset: usize,
+    max_history_count: usize,
+) {
+    if max_history_count == 0 {
+        return;
+    }
+
+    let h_len = histories.len();
+
+    if (h_len - start_offset) <= max_history_count {
+        return;
+    }
+
+    // Sort in reverse order so best entries are at the front....
+    histories[start_offset..h_len]
+        .sort_unstable_by(|a, b| history_score(b).total_cmp(&history_score(a)));
+
+    // Truncate length of histories to the limit, this removes bad histories...
+    histories.truncate(start_offset + max_history_count);
 }
 
 fn keep_unique_histories(histories: &mut Vec<HistoryEntry>, start_offset: usize) {
@@ -469,9 +517,7 @@ fn keep_unique_histories(histories: &mut Vec<HistoryEntry>, start_offset: usize)
         }
     }
 
-    while histories.len() > (current_unique + 1) {
-        histories.pop();
-    }
+    histories.truncate(current_unique + 1);
 }
 
 fn check_for_forward_link(
@@ -821,12 +867,35 @@ impl SegmentGroups {
     }
 }
 
+pub fn try_add_history_entry(
+    history_entries: &mut Vec<HistoryEntry>,
+    segment: &Segment,
+    entry: HistoryEntry,
+) -> bool {
+    if let HistoryEntry::Append(info) | HistoryEntry::Join(info) = &entry {
+        if info.score >= segment.absolute_score_bound {
+            history_entries.push(entry);
+            return true;
+        }
+    }
+
+    false
+}
+
 pub fn history_viterbi_on_segments(
     segments: &SegmentedMatrix,
     score_params: &ScoreParams,
     assembly_graph: &AssemblyGraph,
     history_depth: usize,
+    max_history_count: usize,
+    min_rel_history_score: f64,
 ) -> History {
+    let corrected_min_history_score = if min_rel_history_score >= 0.0 {
+        f64::NEG_INFINITY
+    } else {
+        min_rel_history_score
+    };
+
     let block_count: usize = segments.iter().map(|s| s.blocks.len()).sum();
 
     let mut histories: Vec<HistoryEntry> = Vec::with_capacity(block_count + 1);
@@ -879,35 +948,47 @@ pub fn history_viterbi_on_segments(
                     let new_group_index =
                         segment_groups[segment_idx].add_group(&segments[segment_idx], &join_group);
 
-                    histories.push(HistoryEntry::Join(HistoryInfo {
-                        segment: segment_idx,
-                        group_index: new_group_index,
-                        prior_block_history: prior_hist_idx,
-                        prior_history: simplified_join_index,
-                        join_history: join_index,
-                        score: history_score(&histories[prior_hist_idx])
-                            + score_params.query_loop_score
-                            + segment_groups[segment_idx]
-                                .get_first_block(&segments[segment_idx], new_group_index)
-                                .confidence,
-                    }));
+                    let new_score = history_score(&histories[prior_hist_idx])
+                        + score_params.query_loop_score
+                        + segment_groups[segment_idx]
+                            .get_first_block(&segments[segment_idx], new_group_index)
+                            .confidence;
+
+                    try_add_history_entry(
+                        &mut histories,
+                        &segments[segment_idx],
+                        HistoryEntry::Join(HistoryInfo {
+                            segment: segment_idx,
+                            group_index: new_group_index,
+                            prior_block_history: prior_hist_idx,
+                            prior_history: simplified_join_index,
+                            join_history: join_index,
+                            score: new_score,
+                        }),
+                    );
                 }
 
                 match &histories[prior_hist_idx] {
                     // First step, no cost to start in a row...
                     HistoryEntry::Root => {
                         // Add append event with 0 transition score since were coming from the root...
-                        histories.push(HistoryEntry::Append(HistoryInfo {
-                            segment: segment_idx,
-                            group_index: group_idx,
-                            prior_block_history: prior_hist_idx,
-                            prior_history: other_index,
-                            join_history: prior_hist_idx,
-                            score: history_score(&histories[prior_hist_idx])
-                                + segment_groups[segment_idx]
-                                    .get_first_block(&segments[segment_idx], group_idx)
-                                    .confidence,
-                        }));
+                        let new_score = history_score(&histories[prior_hist_idx])
+                            + segment_groups[segment_idx]
+                                .get_first_block(&segments[segment_idx], group_idx)
+                                .confidence;
+
+                        try_add_history_entry(
+                            &mut histories,
+                            &segments[segment_idx],
+                            HistoryEntry::Append(HistoryInfo {
+                                segment: segment_idx,
+                                group_index: group_idx,
+                                prior_block_history: prior_hist_idx,
+                                prior_history: other_index,
+                                join_history: prior_hist_idx,
+                                score: new_score,
+                            }),
+                        );
                     }
                     HistoryEntry::Append(val) | HistoryEntry::Join(val) => {
                         // Can add up to two append events for blocks with multiple alignments:
@@ -935,28 +1016,44 @@ pub fn history_viterbi_on_segments(
                         if !new_group.is_empty() {
                             let new_group_idx = segment_groups[segment_idx]
                                 .add_group(&segments[segment_idx], new_group);
+                            let new_score = history_score(&histories[prior_hist_idx])
+                                + score_params.transition(is_skip, !has_matching)
+                                + current_rep_block.confidence;
 
                             // Add append event for matching blocks, this will have no transition penalty...
-                            histories.push(HistoryEntry::Append(HistoryInfo {
-                                segment: segment_idx,
-                                group_index: new_group_idx,
-                                prior_block_history: prior_hist_idx,
-                                prior_history: other_index,
-                                join_history: prior_hist_idx,
-                                score: history_score(&histories[prior_hist_idx])
-                                    + score_params.transition(is_skip, !has_matching)
-                                    + current_rep_block.confidence,
-                            }));
+                            try_add_history_entry(
+                                &mut histories,
+                                &segments[segment_idx],
+                                HistoryEntry::Append(HistoryInfo {
+                                    segment: segment_idx,
+                                    group_index: new_group_idx,
+                                    prior_block_history: prior_hist_idx,
+                                    prior_history: other_index,
+                                    join_history: prior_hist_idx,
+                                    score: new_score,
+                                }),
+                            );
                         }
                     }
                 };
             }
         }
 
+        remove_low_scoring_histories(
+            &mut histories,
+            prior_step_end,
+            segments[segment_idx]
+                .relative_score_bound
+                .max(corrected_min_history_score),
+        );
+        limit_history_count(&mut histories, prior_step_end, max_history_count);
         keep_unique_histories(&mut histories, prior_step_end);
+
         seg_offsets.push(prior_step_end);
         prior_step_end = histories.len();
     }
+
+    histories.shrink_to_fit();
 
     History {
         segment_groups,
@@ -977,6 +1074,8 @@ pub struct AnnotatedRange {
 pub struct RefinedTraceSegment {
     pub annotated: Vec<AnnotatedRange>,
     pub join_index: usize,
+    pub score: f64,
+    pub segment: usize,
 }
 
 impl RefinedTraceSegment {
@@ -1003,7 +1102,7 @@ fn to_comparable(annot: Option<&AnnotatedRange>) -> Option<(Option<usize>, usize
     None
 }
 
-fn get_max_history(history_range: &[HistoryEntry]) -> usize {
+fn get_max_history(history_range: &[HistoryEntry], region_idx: usize) -> usize {
     history_range
         .iter()
         .map(history_score)
@@ -1015,7 +1114,12 @@ fn get_max_history(history_range: &[HistoryEntry]) -> usize {
                 (pi, pscore)
             }
         })
-        .expect("Unable to find a max history, should not be possible!")
+        .unwrap_or_else(|| {
+            panic!(
+                "Unable to find a max history, should not be possible! Region: {}",
+                region_idx
+            )
+        })
         .0
 }
 
@@ -1096,6 +1200,8 @@ pub fn history_backtrace_append_block(
     blocks: &[&Block],
     current_index: usize,
     join_index: usize,
+    score: f64,
+    segment: usize,
 ) -> (Option<usize>, usize) {
     // Case 1: Same row index and touches start of segment in front of it, extend the segment backwards to include this...
     if let Some(ref_seg) = refined_segments.last_mut() {
@@ -1130,6 +1236,8 @@ pub fn history_backtrace_append_block(
                 refined_segments.push(RefinedTraceSegment {
                     annotated: joins,
                     join_index: group_join_idx,
+                    score,
+                    segment,
                 });
 
                 join_stack.pop();
@@ -1149,6 +1257,8 @@ pub fn history_backtrace_append_block(
                 })
                 .collect_vec(),
             join_index,
+            score,
+            segment,
         });
 
         return (Some(join_index), join_index + 1);
@@ -1161,6 +1271,7 @@ pub fn history_backtrace_append_block(
 pub fn backtrace_histories(
     segments: &SegmentedMatrix,
     history: &History,
+    region_idx: usize,
 ) -> Vec<RefinedTraceSegment> {
     debug_assert!(segments.len() == history.segment_offsets.len() - 1);
 
@@ -1170,7 +1281,10 @@ pub fn backtrace_histories(
     let last_segment = history.segment_offsets.len() - 1;
     // Find the max in the first row....
     let mut current_idx = history.segment_offsets[last_segment]
-        + get_max_history(&history.entries[history.segment_offsets[last_segment]..]);
+        + get_max_history(
+            &history.entries[history.segment_offsets[last_segment]..],
+            region_idx,
+        );
     let mut current_entry = &history.entries[current_idx];
     let mut join_idx: usize = 0;
 
@@ -1190,6 +1304,8 @@ pub fn backtrace_histories(
             &blocks,
             current_idx,
             join_idx,
+            entry_info.score,
+            entry_info.segment,
         );
 
         // If this is a join, add it so the segment it joins to can be constructed correctly later...
