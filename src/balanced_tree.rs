@@ -1,4 +1,6 @@
-use std::{cmp::Ordering, fmt::Debug};
+use std::{cmp::Ordering, collections::VecDeque, fmt::Debug};
+
+use serde_json::map::Iter;
 
 #[derive(Debug)]
 struct TreeNode<T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> {
@@ -44,7 +46,9 @@ impl<T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> AVLIndexSet<T> {
 
     fn _depth(&self, index: Option<T>) -> u8 {
         match index {
-            Some(idx) => self.nodes[idx.into()].depth,
+            Some(idx) => {
+                self.nodes[idx.into()].depth
+            }
             None => 0,
         }
     }
@@ -181,5 +185,184 @@ impl<T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> AVLIndexSet<T> {
                 _ => None,
             },
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Get the depth of the tree, including the root node...
+    pub fn depth(&self) -> usize {
+        if self.root.into() >= self.nodes.len() {
+            0
+        } else {
+            (self._depth(Some(self.root)) as usize) + 1
+        }
+    }
+
+    pub fn iter(&self) -> AVLInOrderSetIterator<T> {
+        let mut stack = Vec::with_capacity(self.depth() + 1);
+        stack.push((self.root, 0 as u8));
+
+        AVLInOrderSetIterator { tree: &self, stack }
+    }
+
+    pub fn bfs(&self) -> AVLBFSSetIterator<T> {
+        AVLBFSSetIterator {
+            tree: &self,
+            queue: VecDeque::from([Some(self.root)]),
+            level: 0,
+            offset: 0,
+        }
+    }
+}
+
+
+pub struct AVLBFSSetIterator<'a, T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> {
+    tree: &'a AVLIndexSet<T>,
+    queue: VecDeque<Option<T>>,
+    level: usize,
+    offset: usize,
+}
+
+pub struct BFSInfo {
+    pub node_index: usize,
+    pub level: usize,
+    pub offset: usize
+}
+
+impl<'a, T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> Iterator
+    for AVLBFSSetIterator<'a, T>
+{
+    type Item = BFSInfo;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(child_elem) = self.queue.pop_front() {
+            if let Some(element) = child_elem {
+                self.queue.push_front(self.tree.nodes[element.into()].left);
+                self.queue.push_front(self.tree.nodes[element.into()].right);
+                let result = Some(BFSInfo{
+                    node_index: element.into(),
+                    level: self.level,
+                    offset: self.offset
+                });
+                self.offset += 1;
+                if self.offset >= (1 << self.level) {
+                    self.level += 1;
+                    self.offset = 0;
+                }
+                return result;
+            }
+            self.offset = 0
+        } 
+
+        None
+    }
+}
+
+pub struct AVLInOrderSetIterator<'a, T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> {
+    tree: &'a AVLIndexSet<T>,
+    stack: Vec<(T, u8)>,
+}
+
+impl<'a, T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> Iterator
+    for AVLInOrderSetIterator<'a, T>
+{
+    type Item = (usize, usize);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some((idx, phase)) = self.stack.pop() {
+            let idx_big = idx.into();
+            // Case: Empty tree, just return None...
+            if idx_big >= self.tree.len() {
+                print!("YEP!");
+                break;
+            }
+
+            match phase {
+                // Attempt to go left...
+                0 => {
+                    self.stack.push((idx, 1));
+                    if let Some(left) = self.tree.nodes[idx_big].left {
+                        self.stack.push((left, 0));
+                    }
+                }
+                // Printout this value, add right value to the stack...
+                1 => {
+                    let depth = self.stack.len();
+                    self.stack.push((idx, 2));
+                    if let Some(right) = self.tree.nodes[idx_big].right {
+                        self.stack.push((right, 0));
+                    }
+                    return Some((idx_big, depth));
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+}
+
+mod tests {
+    use std::fmt::Display;
+
+    use anyhow::Ok;
+    use itertools::Itertools;
+
+    use crate::balanced_tree::AVLIndexSet;
+
+    struct DummyTree {
+        pub tree: AVLIndexSet<u16>,
+        pub items: Vec<usize>,
+    }
+
+    impl DummyTree {
+        fn build_from_list(list: &[usize]) -> Self {
+            let mut tree = AVLIndexSet::new();
+            let items = list.to_vec();
+
+            for item in items.iter() {
+                tree.add(|v| items[v].cmp(item))
+                    .expect("Failed to add value!");
+            }
+
+            Self { tree, items }
+        }
+    }
+
+    impl Display for DummyTree {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            writeln!(
+                f,
+                "{:?}",
+                self.tree.iter().map(|v| (self.items[v.0], v.1)).collect_vec()
+            )?;
+
+            let max_element_size = self.items.iter().map(|v| v.to_string().len()).max().unwrap_or(1);
+            let spacing = 3;
+            let depth = self.tree.depth();
+            if depth == 0 {
+                return Result::Ok(());
+            }
+            let elements_at_bottom = (1 << (depth - 1));
+
+            let total_width = max_element_size * elements_at_bottom + spacing * elements_at_bottom;
+
+            for level in 0..depth {
+                let element_count: usize = (1 << level);
+            }            
+
+            Result::Ok(())
+        }
+    }
+
+
+    #[test]
+    fn test_tree_construction() {
+        let tree = DummyTree::build_from_list(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        println!("{:?}", tree.tree);
+        println!("{}", tree);
+        assert!(1 == 2);
     }
 }
