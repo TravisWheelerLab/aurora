@@ -3,7 +3,7 @@ use std::{cmp::Ordering, u16, usize};
 use crate::{
     alignment::Strand,
     assembly::{AssemblyGraph, Direction, Edge, LinkType},
-    balanced_tree::AVLIndexSet,
+    balanced_tree::{AVLIndexSet, SetInsert},
     matrix::Matrix,
     score_params::ScoreParams,
     segments::{Block, BlockType, Segment, SegmentedMatrix},
@@ -835,7 +835,7 @@ impl SegmentGroups {
         let group_offsets = &self.group_offsets;
         let indexes = &self.indexes;
 
-        let idx = self
+        let insert = self
             .groups_ordered
             .add(|probe_idx| {
                 let slice = get_offset_range_from_vector(group_offsets, indexes.len(), probe_idx);
@@ -843,19 +843,21 @@ impl SegmentGroups {
             })
             .expect("Failed to add a new entry! Ran out of space in the block groups tree!");
 
-        if idx > self.group_count() {
-            let new_offset = self.index_count();
-            self.group_offsets.push(new_offset);
-            self.indexes.extend_from_slice(new_segment);
-            let max_join = new_segment
-                .iter()
-                .map(|&i| segment.blocks[i].can_join_up_to)
-                .max()
-                .unwrap_or(0);
-            self.can_join_to.push(max_join);
+        match insert {
+            SetInsert::New(idx) => {
+                let new_offset = self.index_count();
+                self.group_offsets.push(new_offset);
+                self.indexes.extend_from_slice(new_segment);
+                let max_join = new_segment
+                    .iter()
+                    .map(|&i| segment.blocks[i].can_join_up_to)
+                    .max()
+                    .unwrap_or(0);
+                self.can_join_to.push(max_join);
+                idx
+            }
+            SetInsert::Found(idx) => idx,
         }
-
-        idx
     }
 
     pub fn group_count(&self) -> usize {
