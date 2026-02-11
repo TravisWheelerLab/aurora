@@ -1,17 +1,15 @@
 use std::{cmp::Ordering, collections::VecDeque, fmt::Debug};
 
-use serde_json::map::Iter;
-
 #[derive(Debug)]
-struct TreeNode<T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> {
+struct TreeNode<T: Into<usize> + TryFrom<usize> + Copy + Debug> {
     left: Option<T>,
     right: Option<T>,
     depth: u8,
 }
 
 #[derive(Debug)]
-pub struct AVLIndexSet<T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> {
-    root: T,
+pub struct AVLIndexSet<T: Into<usize> + TryFrom<usize> + Copy + Debug> {
+    root: Option<T>,
     nodes: Vec<TreeNode<T>>,
 }
 
@@ -20,10 +18,10 @@ pub enum SetInsert {
     Found(usize),
 }
 
-impl<T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> AVLIndexSet<T> {
+impl<T: Into<usize> + TryFrom<usize> + Copy + Debug> AVLIndexSet<T> {
     pub fn new() -> Self {
         Self {
-            root: T::default(),
+            root: None,
             nodes: Vec::new(),
         }
     }
@@ -41,14 +39,8 @@ impl<T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> AVLIndexSet<T> {
             depth: 1,
         });
 
-        // Insert the node into the tree...
-        let root = if self.root.into() < size {
-            Some(self.root)
-        } else {
-            None
-        };
-        let (new_root, inserted_index) = self._insert_into_tree(root, new_idx, compare);
-        self.root = new_root;
+        let (new_root, inserted_index) = self._insert_into_tree(self.root, new_idx, compare);
+        self.root = Some(new_root);
 
         // If it found a node has the same value in the tree, delete the node we just inserted as it already exists...
         if inserted_index.into() != new_idx.into() {
@@ -161,26 +153,20 @@ impl<T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> AVLIndexSet<T> {
     }
 
     fn search(&self, compare: impl Fn(usize) -> Ordering) -> Option<usize> {
-        self._search(self.root.into(), compare)
+        self._search(self.root, compare)
     }
 
-    fn _search(&self, root: usize, compare: impl Fn(usize) -> Ordering) -> Option<usize> {
-        if root >= self.nodes.len() {
-            return None;
-        }
+    fn _search(&self, root: Option<T>, compare: impl Fn(usize) -> Ordering) -> Option<usize> {
+        if let Some(some_root) = root {
+            let node = &self.nodes[some_root.into()];
 
-        let node = &self.nodes[root];
-
-        match compare(root) {
-            Ordering::Equal => Some(root),
-            Ordering::Greater => match node.left {
-                Some(idx) => self._search(idx.into(), compare),
-                _ => None,
-            },
-            Ordering::Less => match node.right {
-                Some(idx) => self._search(idx.into(), compare),
-                _ => None,
-            },
+            match compare(some_root.into()) {
+                Ordering::Equal => Some(some_root.into()),
+                Ordering::Greater => self._search(node.left, compare),
+                Ordering::Less => self._search(node.right, compare),
+            }
+        } else {
+            None
         }
     }
 
@@ -190,34 +176,35 @@ impl<T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> AVLIndexSet<T> {
 
     /// Get the depth of the tree, including the root node...
     pub fn depth(&self) -> usize {
-        if self.root.into() >= self.nodes.len() {
-            0
-        } else {
-            self._depth(Some(self.root)) as usize
-        }
+        self._depth(self.root) as usize
     }
 
     /// Iterate over the elements in the tree, in sorted order. Returns the element index and the depth of the element in the tree.
     pub fn iter(&self) -> AVLInOrderSetIterator<T> {
         let mut stack = Vec::with_capacity(self.depth() + 1);
-        stack.push((self.root, 0_u8));
+        if let Some(root) = self.root {
+            stack.push((root, 0_u8));
+        }
 
         AVLInOrderSetIterator { tree: self, stack }
     }
 
     pub fn bfs(&self) -> AVLBFSSetIterator<T> {
-        AVLBFSSetIterator {
-            tree: self,
-            queue: VecDeque::from([BFSInfo {
-                node_index: self.root.into(),
+        let mut queue = VecDeque::new();
+
+        if let Some(root) = self.root {
+            queue.push_back(BFSInfo {
+                node_index: root.into(),
                 level: 0,
                 offset: 0,
-            }]),
+            });
         }
+
+        AVLBFSSetIterator { tree: self, queue }
     }
 }
 
-pub struct AVLBFSSetIterator<'a, T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> {
+pub struct AVLBFSSetIterator<'a, T: Into<usize> + TryFrom<usize> + Copy + Debug> {
     tree: &'a AVLIndexSet<T>,
     queue: VecDeque<BFSInfo>,
 }
@@ -229,17 +216,11 @@ pub struct BFSInfo {
     pub offset: usize,
 }
 
-impl<T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> Iterator
-    for AVLBFSSetIterator<'_, T>
-{
+impl<T: Into<usize> + TryFrom<usize> + Copy + Debug> Iterator for AVLBFSSetIterator<'_, T> {
     type Item = BFSInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(element) = self.queue.pop_front() {
-            // If out of bounds, continue...
-            if element.node_index >= self.tree.nodes.len() {
-                continue;
-            }
+        if let Some(element) = self.queue.pop_front() {
             // Add left and right to queue.
             if let Some(element_left) = self.tree.nodes[element.node_index].left {
                 self.queue.push_back(BFSInfo {
@@ -263,23 +244,17 @@ impl<T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> Iterator
     }
 }
 
-pub struct AVLInOrderSetIterator<'a, T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> {
+pub struct AVLInOrderSetIterator<'a, T: Into<usize> + TryFrom<usize> + Copy + Debug> {
     tree: &'a AVLIndexSet<T>,
     stack: Vec<(T, u8)>,
 }
 
-impl<T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> Iterator
-    for AVLInOrderSetIterator<'_, T>
-{
+impl<T: Into<usize> + TryFrom<usize> + Copy + Debug> Iterator for AVLInOrderSetIterator<'_, T> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some((idx, phase)) = self.stack.pop() {
             let idx_big = idx.into();
-            // Case: Empty tree, just return None...
-            if idx_big >= self.tree.len() {
-                break;
-            }
 
             match phase {
                 // Attempt to go left...
@@ -310,7 +285,7 @@ impl<T: Into<usize> + TryFrom<usize> + Copy + Default + Debug> Iterator
 mod tests {
     use itertools::Itertools;
 
-    use crate::balanced_tree::AVLIndexSet;
+    use crate::balanced_tree::{AVLInOrderSetIterator, AVLIndexSet};
     use std::fmt::Display;
 
     struct DummyTree {
@@ -334,6 +309,27 @@ mod tests {
 
             Self { tree, items }
         }
+
+        // Gives a compact, unique representation for the tree we can use for testing...
+        fn to_test_string(&self) -> String {
+            self.tree
+                .bfs()
+                .map(|elem| {
+                    format!(
+                        "{}:{}:{}",
+                        self.items[elem.node_index], elem.level, elem.offset
+                    )
+                })
+                .join(",")
+        }
+
+        fn search(&self, val: usize) -> Option<usize> {
+            self.tree.search(|v| self.items[v].cmp(&val))
+        }
+
+        fn iter(&self) -> impl Iterator<Item = usize> + use<'_> {
+            self.tree.iter().map(|v| self.items[v])
+        }
     }
 
     impl Display for DummyTree {
@@ -346,10 +342,11 @@ mod tests {
                 .unwrap_or(1);
             let spacing = 3;
             let depth = self.tree.depth();
-            let width = max_element_size * (1 << (depth - 1)) + spacing * ((1 << (depth - 1)) - 1);
-            if depth == 0 {
-                return Result::Ok(());
-            }
+            let width = if depth > 0 {
+                max_element_size * (1 << (depth - 1)) + spacing * ((1 << (depth - 1)) - 1)
+            } else {
+                0
+            };
 
             let mut prior_level = 0;
             let mut prior_offset = 0;
@@ -383,15 +380,68 @@ mod tests {
         }
     }
 
+    fn get_test_trees() -> Vec<DummyTree> {
+        vec![
+            DummyTree::build_from_list(&[1, 10, 4, 5, 2, 3, 7, 6, 4, 9, 4, 6, 8, 3, 2, 7, 5, 11]),
+            DummyTree::build_from_list(&[8, 6, 7, 5, 3, 0, 9]),
+            DummyTree::build_from_list(&[]),
+            DummyTree::build_from_list(&[4]),
+            DummyTree::build_from_list(&(0..20).collect::<Vec<usize>>()),
+        ]
+    }
+
     #[test]
-    fn test_tree_construction() {
-        let tree =
-            DummyTree::build_from_list(&[1, 10, 4, 5, 2, 3, 7, 6, 4, 9, 4, 6, 8, 3, 2, 7, 5, 11]);
-        println!(
-            "{:?}",
-            tree.tree.iter().map(|i| tree.items[i]).collect_vec()
-        );
-        println!("{}", tree);
-        assert!(1 == 2);
+    fn test_tree_structure() {
+        let correct_trees = [
+            "7:0:0,4:1:0,9:1:1,2:2:0,5:2:1,8:2:2,10:2:3,1:3:0,3:3:1,6:3:3,11:3:7",
+            "6:0:0,3:1:0,8:1:1,0:2:0,5:2:1,7:2:2,9:2:3",
+            "",
+            "4:0:0",
+            "7:0:0,3:1:0,15:1:1,1:2:0,5:2:1,11:2:2,17:2:3,0:3:0,2:3:1,4:3:2,6:3:3,9:3:4,13:3:5,16:3:6,18:3:7,8:4:8,10:4:9,12:4:10,14:4:11,19:4:15"
+        ];
+
+        for (tree, expected_structure) in get_test_trees().iter().zip(correct_trees) {
+            assert_eq!(tree.to_test_string(), expected_structure);
+        }
+    }
+
+    #[test]
+    fn test_tree_properties() {
+        let correct_properties = [(4, 11), (3, 7), (0, 0), (1, 1), (5, 20)];
+
+        for (tree, (expected_depth, expected_size)) in
+            get_test_trees().iter().zip(correct_properties)
+        {
+            assert_eq!(tree.tree.depth(), expected_depth);
+            assert_eq!(tree.tree.len(), expected_size);
+        }
+    }
+
+    #[test]
+    fn test_tree_inorder_traversal() {
+        let correct_ordered_traversal: Vec<Vec<usize>> = vec![
+            (1..=11).collect(),
+            vec![0, 3, 5, 6, 7, 8, 9],
+            vec![],
+            vec![4],
+            (0..20).collect(),
+        ];
+
+        for (tree, expected_result) in get_test_trees().iter().zip(correct_ordered_traversal) {
+            assert_eq!(tree.iter().collect::<Vec<usize>>(), expected_result);
+        }
+    }
+
+    #[test]
+    fn test_tree_search() {
+        let tree = &get_test_trees()[1];
+
+        assert_eq!(tree.search(8), Some(0));
+        assert_eq!(tree.search(7), Some(2));
+        assert_eq!(tree.search(3), Some(4));
+        assert_eq!(tree.search(0), Some(5));
+        assert_eq!(tree.search(10), None);
+        assert_eq!(tree.search(2), None);
+        assert_eq!(tree.search(4), None);
     }
 }
