@@ -1,3 +1,4 @@
+use core::f64;
 use std::{cmp::Ordering, u16, usize};
 
 use crate::{
@@ -524,7 +525,7 @@ fn check_for_forward_link(
     assembly_graph: &AssemblyGraph,
     start_block: &Block,
     later_block: &Block,
-) -> bool {
+) -> Option<f64> {
     // Weight, direction, and link type are ignored for edges...
     let edge = Edge {
         edge_to: later_block.row_idx - 1,
@@ -535,9 +536,13 @@ fn check_for_forward_link(
 
     // If we find it in either the forward or reverse graph, check it's in front of the start alignment...
     if let Some(e1) = assembly_graph.link_graph[start_block.row_idx - 1].get(&edge) {
-        e1.direction == edge.direction
+        if e1.direction == edge.direction {
+            Some(e1.weight)
+        } else {
+            None
+        }
     } else {
-        false
+        None
     }
 }
 
@@ -566,9 +571,9 @@ fn get_valid_joins_for_current_group(
     prior_segment: &Segment,
     prior_group: &[usize],
     assembly_graph: &AssemblyGraph,
-) -> Vec<usize> {
-    // TODO: This implementation is wrong!
-    let mut values: Vec<usize> = Vec::with_capacity(current_group.len());
+    epsilon: f64,
+) -> (Vec<usize>, Vec<(usize, f64)>) {
+    let mut values: Vec<(f64, usize)> = Vec::with_capacity(current_group.len());
 
     let mut current_idx = 0;
     let mut prior_idx = 0;
@@ -582,10 +587,14 @@ fn get_valid_joins_for_current_group(
         {
             if let (Some(query_id1), Some(query_id2)) = (c_block.query_id, p_block.query_id) {
                 if query_id1 == query_id2 {
-                    if p_block.can_join_up_to >= current_segment_index
-                        && check_for_forward_link(assembly_graph, p_block, c_block)
-                    {
-                        values.push(current_group[current_idx]);
+                    if p_block.can_join_up_to >= current_segment_index {
+                        // Get cost of connection...
+                        if let Some(weight) =
+                            check_for_forward_link(assembly_graph, p_block, c_block)
+                        {
+                            // If greater or equal to, add it to the list...
+                            values.push((weight, current_group[current_idx]));
+                        }
                     }
 
                     current_idx += 1;
@@ -600,7 +609,33 @@ fn get_valid_joins_for_current_group(
         prior_idx += !current_is_smaller as usize;
     }
 
-    values
+    // TODO: Consider replacing this with linear runtime version that possibly adds more histories, as it apears the join confidences are in almost all cases different, so this optimal algorithm is just wasting time.... 
+    values.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+    let last_weight = f64::NEG_INFINITY;
+
+    let split_points = values
+        .iter()
+        .enumerate()
+        .filter_map(|(i, v)| {
+            if (last_weight - v.0).abs() > epsilon {
+                Some((i, v.0))
+            } else {
+                None
+            }
+        })
+        .collect_vec();
+
+    for i in 0..split_points.len() {
+        let start = split_points[i].0;
+        let end = if i + 1 < split_points.len() {
+            split_points[i + 1].0
+        } else {
+            values.len()
+        };
+        values[start..end].sort_unstable_by_key(|v| v.1);
+    }
+
+    (values.iter().map(|v| v.1).collect_vec(), split_points)
 }
 
 fn get_valid_appends_for_current_group(
@@ -655,7 +690,8 @@ fn check_for_join(
     current_group_reference: (usize, usize),
     start_entry: usize,
     history_depth: usize,
-) -> Option<(usize, Vec<usize>)> {
+    epsilon: f64,
+) -> Option<(usize, Vec<usize>, Vec<(usize, f64)>)> {
     let mut last_hist = start_entry;
     let segment_idx = current_group_reference.0;
     let group_idx = current_group_reference.1;
@@ -674,17 +710,18 @@ fn check_for_join(
                     let cur_hist = last_hist;
                     last_hist = val.prior_history;
 
-                    let valid_group = get_valid_joins_for_current_group(
+                    let (valid_blocks, valid_group_splits) = get_valid_joins_for_current_group(
                         &segments[segment_idx],
                         current_group_indexes,
                         segment_idx,
                         &segments[val.segment],
                         segment_groups[val.segment].get_group(val.group_index),
                         assembly_graph,
+                        epsilon,
                     );
 
-                    if !valid_group.is_empty() {
-                        return Some((cur_hist, valid_group));
+                    if !valid_blocks.is_empty() {
+                        return Some((cur_hist, valid_blocks, valid_group_splits));
                     }
                 }
             }
@@ -926,6 +963,7 @@ pub fn history_viterbi_on_segments(
                     (segment_idx, group_idx),
                     prior_hist_idx,
                     history_depth,
+                    1e-2,
                 );
 
                 let other_index = remove_expired_history_entries(
@@ -937,7 +975,7 @@ pub fn history_viterbi_on_segments(
                 );
 
                 // JOIN HISTORY...
-                if let Some((join_index, join_group)) = possible_join {
+                if let Some((join_index, join_blocks, join_group_starts)) = possible_join {
                     // Clean expired history entries from the join path....
                     let simplified_join_index = remove_expired_history_entries(
                         &histories,
@@ -947,27 +985,40 @@ pub fn history_viterbi_on_segments(
                         history_depth,
                     );
 
-                    let new_group_index =
-                        segment_groups[segment_idx].add_group(&segments[segment_idx], &join_group);
+                    println!("{}, {}", join_blocks.len(), join_group_starts.len());
 
-                    let new_score = history_score(&histories[prior_hist_idx])
-                        + score_params.query_loop_score
-                        + segment_groups[segment_idx]
-                            .get_first_block(&segments[segment_idx], new_group_index)
-                            .confidence;
+                    for i in 0..join_group_starts.len() {
+                        let (group_start, group_transition_cost) = join_group_starts[i];
+                        let group_end = if i + 1 < join_group_starts.len() {
+                            join_group_starts[i + 1].0
+                        } else {
+                            join_blocks.len()
+                        };
 
-                    try_add_history_entry(
-                        &mut histories,
-                        &segments[segment_idx],
-                        HistoryEntry::Join(HistoryInfo {
-                            segment: segment_idx,
-                            group_index: new_group_index,
-                            prior_block_history: prior_hist_idx,
-                            prior_history: simplified_join_index,
-                            join_history: join_index,
-                            score: new_score,
-                        }),
-                    );
+                        let new_group_index = segment_groups[segment_idx].add_group(
+                            &segments[segment_idx],
+                            &join_blocks[group_start..group_end],
+                        );
+
+                        let new_score = history_score(&histories[prior_hist_idx])
+                            + group_transition_cost
+                            + segment_groups[segment_idx]
+                                .get_first_block(&segments[segment_idx], new_group_index)
+                                .confidence;
+
+                        try_add_history_entry(
+                            &mut histories,
+                            &segments[segment_idx],
+                            HistoryEntry::Join(HistoryInfo {
+                                segment: segment_idx,
+                                group_index: new_group_index,
+                                prior_block_history: prior_hist_idx,
+                                prior_history: simplified_join_index,
+                                join_history: join_index,
+                                score: new_score,
+                            }),
+                        );
+                    }
                 }
 
                 match &histories[prior_hist_idx] {

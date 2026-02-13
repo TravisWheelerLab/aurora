@@ -49,6 +49,38 @@ impl Hash for Edge {
     }
 }
 
+fn piecewise_linear_cost(
+    neg_start: f64,
+    pos_start: f64,
+    neg_slope: f64,
+    pos_slope: f64,
+    value: f64,
+) -> f64 {
+    if value < neg_start {
+        (value - neg_start).abs() * neg_slope
+    } else if value > pos_slope {
+        (value - pos_start).abs() * pos_slope
+    } else {
+        0.0
+    }
+}
+
+fn get_link_cost(
+    annotation_args: &AnnotationArgs,
+    score_params: &ScoreParams,
+    consensus_gap: f64,
+    target_gap: f64,
+) -> f64 {
+    // TODO: Replace hard-coded values with cli params....
+    let min_value = score_params.query_loop_score;
+    let value_range = (score_params.query_loop_score - score_params.query_jump_score).abs();
+    let lambda = -value_range * (0.1 / annotation_args.target_join_distance as f64).abs();
+    let alpha = -value_range * (1.0 / (annotation_args.consensus_join_overlap - 10) as f64).abs();
+    let beta = -value_range * (0.5 / (annotation_args.consensus_join_distance - 10) as f64).abs();
+
+    min_value + piecewise_linear_cost(-10.0, 10.0, alpha, beta, consensus_gap) + lambda * target_gap
+}
+
 fn link_assemblies(
     graph: &mut [HashSet<Edge>],
     alignments: &[(usize, &Alignment)],
@@ -127,7 +159,12 @@ fn link_assemblies(
                 let is_significant =
                     min_length >= 10 && -consensus_distance <= ((min_length / 2) as isize);
 
-                let weight = target_distance.abs() as f64;
+                let weight = get_link_cost(
+                    args,
+                    score_params,
+                    consensus_distance as f64,
+                    target_distance as f64,
+                );
 
                 let forward_count: usize = graph[a_idx]
                     .iter()
@@ -201,6 +238,8 @@ impl AssemblyGraph {
                     annotation_args,
                 );
             });
+
+        println!("{:#?}", link_graph);
 
         Self { link_graph }
     }

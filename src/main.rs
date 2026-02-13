@@ -123,7 +123,7 @@ pub struct AnnotationArgs {
     #[arg(
         short = 'O',
         long = "consensus-join-overlap",
-        default_value = "100",
+        default_value = "200",
         value_name = "n"
     )]
     pub consensus_join_overlap: isize,
