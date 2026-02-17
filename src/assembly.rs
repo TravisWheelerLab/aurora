@@ -71,14 +71,39 @@ fn get_link_cost(
     consensus_gap: f64,
     target_gap: f64,
 ) -> f64 {
-    // TODO: Replace hard-coded values with cli params....
+    // Minimum cost (a query loop)
     let min_value = score_params.query_loop_score;
     let value_range = (score_params.query_loop_score - score_params.query_jump_score).abs();
-    let lambda = -value_range * (0.1 / annotation_args.target_join_distance as f64).abs();
-    let alpha = -value_range * (1.0 / (annotation_args.consensus_join_overlap - 10) as f64).abs();
-    let beta = -value_range * (0.5 / (annotation_args.consensus_join_distance - 10) as f64).abs();
 
-    min_value + piecewise_linear_cost(-10.0, 10.0, alpha, beta, consensus_gap) + lambda * target_gap
+    // Get overlap and gap ranges with free areas incorperated in, otherwise math is not quite right.
+    let overlap_range = ((annotation_args.consensus_join_overlap as f64)
+        - (annotation_args.free_join_consensus_overlap as f64))
+        .abs()
+        .max(1.0);
+    let gap_range = ((annotation_args.consensus_join_distance as f64)
+        - (annotation_args.free_join_consensus_gap as f64))
+        .abs()
+        .max(1.0);
+
+    // Compute slopes....
+    let lambda = -value_range
+        * (annotation_args.join_target_gap_penalty
+            / annotation_args.target_join_distance.max(1) as f64)
+            .abs();
+    let alpha =
+        -value_range * (annotation_args.join_consensus_overlap_penalty / overlap_range).abs();
+    let beta = -value_range * (annotation_args.join_consensus_gap_penalty / gap_range).abs();
+
+    // Cost = linear consensus cost + linear target gap cost...
+    min_value
+        + piecewise_linear_cost(
+            -(annotation_args.free_join_consensus_overlap as f64).abs(),
+            (annotation_args.free_join_consensus_gap as f64).abs(),
+            alpha,
+            beta,
+            consensus_gap,
+        )
+        + lambda * target_gap
 }
 
 fn link_assemblies(

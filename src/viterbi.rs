@@ -609,8 +609,8 @@ fn get_valid_joins_for_current_group(
         prior_idx += !current_is_smaller as usize;
     }
 
-    // TODO: Consider replacing this with linear runtime version that possibly adds more histories, as it apears the join confidences are in almost all cases different, so this optimal algorithm is just wasting time.... 
-    values.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+    // TODO: Consider replacing this with linear runtime version that possibly adds more histories, as it apears the join confidences are in almost all cases different, so this optimal algorithm is just wasting time....
+    // values.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
     let last_weight = f64::NEG_INFINITY;
 
     let split_points = values
@@ -625,6 +625,7 @@ fn get_valid_joins_for_current_group(
         })
         .collect_vec();
 
+    /*
     for i in 0..split_points.len() {
         let start = split_points[i].0;
         let end = if i + 1 < split_points.len() {
@@ -633,7 +634,7 @@ fn get_valid_joins_for_current_group(
             values.len()
         };
         values[start..end].sort_unstable_by_key(|v| v.1);
-    }
+    }*/
 
     (values.iter().map(|v| v.1).collect_vec(), split_points)
 }

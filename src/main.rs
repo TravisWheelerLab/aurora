@@ -183,7 +183,7 @@ pub struct AnnotationArgs {
     pub max_history_depth: usize,
 
     /// The max number of allowed annotations an annotation can consider linking to independantly in front of it...
-    #[arg(long = "max-forward-links", default_value = "3", value_name = "n")]
+    #[arg(long = "max-forward-links", default_value = "5", value_name = "n")]
     pub max_forward_links: usize,
 
     /// The total number of histories allowed in a single segment.
@@ -197,6 +197,46 @@ pub struct AnnotationArgs {
     /// Set to 0 or greater to disable.
     #[arg(long = "min-history-score", default_value = "-500.0", value_name = "f")]
     pub min_relative_history_score: f64,
+
+    /// The amount of overlap between two joinable sequences in the consensus
+    /// before a penalty starts being applied to the join.
+    #[arg(long = "free-join-overlap", default_value = "4", value_name = "n")]
+    pub free_join_consensus_overlap: usize,
+
+    /// The amount of gap between two joinable sequences
+    /// before a penalty starts being applied to the join.
+    #[arg(long = "free-join-gap", default_value = "10", value_name = "n")]
+    pub free_join_consensus_gap: usize,
+
+    /// The amount of penalty to apply to a join at the maximum allowed consensus overlap
+    /// A value of 1 means to apply a penalty equal to a query jump.
+    /// The cost grows linearly to this value as the overlap increases.
+    #[arg(
+        long = "consensus-overlap-penalty",
+        default_value = "1.0",
+        value_name = "f"
+    )]
+    pub join_consensus_overlap_penalty: f64,
+
+    /// The amount of penalty to apply to a join at the maximum allowed consensus gap
+    /// A value of 1 means to apply a penalty equal to a query jump.
+    /// The cost grows linearly to this value as the gap increases.
+    #[arg(
+        long = "consensus-gap-penalty",
+        default_value = "0.5",
+        value_name = "f"
+    )]
+    pub join_consensus_gap_penalty: f64,
+
+    /// The amount of penalty to apply to a join at the maximum allowed target gap
+    /// A value of 1 means to apply a penalty equal to a query jump.
+    /// The cost grows linearly to this value as the gap between the sequences in the target space increases.
+    #[arg(
+        long = "consensus-gap-penalty",
+        default_value = "0.4",
+        value_name = "f"
+    )]
+    pub join_target_gap_penalty: f64,
 }
 
 #[derive(Args, Debug, Clone, Default)]
