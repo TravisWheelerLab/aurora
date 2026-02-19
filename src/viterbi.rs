@@ -986,8 +986,6 @@ pub fn history_viterbi_on_segments(
                         history_depth,
                     );
 
-                    println!("{}, {}", join_blocks.len(), join_group_starts.len());
-
                     for i in 0..join_group_starts.len() {
                         let (group_start, group_transition_cost) = join_group_starts[i];
                         let group_end = if i + 1 < join_group_starts.len() {

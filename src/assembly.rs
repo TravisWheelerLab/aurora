@@ -264,8 +264,6 @@ impl AssemblyGraph {
                 );
             });
 
-        println!("{:#?}", link_graph);
-
         Self { link_graph }
     }
 }

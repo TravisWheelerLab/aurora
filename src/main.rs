@@ -231,11 +231,7 @@ pub struct AnnotationArgs {
     /// The amount of penalty to apply to a join at the maximum allowed target gap
     /// A value of 1 means to apply a penalty equal to a query jump.
     /// The cost grows linearly to this value as the gap between the sequences in the target space increases.
-    #[arg(
-        long = "consensus-gap-penalty",
-        default_value = "0.4",
-        value_name = "f"
-    )]
+    #[arg(long = "target-gap-penalty", default_value = "0.4", value_name = "f")]
     pub join_target_gap_penalty: f64,
 }
 
