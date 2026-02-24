@@ -200,10 +200,28 @@ fn dump_debug_history_info(
         .map(|s| (target_start + s.start_col, target_start + s.end_col));
     let num_groups = history.segment_groups.iter().map(|s| s.group_count());
     let group_sizes = history.segment_groups.iter().map(|s| s.index_count());
+    let segment_score_bounds = segments
+        .iter()
+        .map(|v| (v.absolute_score_bound, v.relative_score_bound));
+
+    let max_history = (0..history.segment_offsets.len()).map(|i| {
+        let start = history.segment_offsets[i];
+        let end = if i + 1 < history.segment_offsets.len() {
+            history.segment_offsets[i + 1]
+        } else {
+            history.entries.len()
+        };
+
+        history.entries[start..end]
+            .iter()
+            .map(history_score)
+            .max_by(f64::total_cmp)
+            .unwrap_or(f64::NEG_INFINITY)
+    });
 
     writeln!(
         &mut file,
-        "Segment, History Count, Group Count, Index Count, Block Count, Target Start, Target End"
+        "Segment, History Count, Group Count, Index Count, Block Count, Target Start, Target End, Computed Absolute Bound, Computed Relative Bound, Max History"
     )?;
 
     izip!(
@@ -212,13 +230,15 @@ fn dump_debug_history_info(
         num_groups,
         group_sizes,
         segment_lengths,
-        segment_ranges
+        segment_ranges,
+        segment_score_bounds,
+        max_history
     )
     .try_for_each(|v| {
         writeln!(
             &mut file,
-            "{}, {}, {}, {}, {}, {}, {}",
-            v.0, v.1, v.2, v.3, v.4, v.5 .0, v.5 .1
+            "{}, {}, {}, {}, {}, {}, {}, {}, {}, {}",
+            v.0, v.1, v.2, v.3, v.4, v.5 .0, v.5 .1, v.6 .0, v.6 .1, v.7
         )
     })?;
 
