@@ -114,9 +114,7 @@ pub fn run_pipeline(
     alignment_data: &AlignmentData,
     region_idx: usize,
     mut args: AuroraArgs,
-    output_file: &mut impl Write,
-    ambiguity_file: Option<&mut impl Write>,
-) {
+) -> Vec<AmbiguousAnnotation> {
     let annot_args = &args.annotation_args;
 
     if args.visualization_args.viz {
@@ -335,8 +333,5 @@ pub fn run_pipeline(
     annotations.sort_by_key(|r| r.annotations.iter().map(|a| a.target_start).min());
     annotations.retain(|r| r.annotations.iter().any(|a| a.query_name != "skip"));
 
-    AmbiguousAnnotation::write(&annotations, output_file, true);
-    if let Some(ambig_file) = ambiguity_file {
-        AmbiguousAnnotation::write(&annotations, ambig_file, false);
-    }
+    annotations
 }

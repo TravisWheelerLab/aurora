@@ -111,7 +111,11 @@ impl AmbiguousAnnotation {
         )
     }
 
-    pub fn write(results: &[AmbiguousAnnotation], out: &mut impl std::io::Write, simplified: bool) {
+    pub fn write(
+        results: &[AmbiguousAnnotation],
+        out: &mut impl std::io::Write,
+        simplified: bool,
+    ) -> std::io::Result<()> {
         let mut widths = LineWidths::default();
 
         for result in results {
@@ -130,9 +134,10 @@ impl AmbiguousAnnotation {
         }
 
         for result in results {
-            writeln!(out, "{}", result.line(&widths, simplified))
-                .expect("failed to write result line");
+            writeln!(out, "{}", result.line(&widths, simplified))?;
         }
+
+        Ok(())
     }
 
     pub fn get_target_bounds(&self) -> (usize, usize) {

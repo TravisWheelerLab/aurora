@@ -28,13 +28,18 @@ use std::{
 use alignment::AlignmentData;
 use chunks::ProximityGroup;
 
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use clap::{Args, Parser};
 use itertools::Itertools;
 use rayon::prelude::*;
 use viz::VizConstraint;
 
-use crate::{chunks::validate_groups, pipeline::run_pipeline};
+use crate::{
+    annotation::AmbiguousAnnotation,
+    chunks::validate_groups,
+    pipeline::run_pipeline,
+    viz::stats::{write_family_statistics, write_inversion_statistics},
+};
 
 #[cfg(not(target_env = "msvc"))]
 use tikv_jemallocator::Jemalloc;
@@ -309,7 +314,7 @@ fn main() -> Result<()> {
     let viz_args = &mut args.visualization_args;
 
     if viz_args.viz {
-        if let Ok(metadata) = fs::metadata(&viz_args.viz_output_path) {
+        if let Result::Ok(metadata) = fs::metadata(&viz_args.viz_output_path) {
             if metadata.is_dir() {
                 // TODO: real error
                 panic!(
@@ -406,26 +411,26 @@ fn main() -> Result<()> {
         let index_file = File::create(viz_args.viz_output_path.join("index.html")).unwrap();
         let mut index_writer = BufWriter::new(index_file);
 
-        if viz_args.viz {
-            viz_args
-                .viz_constraints
-                .iter()
-                .enumerate()
-                .for_each(|(idx, c)| {
-                    writeln!(
-                        &mut index_writer,
-                        "<a href={}-{}-{}.html>slice {} | {} {}:{}</a><br>",
-                        c.target_name,
-                        c.target_start,
-                        c.target_end,
-                        idx,
-                        c.target_name,
-                        c.target_start,
-                        c.target_end,
-                    )
-                    .expect(error_msg);
-                });
-        }
+        writeln!(&mut index_writer, "<h3>Statistics</h3><a href=\"family_stats.html\">Families</a><br><a href=\"inversion_stats.html\">Inversions</a><br>")?;
+
+        viz_args
+            .viz_constraints
+            .iter()
+            .enumerate()
+            .for_each(|(idx, c)| {
+                writeln!(
+                    &mut index_writer,
+                    "<a href=\"{}-{}-{}.html\">slice {} | {} {}:{}</a><br>",
+                    c.target_name,
+                    c.target_start,
+                    c.target_end,
+                    idx,
+                    c.target_name,
+                    c.target_start,
+                    c.target_end,
+                )
+                .expect(error_msg);
+            });
 
         proximity_groups.iter().enumerate().for_each(|(idx, g)| {
             writeln!(
@@ -438,14 +443,12 @@ fn main() -> Result<()> {
             )
             .expect(error_msg);
 
-            if viz_args.viz {
-                writeln!(
-                    &mut index_writer,
-                    "    <li><a href={}/index.html>annotations</a></li>",
-                    idx,
-                )
-                .expect(error_msg);
-            }
+            writeln!(
+                &mut index_writer,
+                "    <li><a href=\"{}/index.html\">annotations</a></li>",
+                idx,
+            )
+            .expect(error_msg);
 
             writeln!(&mut index_writer, "</ul>").expect(error_msg);
         });
@@ -456,13 +459,13 @@ fn main() -> Result<()> {
         args.annotation_args.target_join_distance
     ));
 
-    let output_file = if let Some(path) = &args.io_args.output_path {
+    let mut output_file = if let Some(path) = &args.io_args.output_path {
         Some(File::create(path)?)
     } else {
         None
     };
 
-    let ambiguity_file = if let Some(path) = &args.io_args.ambiguity_path {
+    let mut ambiguity_file = if let Some(path) = &args.io_args.ambiguity_path {
         Some(File::create(path)?)
     } else {
         None
@@ -473,36 +476,44 @@ fn main() -> Result<()> {
         .build_global()
         .unwrap();
 
-    proximity_groups
+    let results = proximity_groups
         .par_iter()
         .panic_fuse()
-        // .inspect(|g| println!("{g:?}"))
         .enumerate()
-        .for_each(|(region_idx, group)| {
-            let mut ambiguity_file_clone = ambiguity_file
-                .as_ref()
-                .map(|file| file.try_clone().expect("Error cloning ambiguity file!"));
+        .map(|(region_idx, group)| {
+            (
+                region_idx,
+                run_pipeline(group, &alignment_data, region_idx, args.clone()),
+            )
+        })
+        .collect::<Vec<(usize, Vec<AmbiguousAnnotation>)>>();
 
-            if let Some(file) = &output_file {
-                run_pipeline(
-                    group,
-                    &alignment_data,
-                    region_idx,
-                    args.clone(),
-                    &mut file.try_clone().expect("Error cloning output file handle!"),
-                    ambiguity_file_clone.as_mut(),
-                );
-            } else {
-                run_pipeline(
-                    group,
-                    &alignment_data,
-                    region_idx,
-                    args.clone(),
-                    &mut std::io::stdout(),
-                    ambiguity_file_clone.as_mut(),
-                );
-            }
-        });
+    for (_region, annots) in results.iter() {
+        if let Some(file_out) = output_file.as_mut() {
+            AmbiguousAnnotation::write(annots, file_out, true)?;
+        } else {
+            AmbiguousAnnotation::write(annots, &mut std::io::stdout(), true)?;
+        }
+
+        if let Some(amb_file_out) = ambiguity_file.as_mut() {
+            AmbiguousAnnotation::write(annots, amb_file_out, false)?;
+        }
+    }
+
+    if args.visualization_args.viz {
+        let mut family_stats_writer = File::create(
+            args.visualization_args
+                .viz_output_path
+                .join("family_stats.html"),
+        )?;
+        write_family_statistics(&mut family_stats_writer, &results, &alignment_data)?;
+        let mut inv_stats_writer = File::create(
+            args.visualization_args
+                .viz_output_path
+                .join("inversion_stats.html"),
+        )?;
+        write_inversion_statistics(&mut inv_stats_writer, &results)?;
+    }
 
     Ok(())
 }

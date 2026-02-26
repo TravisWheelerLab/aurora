@@ -1,6 +1,7 @@
 mod bed;
 mod block;
 pub mod debug;
+pub mod stats;
 
 use bed::*;
 use block::*;
