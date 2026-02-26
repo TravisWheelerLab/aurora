@@ -1,5 +1,6 @@
 mod bed;
 mod block;
+pub mod debug;
 
 use bed::*;
 use block::*;
@@ -20,9 +21,9 @@ use crate::{
     annotation::AmbiguousAnnotation,
     assembly::AssemblyGraph,
     chunks::ProximityGroup,
+    history_tracing::{AnnotatedRange, RefinedTraceSegment},
     matrix::Matrix,
     segments::{BlockType, SegmentedMatrix},
-    viterbi::{AnnotatedRange, RefinedTraceSegment},
     AuroraArgs,
 };
 use base64::prelude::*;

@@ -274,6 +274,7 @@ struct SegmentInfo {
 fn compute_segment_score_bounds(
     segments: &mut SegmentedMatrix,
     initial_trace: &[TraceSegment],
+    initial_trace_scores: &[f64],
     score_params: &ScoreParams,
     assembly_graph: &AssemblyGraph,
     alignment_segment_bounds: &[Option<(usize, usize)>],
@@ -328,11 +329,9 @@ fn compute_segment_score_bounds(
         segments_info.push(SegmentInfo {
             can_join_back_to: farthest_back,
             max_block_score,
-            first_pass_score: prior_score + transition_score + seg.absolute_score_bound,
+            first_pass_score: prior_score + transition_score + initial_trace_scores[s_idx],
             max_resolution_segment: s_idx, // This is resolved in the next step...
         });
-
-        seg.absolute_score_bound = f64::NEG_INFINITY;
     }
 
     // Run DFS-like algorithm to determine sections with joins that can be resolved seperately...
@@ -377,9 +376,9 @@ fn compute_segment_score_bounds(
             prior_rel_score
         };
 
-        // Don't remove best score until the next segment, otherwise we reach a point where 0 histories make it through. TODO: explore why this is needed...
+        // Don't remove best score until the next segment...
         segments[s_idx].absolute_score_bound = resolved_abs_score - epsilon;
-        prior_abs_score = resolved_abs_score - seg.max_block_score;
+        prior_abs_score = resolved_abs_score - seg.max_block_score - transition_min_max.1;
 
         segments[s_idx].relative_score_bound = resolved_rel_score;
         prior_rel_score = resolved_rel_score - max_transition_gap;
@@ -407,6 +406,7 @@ pub fn segments_from_matrix_trace(
     let mut row_scores: Vec<f64> = vec![0.0; matrix_definition.num_rows];
     let mut row_conf_sum: Vec<f64> = vec![0.0; matrix_definition.num_rows];
     let mut row_valid_cell_count: Vec<usize> = vec![0; matrix_definition.num_rows];
+    let mut trace_row_scores = Vec::with_capacity(trace_segments.len());
     // This tracks the first segment each alignment is found in.
     let mut alignment_segment_bounds: Vec<Option<(usize, usize)>> =
         vec![None; matrix_definition.num_rows];
@@ -489,10 +489,12 @@ pub fn segments_from_matrix_trace(
             alignment_segment_bounds[row_idx] = new_bound;
         });
 
+        trace_row_scores.push(row_scores[trace_segments[s_idx].row_idx]);
+
         let mut new_segment = Segment {
             start_col: seg.col_start,
             end_col: seg.col_end,
-            absolute_score_bound: row_scores[trace_segments[s_idx].row_idx],
+            absolute_score_bound: f64::NEG_INFINITY,
             relative_score_bound: f64::NEG_INFINITY,
             blocks: valid_rows
                 .iter()
@@ -568,6 +570,7 @@ pub fn segments_from_matrix_trace(
     compute_segment_score_bounds(
         &mut segments,
         trace_segments,
+        &trace_row_scores,
         score_params,
         assembly_graph,
         &alignment_segment_bounds,
