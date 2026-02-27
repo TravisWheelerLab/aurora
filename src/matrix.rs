@@ -132,6 +132,10 @@ impl MatrixDef {
                             }
                         }
                         _ => {
+                            debug_assert!(ali_col_idx >= col_start && ali_col_idx <= col_end);
+                            consensus_positions_by_col[ali_col_idx].push(ali_consensus_position);
+                            ali_ids_by_col[ali_col_idx].push(ali.id);
+
                             match query_char {
                                 GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
                                     // if the query character is a gap, we use
@@ -152,10 +156,6 @@ impl MatrixDef {
                                 }
                             }
 
-                            debug_assert!(ali_col_idx >= col_start && ali_col_idx <= col_end);
-
-                            consensus_positions_by_col[ali_col_idx].push(ali_consensus_position);
-                            ali_ids_by_col[ali_col_idx].push(ali.id);
                             ali_col_idx += 1;
                         }
                     }
