@@ -45,12 +45,13 @@ impl NucleotideByteUtils for [u8] {
     }
 }
 
+#[derive(Debug)]
 pub enum NucleotideAlignmentType {
-    MATCH,
-    TRANSITION,
-    TRANSVERSION,
-    INDEL,
-    UNKNOWN,
+    Match,
+    Transition,
+    Transversion,
+    Indel,
+    Unknown,
 }
 
 impl NucleotideAlignmentType {
@@ -59,24 +60,24 @@ impl NucleotideAlignmentType {
         if matches!(nucleotide_a, GAP_EXTEND_DIGITAL | GAP_OPEN_DIGITAL)
             || matches!(nucleotide_b, GAP_EXTEND_DIGITAL | GAP_OPEN_DIGITAL)
         {
-            return Self::INDEL;
+            return Self::Indel;
         }
 
         if matches!(nucleotide_a, A_DIGITAL..=T_DIGITAL)
             && matches!(nucleotide_b, A_DIGITAL..=T_DIGITAL)
         {
             if nucleotide_a == nucleotide_b {
-                return Self::MATCH;
+                return Self::Match;
             }
 
             return match (nucleotide_a, nucleotide_b) {
-                (A_DIGITAL, G_DIGITAL) | (G_DIGITAL, A_DIGITAL) => Self::TRANSITION,
-                (C_DIGITAL, T_DIGITAL) | (T_DIGITAL, C_DIGITAL) => Self::TRANSITION,
-                _ => Self::TRANSVERSION,
+                (A_DIGITAL, G_DIGITAL) | (G_DIGITAL, A_DIGITAL) => Self::Transition,
+                (C_DIGITAL, T_DIGITAL) | (T_DIGITAL, C_DIGITAL) => Self::Transition,
+                _ => Self::Transversion,
             };
         }
 
-        Self::UNKNOWN
+        Self::Unknown
     }
 }
 

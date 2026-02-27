@@ -82,6 +82,16 @@ pub fn to_annotations(
                                 .consensus_position(a.row_idx, a.col_start),
                             query_end: confidence_matrix.consensus_position(a.row_idx, a.col_end),
                             strand: confidence_matrix.strand_of_row(a.row_idx),
+                            kimura80: if a.row_idx > 0
+                                && a.row_idx <= proximity_group.alignments.len()
+                            {
+                                proximity_group.alignments[a.row_idx - 1].kimura80(
+                                    confidence_matrix.consensus_position(a.row_idx, a.col_start),
+                                    confidence_matrix.consensus_position(a.row_idx, a.col_end),
+                                )
+                            } else {
+                                0.0
+                            },
                         }
                     })
                     .collect_vec(),

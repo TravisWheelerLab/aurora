@@ -128,21 +128,23 @@ impl Alignment {
                 if matches!(q, A_DIGITAL | C_DIGITAL | T_DIGITAL | G_DIGITAL) {
                     prior_pair = (q, t);
                 }
-                if !matches!(q, GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL) {
-                    if is_forward {
-                        query_offset += 1;
-                    } else {
-                        query_offset -= 1;
-                    }
-
+                if matches!(q, GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL) {
                     return None;
                 }
 
-                if if is_forward {
+                if is_forward {
+                    query_offset += 1;
+                } else {
+                    query_offset -= 1;
+                }
+
+                let past_start = if is_forward {
                     old_query_offset >= query_start
                 } else {
                     old_query_offset <= query_start
-                } {
+                };
+
+                if past_start {
                     Some((old_query_offset, old_prior_pair.0, old_prior_pair.1, q, t))
                 } else {
                     None
@@ -163,24 +165,24 @@ impl Alignment {
 
             aligned_positions += matches!(
                 current_state,
-                NucleotideAlignmentType::MATCH
-                    | NucleotideAlignmentType::TRANSITION
-                    | NucleotideAlignmentType::TRANSVERSION
+                NucleotideAlignmentType::Match
+                    | NucleotideAlignmentType::Transition
+                    | NucleotideAlignmentType::Transversion
             ) as u64;
 
             if is_cpg_group {
                 match current_state {
-                    NucleotideAlignmentType::TRANSVERSION => {
-                        if matches!(prior_state, NucleotideAlignmentType::TRANSITION) {
+                    NucleotideAlignmentType::Transversion => {
+                        if matches!(prior_state, NucleotideAlignmentType::Transition) {
                             // Correct prior value so it's 1/10th as expected...
                             transitions10x -= 9;
                         }
                         transversions += 1;
                     }
-                    NucleotideAlignmentType::TRANSITION => {
+                    NucleotideAlignmentType::Transition => {
                         match prior_state {
                             // Don't add anything, count double as a single transition...
-                            NucleotideAlignmentType::TRANSITION => {}
+                            NucleotideAlignmentType::Transition => {}
                             // Add 1/10th for anything else...
                             _ => {
                                 transitions10x += 1;
@@ -192,10 +194,10 @@ impl Alignment {
                 }
             } else {
                 match current_state {
-                    NucleotideAlignmentType::TRANSVERSION => {
+                    NucleotideAlignmentType::Transversion => {
                         transversions += 1;
                     }
-                    NucleotideAlignmentType::TRANSITION => {
+                    NucleotideAlignmentType::Transition => {
                         transitions10x += 10;
                     }
                     _ => {}
@@ -206,7 +208,7 @@ impl Alignment {
         let p = (transitions10x as f64) / ((10 * aligned_positions) as f64);
         let q = (transversions as f64) / (aligned_positions as f64);
 
-        -0.5 * ((1.0 - 2.0 * p - q) * (1.0 - 2.0 * q).sqrt()).ln()
+        (-50.0 * ((1.0 - 2.0 * p - q) * (1.0 - 2.0 * q).sqrt()).ln()).abs()
     }
 }
 

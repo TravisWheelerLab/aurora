@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::{Debug, Display, format};
 
 use crate::alignment::Strand;
 use itertools::Itertools;
@@ -12,6 +12,7 @@ pub struct SimpleAnnotation {
     pub query_start: usize,
     pub query_end: usize,
     pub strand: Strand,
+    pub kimura80: f64,
 }
 
 #[derive(Clone)]
@@ -48,9 +49,11 @@ pub struct LineWidths {
     query_start_width: usize,
     query_end_width: usize,
     join_id_width: usize,
+    kimura_80_width: usize,
+    strand_width: usize,
 }
 
-fn get_mutli_option_string<B: Display + Eq, F>(
+fn get_mutli_option_string<B: Display + PartialEq, F>(
     simple_annotations: &[SimpleAnnotation],
     prop: F,
     simplify: bool,
@@ -72,7 +75,36 @@ where
     }
 }
 
-fn get_strings(simple_annotations: &[SimpleAnnotation], simplify: bool) -> [String; 6] {
+fn get_mutli_option_string_with_format<B: Display + PartialEq, F, G>(
+    simple_annotations: &[SimpleAnnotation],
+    prop: F,
+    simplify: bool,
+    formatter: G,
+) -> String
+where
+    F: Fn(&SimpleAnnotation) -> B,
+    G: Fn(&B) -> String,
+{
+    let prop_ref = &prop;
+    let get_and_format = |v| formatter(&prop_ref(v));
+
+    if !simplify {
+        if let Result::Ok(val) = simple_annotations.iter().map(prop_ref).all_equal_value() {
+            formatter(&val)
+        } else {
+            simple_annotations.iter().map(get_and_format).join(",")
+        }
+    } else {
+        // Only allow 1 element...
+        simple_annotations
+            .iter()
+            .take(1)
+            .map(get_and_format)
+            .join(",")
+    }
+}
+
+fn get_strings(simple_annotations: &[SimpleAnnotation], simplify: bool) -> [String; 7] {
     [
         get_mutli_option_string(simple_annotations, |v| v.target_start, simplify),
         get_mutli_option_string(simple_annotations, |v| v.target_end, simplify),
@@ -80,15 +112,20 @@ fn get_strings(simple_annotations: &[SimpleAnnotation], simplify: bool) -> [Stri
         get_mutli_option_string(simple_annotations, |v| v.query_start, simplify),
         get_mutli_option_string(simple_annotations, |v| v.query_end, simplify),
         get_mutli_option_string(simple_annotations, |v| v.strand, simplify),
+        get_mutli_option_string_with_format(
+            simple_annotations,
+            |v| v.kimura80,
+            simplify,
+            |v| format!("{:4.3}", v),
+        ),
     ]
 }
 
 impl AmbiguousAnnotation {
     pub fn line(&self, widths: &LineWidths, simplify: bool) -> String {
-        let [ts, te, qn, qs, qe, strand] = get_strings(&self.annotations, simplify);
-
+        let [ts, te, qn, qs, qe, strand, k80] = get_strings(&self.annotations, simplify);
         format!(
-            "{:w0$} {:w1$} {:w2$} {:w3$} {:w4$} {:w5$} {:w6$} {} {:4.3} {:w7$} {}",
+            "{:w0$} {:w1$} {:w2$} {:w3$} {:w4$} {:w5$} {:w6$} {:w7$} {:4.3} {:w8$} {:w9$} {}",
             self.annotations.len(),
             self.target_name,
             ts,
@@ -98,6 +135,7 @@ impl AmbiguousAnnotation {
             qe,
             strand,
             self.confidence,
+            k80,
             self.join_id,
             self.region_id,
             w0 = widths.ambiguous_count_width,
@@ -107,7 +145,9 @@ impl AmbiguousAnnotation {
             w4 = widths.query_name_width,
             w5 = widths.query_start_width,
             w6 = widths.query_end_width,
-            w7 = widths.join_id_width,
+            w7 = widths.strand_width,
+            w8 = widths.kimura_80_width,
+            w9 = widths.join_id_width,
         )
     }
 
@@ -119,7 +159,7 @@ impl AmbiguousAnnotation {
         let mut widths = LineWidths::default();
 
         for result in results {
-            let [ts, te, qn, qs, qe, ..] = get_strings(&result.annotations, simplified);
+            let [ts, te, qn, qs, qe, strand, k80] = get_strings(&result.annotations, simplified);
 
             widths.ambiguous_count_width = widths
                 .ambiguous_count_width
@@ -128,9 +168,11 @@ impl AmbiguousAnnotation {
             widths.target_start_width = widths.target_start_width.max(ts.len());
             widths.target_end_width = widths.target_end_width.max(te.len());
             widths.query_name_width = widths.query_name_width.max(qn.len());
-            widths.query_start_width = widths.query_start_width.max(qs.to_string().len());
-            widths.query_end_width = widths.query_end_width.max(qe.to_string().len());
-            widths.join_id_width = widths.join_id_width.max(result.join_id.to_string().len())
+            widths.query_start_width = widths.query_start_width.max(qs.len());
+            widths.query_end_width = widths.query_end_width.max(qe.len());
+            widths.join_id_width = widths.join_id_width.max(result.join_id.to_string().len());
+            widths.kimura_80_width = widths.kimura_80_width.max(k80.len());
+            widths.strand_width = widths.strand_width.max(strand.len());
         }
 
         for result in results {
