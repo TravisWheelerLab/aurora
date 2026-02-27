@@ -45,6 +45,41 @@ impl NucleotideByteUtils for [u8] {
     }
 }
 
+pub enum NucleotideAlignmentType {
+    MATCH,
+    TRANSITION,
+    TRANSVERSION,
+    INDEL,
+    UNKNOWN,
+}
+
+impl NucleotideAlignmentType {
+    pub fn from_pair(nucleotide_a: u8, nucleotide_b: u8) -> Self {
+        // Place nucleotides in sorted order...
+        if matches!(nucleotide_a, GAP_EXTEND_DIGITAL | GAP_OPEN_DIGITAL)
+            || matches!(nucleotide_b, GAP_EXTEND_DIGITAL | GAP_OPEN_DIGITAL)
+        {
+            return Self::INDEL;
+        }
+
+        if matches!(nucleotide_a, A_DIGITAL..=T_DIGITAL)
+            && matches!(nucleotide_b, A_DIGITAL..=T_DIGITAL)
+        {
+            if nucleotide_a == nucleotide_b {
+                return Self::MATCH;
+            }
+
+            return match (nucleotide_a, nucleotide_b) {
+                (A_DIGITAL, G_DIGITAL) | (G_DIGITAL, A_DIGITAL) => Self::TRANSITION,
+                (C_DIGITAL, T_DIGITAL) | (T_DIGITAL, C_DIGITAL) => Self::TRANSITION,
+                _ => Self::TRANSVERSION,
+            };
+        }
+
+        Self::UNKNOWN
+    }
+}
+
 impl NucleotideByteUtils for u8 {
     fn to_utf8_string(&self) -> String {
         ALIGNMENT_ALPHABET_STR[*self as usize].to_string()

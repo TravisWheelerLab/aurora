@@ -31,6 +31,7 @@ pub struct Edge {
     pub edge_to: usize,
     pub weight: f64,
     pub direction: Direction,
+    #[allow(dead_code)]
     pub link_type: LinkType,
 }
 

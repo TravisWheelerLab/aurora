@@ -7,8 +7,9 @@ use std::{fmt, hash};
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::alphabet::{
-    NucleotideByteUtils, ALIGNMENT_ALPHABET_STR, DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL,
-    GAP_OPEN_DIGITAL, NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, UTF8_TO_DIGITAL_NUCLEOTIDE,
+    NucleotideAlignmentType, NucleotideByteUtils, ALIGNMENT_ALPHABET_STR, A_DIGITAL, C_DIGITAL,
+    DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, G_DIGITAL,
+    NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, T_DIGITAL, UTF8_TO_DIGITAL_NUCLEOTIDE,
 };
 use crate::substitution_matrix::SubstitutionMatrix;
 use crate::util::{StrSliceExt, VecMap};
@@ -98,6 +99,91 @@ impl Alignment {
             query_id: 0,
             substitution_matrix_id: 0,
         }
+    }
+
+    /// Compute the kimura80 score for a slice of the sequence. Note indexes are 0-based instead of 1-based unlike internal format...
+    pub fn kimura80(&self, query_start: usize, query_end: usize) -> f64 {
+        let query_inset = query_start - (self.query_start - 1);
+        let query_end_inset = query_end - (self.query_start - 1);
+
+        let mut prior_pair = (GAP_OPEN_DIGITAL, GAP_EXTEND_DIGITAL);
+        let mut query_offset: usize = 0;
+        let mut aligned_positions: u64 = 0;
+
+        // Count the CpG weighted transitions and transversions...
+        let mut transitions10x: u64 = 0;
+        let mut transversions: u64 = 0;
+
+        for (&query_val, &target_val) in self.target_seq.iter().zip(self.query_seq.iter()) {
+            if query_offset > query_end_inset {
+                break;
+            }
+
+            if !matches!(query_val, GAP_EXTEND_DIGITAL | GAP_OPEN_DIGITAL) {
+                continue;
+            }
+
+            if query_offset < query_inset {
+                query_offset += 1;
+                continue;
+            }
+
+            let is_cpg_group = prior_pair.0 == C_DIGITAL && query_val == G_DIGITAL;
+            let current_state = NucleotideAlignmentType::from_pair(query_val, target_val);
+
+            aligned_positions += matches!(
+                current_state,
+                NucleotideAlignmentType::MATCH
+                    | NucleotideAlignmentType::TRANSITION
+                    | NucleotideAlignmentType::TRANSVERSION
+            ) as u64;
+
+            if is_cpg_group {
+                let prior_state = NucleotideAlignmentType::from_pair(prior_pair.0, prior_pair.1);
+
+                match current_state {
+                    NucleotideAlignmentType::TRANSVERSION => {
+                        if matches!(prior_state, NucleotideAlignmentType::TRANSITION) {
+                            // Correct prior value so it's 1/10th as expected...
+                            transitions10x -= 9;
+                        }
+                        transversions += 1;
+                    }
+                    NucleotideAlignmentType::TRANSITION => {
+                        match prior_state {
+                            // Don't add anything, count double as a single transition...
+                            NucleotideAlignmentType::TRANSITION => {}
+                            // Add 1/10th for anything else...
+                            _ => {
+                                transitions10x += 1;
+                            }
+                        }
+                        transitions10x += 10;
+                    }
+                    _ => {}
+                }
+            } else {
+                match current_state {
+                    NucleotideAlignmentType::TRANSVERSION => {
+                        transversions += 1;
+                    }
+                    NucleotideAlignmentType::TRANSITION => {
+                        transitions10x += 10;
+                    }
+                    _ => {}
+                }
+            }
+
+            if matches!(query_val, A_DIGITAL | C_DIGITAL | T_DIGITAL | G_DIGITAL) {
+                prior_pair = (query_val, target_val);
+            }
+            query_offset += 1;
+        }
+
+        let p = (transitions10x as f64) / ((10 * aligned_positions) as f64);
+        let q = (transversions as f64) / (aligned_positions as f64);
+
+        -0.5 * ((1.0 - 2.0 * p - q) * (1.0 - 2.0 * q).sqrt()).ln()
     }
 }
 
