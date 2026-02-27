@@ -101,35 +101,65 @@ impl Alignment {
         }
     }
 
-    /// Compute the kimura80 score for a slice of the sequence. Note indexes are 0-based instead of 1-based unlike internal format...
+    /// Compute the kimura80 score for a slice of the consensus sequence.
     pub fn kimura80(&self, query_start: usize, query_end: usize) -> f64 {
-        let query_inset = query_start - (self.query_start - 1);
-        let query_end_inset = query_end - (self.query_start - 1);
+        let is_forward = match self.strand {
+            Strand::Forward => true,
+            Strand::Reverse => false,
+            Strand::Unset => panic!("Strand is not set!"),
+        };
 
-        let mut prior_pair = (GAP_OPEN_DIGITAL, GAP_EXTEND_DIGITAL);
-        let mut query_offset: usize = 0;
         let mut aligned_positions: u64 = 0;
 
         // Count the CpG weighted transitions and transversions...
         let mut transitions10x: u64 = 0;
         let mut transversions: u64 = 0;
 
-        for (&query_val, &target_val) in self.target_seq.iter().zip(self.query_seq.iter()) {
-            if query_offset > query_end_inset {
-                break;
-            }
+        let mut query_offset: usize = self.query_start;
+        let mut prior_pair = (GAP_OPEN_DIGITAL, GAP_EXTEND_DIGITAL);
 
-            if !matches!(query_val, GAP_EXTEND_DIGITAL | GAP_OPEN_DIGITAL) {
-                continue;
-            }
+        let query_iter = self
+            .query_seq
+            .iter()
+            .zip(self.target_seq.iter())
+            .filter_map(|(&q, &t)| {
+                let old_query_offset = query_offset;
+                let old_prior_pair = prior_pair;
+                if matches!(q, A_DIGITAL | C_DIGITAL | T_DIGITAL | G_DIGITAL) {
+                    prior_pair = (q, t);
+                }
+                if !matches!(q, GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL) {
+                    if is_forward {
+                        query_offset += 1;
+                    } else {
+                        query_offset -= 1;
+                    }
 
-            if query_offset < query_inset {
-                query_offset += 1;
-                continue;
-            }
+                    return None;
+                }
 
-            let is_cpg_group = prior_pair.0 == C_DIGITAL && query_val == G_DIGITAL;
-            let current_state = NucleotideAlignmentType::from_pair(query_val, target_val);
+                if if is_forward {
+                    old_query_offset >= query_start
+                } else {
+                    old_query_offset <= query_start
+                } {
+                    Some((old_query_offset, old_prior_pair.0, old_prior_pair.1, q, t))
+                } else {
+                    None
+                }
+            })
+            .take_while(|&val| {
+                if is_forward {
+                    val.0 <= query_end
+                } else {
+                    val.0 >= query_end
+                }
+            });
+
+        for (_i, q_p, t_p, q_c, t_c) in query_iter {
+            let is_cpg_group = q_p == C_DIGITAL && q_c == G_DIGITAL;
+            let current_state = NucleotideAlignmentType::from_pair(q_c, t_c);
+            let prior_state = NucleotideAlignmentType::from_pair(q_p, t_p);
 
             aligned_positions += matches!(
                 current_state,
@@ -139,8 +169,6 @@ impl Alignment {
             ) as u64;
 
             if is_cpg_group {
-                let prior_state = NucleotideAlignmentType::from_pair(prior_pair.0, prior_pair.1);
-
                 match current_state {
                     NucleotideAlignmentType::TRANSVERSION => {
                         if matches!(prior_state, NucleotideAlignmentType::TRANSITION) {
@@ -173,11 +201,6 @@ impl Alignment {
                     _ => {}
                 }
             }
-
-            if matches!(query_val, A_DIGITAL | C_DIGITAL | T_DIGITAL | G_DIGITAL) {
-                prior_pair = (query_val, target_val);
-            }
-            query_offset += 1;
         }
 
         let p = (transitions10x as f64) / ((10 * aligned_positions) as f64);
