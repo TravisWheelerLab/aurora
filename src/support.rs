@@ -2,11 +2,9 @@ use std::collections::HashMap;
 
 use crate::matrix::Matrix;
 
-///
-///
-///
-///
-///
+/// Smooth the values of a confidence matrix by convolving it with a fixed size rectangular kernel that adds to 1.
+/// This is the same as averaging values over the window range.
+/// The current kernel size is hardcoded to 31.
 pub fn windowed_confidence(
     matrix: &mut Matrix<f64>,
 ) -> (HashMap<usize, f64>, HashMap<usize, Vec<f64>>) {

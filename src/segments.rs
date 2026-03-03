@@ -140,10 +140,6 @@ impl<T> MergeEntry<T> {
     fn is_start(&self) -> bool {
         matches!(self, Self::Start)
     }
-
-    fn is_end(&self) -> bool {
-        matches!(self, Self::End)
-    }
 }
 
 impl<T> From<Option<T>> for MergeEntry<T> {
@@ -255,12 +251,6 @@ where
     I::Item: Copy + Ord,
 {
     MergeIterator::new(list1, list2, |a, b| a.cmp(b))
-}
-
-fn logsumexp(a: f64, b: f64) -> f64 {
-    let max = a.max(b);
-    let min = a.min(b);
-    max + (min - max).exp().ln_1p()
 }
 
 #[derive(Debug)]

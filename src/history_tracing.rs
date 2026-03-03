@@ -383,16 +383,38 @@ fn get_valid_appends_for_current_group(
     (current_values, split_point)
 }
 
-fn check_for_joins(
-    histories: &[HistoryEntry],
-    segments: &SegmentedMatrix,
-    segment_groups: &[SegmentGroups],
-    assembly_graph: &AssemblyGraph,
+struct JoinCheckArgs<'a> {
+    histories: &'a [HistoryEntry],
+    segments: &'a SegmentedMatrix,
+    segment_groups: &'a [SegmentGroups],
+    assembly_graph: &'a AssemblyGraph,
     current_group_reference: (usize, usize),
     start_entry: usize,
     history_depth: usize,
     epsilon: f64,
-) -> Vec<(usize, Vec<usize>, Vec<(usize, f64)>)> {
+}
+
+type JoinHistoryIndex = usize;
+type JoinBlockIndexes = Vec<usize>;
+type JoinSegmentOffsetsAndConfidences = Vec<(usize, f64)>;
+type PossibleJoins = Vec<(
+    JoinHistoryIndex,
+    JoinBlockIndexes,
+    JoinSegmentOffsetsAndConfidences,
+)>;
+
+fn check_for_joins(args: JoinCheckArgs) -> PossibleJoins {
+    let JoinCheckArgs {
+        histories,
+        segments,
+        segment_groups,
+        assembly_graph,
+        current_group_reference,
+        start_entry,
+        history_depth,
+        epsilon,
+    } = args;
+
     let mut last_hist = start_entry;
     let segment_idx = current_group_reference.0;
     let group_idx = current_group_reference.1;
@@ -473,16 +495,16 @@ pub fn history_viterbi_on_segments(
         for group_idx in 0..segment_groups[segment_idx].group_count() {
             for prior_hist_idx in (*seg_offsets.last().unwrap())..prior_step_end {
                 // Add a join and no join history...
-                let possible_joins = check_for_joins(
-                    &histories,
+                let possible_joins = check_for_joins(JoinCheckArgs {
+                    histories: &histories,
                     segments,
-                    &segment_groups,
+                    segment_groups: &segment_groups,
                     assembly_graph,
-                    (segment_idx, group_idx),
-                    prior_hist_idx,
+                    current_group_reference: (segment_idx, group_idx),
+                    start_entry: prior_hist_idx,
                     history_depth,
-                    1e-2,
-                );
+                    epsilon: 1e-2,
+                });
 
                 let other_index = remove_expired_history_entries(
                     &histories,

@@ -1,7 +1,9 @@
-use crate::{alignment::Strand, matrix::Matrix, score_params::ScoreParams};
+use crate::{matrix::Matrix, score_params::ScoreParams};
 use core::f64;
 use itertools::multizip;
 
+/// Compute the maximum scoring paths through an alignment confidence matrix. Stores resulting path scores and paths
+/// in the viterbi and sources matricies.
 pub fn viterbi_collapsed(
     confidence_matrix: &Matrix<f64>,
     viterbi_matrix: &mut Matrix<f64>,
@@ -144,32 +146,27 @@ pub fn viterbi_collapsed(
     }
 }
 
-///
-///
-///
-///
+/// Represents a single step of a trace through a matrix of competing alignments.
+/// By single here we mean a single cell chosen for a column in the matrix.
 #[derive(Default, Clone, Debug)]
 pub struct TraceStep {
+    /// The row index in the sparse matrix representation.
     pub sparse_row_idx: usize,
+    /// The row the trace would be in if the trace matrix was dense.
     pub row_idx: usize,
+    /// The column of the matrix.
     pub col_idx: usize,
-    pub consensus_pos: usize,
-    pub confidence: f64,
-    pub strand: Strand,
+    /// The query this row belongs to.
     pub query_id: usize,
+    /// The alignment this row belongs to.
     pub ali_id: usize,
 }
 
-///
-///
-///
-///
+/// A trace is a list of trace steps for every column in the alignment matrix...
 pub type Trace = Vec<TraceStep>;
 
-///
-///
-///
-///
+/// This represents a segment of a matrix trace where the same alignment
+/// is selected for multiple columns in a row.
 #[derive(Clone)]
 pub struct TraceSegment {
     pub query_id: usize,
@@ -179,10 +176,8 @@ pub struct TraceSegment {
     pub col_end: usize,
 }
 
-///
-///
-///
-///
+/// Simplify an alignment trace by taking consecutive columns that select
+/// the same alignment and merging them into segments.
 pub fn trace_segments(trace: &Trace) -> Vec<TraceSegment> {
     let mut trace_segments: Vec<TraceSegment> = vec![];
 
@@ -217,9 +212,11 @@ pub fn trace_segments(trace: &Trace) -> Vec<TraceSegment> {
     trace_segments
 }
 
+/// Get the maximum scoring trace of alignments from a given viterbi run.
+/// Returns a cell-by-cell trace, which will have an entry for every collumn
+/// in the viterbi trace matricies.
 pub fn traceback(
     viterbi_matrix: &Matrix<f64>,
-    confidence_matrix: &Matrix<f64>,
     sources: &Matrix<usize>,
     active_cols: &[usize],
 ) -> Trace {
@@ -241,17 +238,11 @@ pub fn traceback(
     let row_idx = viterbi_matrix.sparse_to_logical_row_idx(sparse_row_idx, col_idx);
     let query_id = viterbi_matrix.query_id_of_row(row_idx);
     let ali_id = viterbi_matrix.ali_id_sparse(sparse_row_idx, col_idx);
-    let consensus_pos = viterbi_matrix.consensus_position_sparse(sparse_row_idx, col_idx);
-    let confidence = confidence_matrix.get_sparse(sparse_row_idx, col_idx);
-    let strand = viterbi_matrix.strand_of_cell_sparse(sparse_row_idx, col_idx);
 
     let mut trace = vec![TraceStep {
         sparse_row_idx,
         row_idx,
         col_idx,
-        consensus_pos,
-        confidence,
-        strand,
         query_id,
         ali_id,
     }];
@@ -272,17 +263,11 @@ pub fn traceback(
             let row_idx = viterbi_matrix.sparse_to_logical_row_idx(sparse_row_idx, col_idx);
             let query_id = viterbi_matrix.query_id_of_cell_sparse(sparse_row_idx, col_idx);
             let ali_id = viterbi_matrix.ali_id_sparse(sparse_row_idx, col_idx);
-            let consensus_pos = viterbi_matrix.consensus_position_sparse(sparse_row_idx, col_idx);
-            let confidence = confidence_matrix.get_sparse(sparse_row_idx, col_idx);
-            let strand = viterbi_matrix.strand_of_cell_sparse(sparse_row_idx, col_idx);
 
             trace.push(TraceStep {
                 sparse_row_idx,
                 row_idx,
                 col_idx,
-                consensus_pos,
-                confidence,
-                strand,
                 query_id,
                 ali_id,
             })
@@ -293,6 +278,7 @@ pub fn traceback(
     trace
 }
 
+/// Print a viterbi run for debugging purposes...
 #[allow(dead_code)]
 pub fn print_viterbi_with_sources(viterbi_matrix: &Matrix<f64>, sources_matrix: &Matrix<usize>) {
     (0..viterbi_matrix.num_rows()).for_each(|row_idx| {

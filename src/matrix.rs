@@ -247,6 +247,7 @@ where
 
     /// Copy the data from other into self.
     /// This will panic if the MatrixDefs of self and other are incompatible.
+    #[allow(dead_code)]
     pub fn copy_fill(&mut self, other: &Self) {
         let mut value_map: HashMap<usize, T> = HashMap::new();
         (0..self.num_cols()).for_each(|col| {
@@ -370,6 +371,7 @@ where
         self.def.strand_by_logical_row[row]
     }
 
+    #[allow(dead_code)]
     pub fn strand_of_cell_sparse(&self, sparse_row: usize, col: usize) -> Strand {
         self.def.strand_by_logical_row[self.sparse_to_logical_row_idx(sparse_row, col)]
     }
@@ -379,6 +381,7 @@ where
         self.def.consensus_positions_by_col[col][sparse_row_idx]
     }
 
+    #[allow(dead_code)]
     pub fn consensus_position_sparse(&self, sparse_row: usize, col: usize) -> usize {
         self.def.consensus_positions_by_col[col][sparse_row]
     }

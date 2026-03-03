@@ -141,35 +141,37 @@ pub struct AdjudicationSodaData<'a> {
     args: &'a AuroraArgs,
 }
 
+pub struct AdjudicationSodaDataArgs<'a> {
+    pub group: &'a ProximityGroup<'a>,
+    pub confidence_matrix: &'a Matrix<'a, f64>,
+    pub alignment_data: &'a AlignmentData,
+    pub target_seq: &'a [u8],
+    pub trace: &'a Vec<RefinedTraceSegment>,
+    pub segments: &'a SegmentedMatrix,
+    pub history_counts: &'a [usize],
+    pub links: &'a AssemblyGraph,
+    pub dump_confidences: bool,
+    pub args: &'a AuroraArgs,
+}
+
 impl<'a> AdjudicationSodaData<'a> {
     const TEMPLATE: &'static str = include_str!("../../fixtures/soda/annotations.html");
     const JS: &'static str = include_str!("../../fixtures/soda/annotations.js");
 
-    pub fn new(
-        group: &'a ProximityGroup,
-        confidence_matrix: &'a Matrix<'a, f64>,
-        alignment_data: &'a AlignmentData,
-        target_seq: &'a [u8],
-        trace: &'a Vec<RefinedTraceSegment>,
-        segments: &'a SegmentedMatrix,
-        history_counts: &'a [usize],
-        links: &'a AssemblyGraph,
-        dump_confidences: bool,
-        args: &'a AuroraArgs,
-    ) -> Self {
+    pub fn new(args: AdjudicationSodaDataArgs<'a>) -> Self {
         Self {
-            group,
-            confidence_matrix,
-            alignment_data,
-            target_seq,
+            group: args.group,
+            confidence_matrix: args.confidence_matrix,
+            alignment_data: args.alignment_data,
+            target_seq: args.target_seq,
             annotations: vec![],
-            trace,
+            trace: args.trace,
             maybe_constraint: None,
-            segments,
-            history_counts,
-            links,
-            dump_confidences,
-            args,
+            segments: args.segments,
+            history_counts: args.history_counts,
+            links: args.links,
+            dump_confidences: args.dump_confidences,
+            args: args.args,
         }
     }
 

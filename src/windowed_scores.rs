@@ -55,6 +55,8 @@ impl BackgroundFrequencies for DummyBackground {
 }
 
 // TODO: move to a new file
+// Allow extra properties for now...
+#[allow(dead_code)]
 pub struct Background<'a> {
     pub target_start: usize,
     pub target_end: usize,

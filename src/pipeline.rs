@@ -1,4 +1,4 @@
-use std::{fs, io::Write};
+use std::fs;
 
 use itertools::Itertools;
 
@@ -17,8 +17,10 @@ use crate::{
     segments::segments_from_matrix_trace,
     support::windowed_confidence,
     viterbi::{trace_segments, traceback, viterbi_collapsed},
-    viz::debug::{dump_debug_history_info, dump_final_trace_statistics, dump_history_scores},
-    viz::AdjudicationSodaData,
+    viz::{
+        debug::{dump_debug_history_info, dump_final_trace_statistics, dump_history_scores},
+        AdjudicationSodaData, AdjudicationSodaDataArgs,
+    },
     windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
     AuroraArgs,
 };
@@ -199,12 +201,7 @@ pub fn run_pipeline(
             &score_params,
         );
 
-        let trace = traceback(
-            &viterbi_matrix,
-            &confidence_matrix,
-            &sources_matrix,
-            &active_cols,
-        );
+        let trace = traceback(&viterbi_matrix, &sources_matrix, &active_cols);
 
         simple_trace = trace_segments(&trace);
 
@@ -284,18 +281,18 @@ pub fn run_pipeline(
 
     // if we're going to produce visualizations, this will
     // keep track of all of the data needed to do so
-    let mut soda_data = AdjudicationSodaData::new(
-        proximity_group,
-        &confidence_matrix,
+    let mut soda_data = AdjudicationSodaData::new(AdjudicationSodaDataArgs {
+        group: proximity_group,
+        confidence_matrix: &confidence_matrix,
         alignment_data,
-        &target_seq,
-        &refined_trace_segments,
-        &segments,
-        &history_lengths,
-        &assembly_graph,
-        args.visualization_args.viz_enable_scores,
-        &args,
-    );
+        target_seq: &target_seq,
+        trace: &refined_trace_segments,
+        segments: &segments,
+        history_counts: &history_lengths,
+        links: &assembly_graph,
+        dump_confidences: args.visualization_args.viz_enable_scores,
+        args: &args,
+    });
 
     // Grab the annotations...
     let mut annotations: Vec<AmbiguousAnnotation> = to_annotations(

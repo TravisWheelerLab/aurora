@@ -1,12 +1,9 @@
 use crate::{
-    alignment::{AlignmentData, Strand},
-    annotation::AmbiguousAnnotation,
-    segments::Unordered,
-    viz::SODA_JS,
+    alignment::Strand, annotation::AmbiguousAnnotation, segments::Unordered, viz::SODA_JS,
 };
 use core::str;
 use itertools::Itertools;
-use std::{collections::HashMap, io::Write, usize};
+use std::{collections::HashMap, io::Write};
 
 const TABLE_HTML: &str = include_str!("../../fixtures/soda/table.html");
 
@@ -71,7 +68,6 @@ fn write_statistics_table_page<const N: usize, A: std::fmt::Display, B: std::fmt
 pub fn write_family_statistics(
     stats_writer: &mut impl Write,
     region_annotations: &[(usize, Vec<AmbiguousAnnotation>)],
-    alignment_data: &AlignmentData,
 ) -> std::io::Result<()> {
     let mut family_stats = HashMap::<&String, FamilyInfo>::new();
 

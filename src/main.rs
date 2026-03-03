@@ -507,7 +507,7 @@ fn main() -> Result<()> {
                 .viz_output_path
                 .join("family_stats.html"),
         )?;
-        write_family_statistics(&mut family_stats_writer, &results, &alignment_data)?;
+        write_family_statistics(&mut family_stats_writer, &results)?;
         let mut inv_stats_writer = File::create(
             args.visualization_args
                 .viz_output_path

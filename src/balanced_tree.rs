@@ -18,6 +18,7 @@ pub enum SetInsert {
     Found(usize),
 }
 
+#[allow(dead_code)]
 impl<T: Into<usize> + TryFrom<usize> + Copy + Debug> AVLIndexSet<T> {
     pub fn new() -> Self {
         Self {
@@ -282,10 +283,11 @@ impl<T: Into<usize> + TryFrom<usize> + Copy + Debug> Iterator for AVLInOrderSetI
     }
 }
 
+#[cfg(test)]
 mod tests {
     use itertools::Itertools;
 
-    use crate::balanced_tree::{AVLInOrderSetIterator, AVLIndexSet};
+    use crate::balanced_tree::AVLIndexSet;
     use std::fmt::Display;
 
     struct DummyTree {
