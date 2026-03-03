@@ -1,3 +1,5 @@
+use anyhow::Context;
+
 use crate::alignment::{Alignment, AlignmentData, TandemRepeat};
 
 #[derive(Copy, Clone)]
@@ -22,9 +24,11 @@ pub struct ProximityGroup<'a> {
     pub target_end: usize,
     pub alignments: &'a [Alignment],
     pub tandem_repeats: &'a [TandemRepeat],
+    pub line_start: usize,
+    pub line_end: usize,
 }
 
-impl<'a> std::fmt::Debug for ProximityGroup<'a> {
+impl std::fmt::Debug for ProximityGroup<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -120,6 +124,7 @@ impl<'a> ProximityGroup<'a> {
 
                 let mut ali_start_idx = 0usize;
                 let mut repeat_start_idx = 0usize;
+
                 merged_intervals.into_iter().map(move |interval| {
                     // find the index of the first alignment
                     // that is outside of the interval
@@ -144,22 +149,56 @@ impl<'a> ProximityGroup<'a> {
                         .0;
 
                     let alignments = &target_group.alignments[ali_start_idx..ali_end_idx];
+
                     let tandem_repeats =
                         &target_group.tandem_repeats[repeat_start_idx..repeat_end_idx];
 
-                    ali_start_idx = ali_end_idx;
-                    repeat_start_idx = repeat_end_idx;
+                    // if ali_start_idx and ali_end_idx are the same, that means there are no
+                    // alignments in this region (i.e., it's just a region with tandem repeats)
+                    let (line_start, line_end) = if ali_start_idx == ali_end_idx {
+                        (0, 0)
+                    } else {
+                        (
+                            alignments
+                                .first()
+                                .expect("alignments are empty in ProximityGroup")
+                                .id,
+                            alignments
+                                .last()
+                                .expect("alignments are empty in ProximityGroup")
+                                .id,
+                        )
+                    };
 
-                    ProximityGroup {
+                    // create the group before adjusting the ali_start_idx
+                    let group = ProximityGroup {
                         target_id: interval.target_id,
                         target_start: interval.target_start,
                         target_end: interval.target_end,
                         alignments,
                         tandem_repeats,
-                    }
+                        line_start,
+                        line_end,
+                    };
+
+                    ali_start_idx = ali_end_idx;
+                    repeat_start_idx = repeat_end_idx;
+
+                    group
                 })
             })
             .collect()
+    }
+
+    #[allow(dead_code)]
+    pub fn dump_alignments<W>(&self, out: &mut W) -> anyhow::Result<()>
+    where
+        W: std::io::Write,
+    {
+        self.alignments
+            .iter()
+            .try_for_each(|a| write!(out, "{a}"))
+            .context("failed to write alignment")
     }
 }
 
@@ -180,6 +219,7 @@ pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool 
             // now check if we violate the join conditions
 
             // first check all chunks to the left
+            #[allow(clippy::needless_range_loop)]
             for other_group_idx in 0..group_idx {
                 let other_group = &groups[other_group_idx];
 

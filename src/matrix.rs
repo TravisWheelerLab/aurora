@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, io::Write};
+
+use anyhow::Context;
 
 use crate::{
-    alignment::Strand,
+    alignment::{AlignmentData, Strand},
     alphabet::{GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL},
     chunks::ProximityGroup,
-    collapse::AssemblyGroup,
 };
 
 use self::constants::*;
@@ -28,6 +29,7 @@ pub struct MatrixDef {
     /// The logical start position of the target sequence
     pub target_start: usize,
     /// The total number of active cells in the matrix
+    #[allow(dead_code)]
     pub num_cells: usize,
 
     // -- sparse data --
@@ -49,214 +51,6 @@ pub struct MatrixDef {
 }
 
 impl MatrixDef {
-    pub fn from_assembly_group(group: &AssemblyGroup) -> Self {
-        // +1 for the skip state
-        let num_rows = group.assemblies.len() + group.tandem_repeats.len() + 1;
-        let num_cols = group.target_end - group.target_start + 1;
-
-        let mut num_cells = num_cols;
-
-        let mut active_rows_by_col = vec![vec![SKIP_STATE_ROW]; num_cols];
-        let mut consensus_positions_by_col = vec![vec![INVALID_CONSENSUS_POSITION]; num_cols];
-        let mut ali_ids_by_col = vec![vec![SKIP_STATE_ALI_ID]; num_cols];
-
-        let mut col_range_by_logical_row = vec![(0usize, num_cols - 1); num_rows];
-        let mut query_id_by_logical_row = vec![0usize; num_rows];
-        let mut strand_by_logical_row = vec![Strand::default(); num_rows];
-
-        query_id_by_logical_row[SKIP_STATE_ROW] = SKIP_STATE_QUERY_ID;
-        strand_by_logical_row[SKIP_STATE_ROW] = Strand::Forward;
-
-        group
-            .assemblies
-            .iter()
-            .enumerate()
-            .for_each(|(assembly_idx, assembly)| {
-                assembly
-                    .alignments
-                    .iter()
-                    .zip(assembly.alignments.iter().skip(1))
-                    .for_each(|(a, b)| {
-                        debug_assert!(a.target_start <= b.target_start);
-                    });
-
-                // +1 for the skip state
-                let row_idx = assembly_idx + 1;
-
-                query_id_by_logical_row[row_idx] = assembly.query_id;
-                strand_by_logical_row[row_idx] = assembly.strand;
-
-                // find the start/end of the assembly
-                // relative to the start of the group
-                //
-                // we have something like:
-                //
-                //     (         [    -------------     ]           )
-                //     ^         ^         ^            ^           ^
-                //  chrom      group    assembly      group       chrom
-                //  start      start                   end         end
-                //
-                let assembly_col_start_in_matrix = assembly.target_start - group.target_start;
-                let assembly_col_end_in_matrix = assembly.target_end - group.target_start;
-                let assembly_len = assembly_col_end_in_matrix - assembly_col_start_in_matrix + 1;
-
-                num_cells += assembly_col_end_in_matrix - assembly_col_start_in_matrix + 1;
-
-                // set the entire logical row defined
-                // by the assembly to be active
-                //
-                // we have something like:
-                //
-                //  --------------************-------------***********---------
-                //        ^            ^           ^           ^          ^
-                //    alignment      skip      alignment      skip    alignment
-                //
-                col_range_by_logical_row[row_idx] =
-                    (assembly_col_start_in_matrix, assembly_col_end_in_matrix);
-                (assembly_col_start_in_matrix..=assembly_col_end_in_matrix).for_each(|col_idx| {
-                    active_rows_by_col[col_idx].push(row_idx);
-                });
-
-                // for each alignment, figure out the consensus positions that
-                // map to each target position/column index in the group
-                let mut assembly_consensus_map: HashMap<usize, Vec<usize>> = HashMap::new();
-                assembly.alignments.iter().for_each(|ali| {
-                    let mut consensus_positions = vec![0usize; assembly_len];
-
-                    let mut consensus_position = ali.query_start as i32;
-
-                    // the column index relative to the assembly
-                    let mut assembly_col_idx = ali.target_start - assembly.target_start;
-
-                    let addend = match assembly.strand {
-                        Strand::Forward => 1,
-                        Strand::Reverse => -1,
-                        Strand::Unset => {
-                            panic!("Alignment.strand is unset in call to MatrixDef::new()")
-                        }
-                    };
-                    for (&target_char, &query_char) in
-                        ali.target_seq.iter().zip(ali.query_seq.iter())
-                    {
-                        consensus_positions[assembly_col_idx] = consensus_position as usize;
-                        match target_char {
-                            GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
-                                // if the target character is a gap,
-                                // we advance the consensus position
-                                // and leave the column index alone
-                                consensus_position += addend;
-                            }
-                            _ => {
-                                // if the target character is not a gap,
-                                // we advance the column index regardless
-                                // of what the query character is
-                                assembly_col_idx += 1;
-                                match query_char {
-                                    GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
-                                        // if the query character is a gap, we use
-                                        // the previous query consensus position
-                                    }
-                                    _ => {
-                                        // if the query character isn't a gap,
-                                        // we advance the consensus position
-                                        consensus_position += addend;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    debug_assert_eq!(
-                        consensus_positions[ali.target_start - assembly.target_start],
-                        ali.query_start
-                    );
-
-                    debug_assert_eq!(
-                        consensus_positions[ali.target_end - assembly.target_start],
-                        ali.query_end
-                    );
-
-                    assembly_consensus_map.insert(ali.id, consensus_positions);
-                });
-
-                let mut last_matrix_col_idx = assembly_col_start_in_matrix;
-                let mut last_consensus_position = 0usize;
-
-                assembly.alignment_ranges.iter().for_each(|range| {
-                    let ali = assembly
-                        .alignments
-                        .iter()
-                        .find(|a| a.id == range.ali_id)
-                        .expect("failed to match alignment with range");
-
-                    let consensus_positions = assembly_consensus_map
-                        .get(&ali.id)
-                        .expect("failed to find consensus positions");
-
-                    let new_matrix_col_idx =
-                        range.assembly_col_start + assembly_col_start_in_matrix;
-
-                    // place the last consensus position of the previous alignment
-                    // at every empty position leading up to this alignment
-                    let spaces = new_matrix_col_idx - last_matrix_col_idx;
-                    ((last_matrix_col_idx + 1)..(last_matrix_col_idx + spaces)).for_each(
-                        |matrix_col_idx| {
-                            consensus_positions_by_col[matrix_col_idx]
-                                .push(last_consensus_position);
-                            ali_ids_by_col[matrix_col_idx].push(0);
-                        },
-                    );
-
-                    (range.assembly_col_start..=range.assembly_col_end)
-                        .map(|assembly_col_idx| {
-                            (
-                                assembly_col_idx,
-                                assembly_col_idx + assembly_col_start_in_matrix,
-                            )
-                        })
-                        .for_each(|(assembly_col_idx, matrix_col_idx)| {
-                            let consensus_position = consensus_positions[assembly_col_idx];
-                            consensus_positions_by_col[matrix_col_idx].push(consensus_position);
-                            ali_ids_by_col[matrix_col_idx].push(ali.id);
-                        });
-
-                    last_matrix_col_idx = range.assembly_col_end + assembly_col_start_in_matrix;
-                    last_consensus_position = consensus_positions[range.assembly_col_end];
-                });
-            });
-
-        group
-            .tandem_repeats
-            .iter()
-            .enumerate()
-            .for_each(|(repeat_idx, repeat)| {
-                // we place the tandem repeats after the alignments
-                let row_idx = group.assemblies.len() + repeat_idx + 1;
-                strand_by_logical_row[row_idx] = Strand::Forward;
-
-                let col_start = repeat.target_start - group.target_start;
-                let col_end = repeat.target_end - group.target_start;
-                num_cells += col_end - col_start + 1;
-                (col_start..=col_end).for_each(|col_idx| {
-                    active_rows_by_col[col_idx].push(row_idx);
-                    consensus_positions_by_col[col_idx].push(INVALID_CONSENSUS_POSITION);
-                    ali_ids_by_col[col_idx].push(repeat.id);
-                });
-            });
-
-        Self {
-            num_rows,
-            num_cols,
-            target_start: group.target_start,
-            num_cells,
-            active_rows_by_col,
-            consensus_positions_by_col,
-            ali_ids_by_col,
-            col_range_by_logical_row,
-            query_id_by_logical_row,
-            strand_by_logical_row,
-        }
-    }
-
     pub fn from_proximity_group(group: &ProximityGroup) -> Self {
         let target_start = group.target_start;
         let target_end = group.target_end;
@@ -338,6 +132,10 @@ impl MatrixDef {
                             }
                         }
                         _ => {
+                            debug_assert!(ali_col_idx >= col_start && ali_col_idx <= col_end);
+                            consensus_positions_by_col[ali_col_idx].push(ali_consensus_position);
+                            ali_ids_by_col[ali_col_idx].push(ali.id);
+
                             match query_char {
                                 GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
                                     // if the query character is a gap, we use
@@ -358,10 +156,6 @@ impl MatrixDef {
                                 }
                             }
 
-                            debug_assert!(ali_col_idx >= col_start && ali_col_idx <= col_end);
-
-                            consensus_positions_by_col[ali_col_idx].push(ali_consensus_position);
-                            ali_ids_by_col[ali_col_idx].push(ali.id);
                             ali_col_idx += 1;
                         }
                     }
@@ -402,6 +196,30 @@ impl MatrixDef {
             strand_by_logical_row,
         }
     }
+
+    #[allow(dead_code)]
+    pub fn allocation_size(&self) -> usize {
+        self.active_rows_by_col
+            .iter()
+            .map(|v| v.capacity())
+            .sum::<usize>()
+            * std::mem::size_of::<usize>()
+            + self
+                .consensus_positions_by_col
+                .iter()
+                .map(|v| v.capacity())
+                .sum::<usize>()
+                * std::mem::size_of::<usize>()
+            + self
+                .ali_ids_by_col
+                .iter()
+                .map(|v| v.capacity())
+                .sum::<usize>()
+                * std::mem::size_of::<usize>()
+            + self.col_range_by_logical_row.capacity() * std::mem::size_of::<(usize, usize)>()
+            + self.query_id_by_logical_row.capacity() * std::mem::size_of::<usize>()
+            + self.strand_by_logical_row.capacity() * std::mem::size_of::<Strand>()
+    }
 }
 
 pub struct Matrix<'a, T>
@@ -418,7 +236,7 @@ where
 {
     /// Create a new Matrix from a MatrixDef.
     pub fn new(def: &'a MatrixDef) -> Self {
-        let mut data = vec![];
+        let mut data = Vec::with_capacity(def.active_rows_by_col.len());
 
         def.active_rows_by_col
             .iter()
@@ -429,6 +247,7 @@ where
 
     /// Copy the data from other into self.
     /// This will panic if the MatrixDefs of self and other are incompatible.
+    #[allow(dead_code)]
     pub fn copy_fill(&mut self, other: &Self) {
         let mut value_map: HashMap<usize, T> = HashMap::new();
         (0..self.num_cols()).for_each(|col| {
@@ -449,6 +268,12 @@ where
         });
     }
 
+    #[allow(dead_code)]
+    pub fn allocation_size(&self) -> usize {
+        self.data.iter().map(|col| col.capacity()).sum::<usize>() * std::mem::size_of::<T>()
+            + self.data.capacity() * std::mem::size_of::<Vec<T>>()
+    }
+
     // -----------
     // data access
     // -----------
@@ -457,6 +282,7 @@ where
         self.data[col][sparse_row_index]
     }
 
+    #[allow(dead_code)]
     pub fn get_mut(&mut self, row: usize, col: usize) -> &mut T {
         let sparse_row_index = self.logical_to_sparse_row_idx(row, col);
         &mut self.data[col][sparse_row_index]
@@ -513,7 +339,14 @@ where
 
     pub fn initial_active_cols(&self) -> Vec<usize> {
         (0..self.num_cols())
-            .filter(|&col_idx| self.def.ali_ids_by_col[col_idx].iter().any(|&id| id != 0))
+            .filter(|&col_idx| {
+                let current_active = self.def.ali_ids_by_col[col_idx].iter().any(|&id| id != 0);
+                // If the prior collumn was active, we include this cell to. This forces viterbi into the skip state for a gap...
+                let prior_active = self.def.ali_ids_by_col[col_idx.saturating_sub(1)]
+                    .iter()
+                    .any(|&id| id != 0);
+                current_active || prior_active
+            })
             .collect()
     }
 
@@ -538,6 +371,7 @@ where
         self.def.strand_by_logical_row[row]
     }
 
+    #[allow(dead_code)]
     pub fn strand_of_cell_sparse(&self, sparse_row: usize, col: usize) -> Strand {
         self.def.strand_by_logical_row[self.sparse_to_logical_row_idx(sparse_row, col)]
     }
@@ -547,6 +381,7 @@ where
         self.def.consensus_positions_by_col[col][sparse_row_idx]
     }
 
+    #[allow(dead_code)]
     pub fn consensus_position_sparse(&self, sparse_row: usize, col: usize) -> usize {
         self.def.consensus_positions_by_col[col][sparse_row]
     }
@@ -574,7 +409,6 @@ where
     pub fn print(&self) {
         (0..self.num_rows()).for_each(|row_idx| {
             (0..self.num_cols()).for_each(|col_idx| {
-                //
                 if self.contains_cell(row_idx, col_idx) {
                     print!("{:8.3} ", self.get(row_idx, col_idx));
                 } else {
@@ -583,5 +417,98 @@ where
             });
             println!();
         });
+    }
+
+    #[allow(dead_code)]
+    pub fn fancy_print<W>(
+        &self,
+        target_start: usize,
+        target_end: usize,
+        alignment_data: &AlignmentData,
+        out: &mut W,
+    ) -> anyhow::Result<()>
+    where
+        W: Write,
+    {
+        let col_start = (target_start - self.def.target_start)
+            .max(0)
+            .min(self.def.num_cols);
+        let col_end = (target_end - self.def.target_start)
+            .max(0)
+            .min(self.def.num_cols);
+
+        let rows_in_col_range: Vec<usize> = (0..self.num_rows())
+            .filter(|&row_idx| {
+                !(col_start..col_end).all(|col_idx| {
+                    self.def.target_start + col_idx < target_start
+                        || self.def.target_start + col_idx >= target_end
+                        || !self.contains_cell(row_idx, col_idx)
+                })
+            })
+            .collect();
+
+        let max_name_len = rows_in_col_range
+            .iter()
+            .map(|&row_idx| self.def.query_id_by_logical_row[row_idx])
+            .map(|query_id| alignment_data.query_name_map.get(query_id).len())
+            .max()
+            .unwrap();
+
+        let max_int_len = rows_in_col_range
+            .clone()
+            .into_iter()
+            .chain(
+                rows_in_col_range
+                    .iter()
+                    .map(|row_idx| self.def.query_id_by_logical_row[*row_idx]),
+            )
+            .map(|i| i.to_string().len())
+            .max()
+            .unwrap();
+
+        rows_in_col_range
+            .iter()
+            .map(|row_idx| (row_idx, self.def.query_id_by_logical_row[*row_idx]))
+            .try_for_each(|(&row_idx, query_id)| {
+                write!(
+                    out,
+                    "r{:<W1$} : q{:<W1$} | {:>W2$}",
+                    row_idx,
+                    query_id,
+                    alignment_data.query_name_map.get(query_id),
+                    W1 = max_int_len,
+                    W2 = max_name_len
+                )?;
+
+                (col_start..col_end).try_for_each(|col_idx| {
+                    if self.contains_cell(row_idx, col_idx) {
+                        write!(out, "{:8.3} ", self.get(row_idx, col_idx))
+                    } else {
+                        write!(out, "{:>8.3} ", "x")
+                    }
+                })?;
+                writeln!(out)?;
+
+                write!(out, "{}", " ".repeat(max_int_len * 2 + max_name_len + 8))?;
+
+                (col_start..col_end).try_for_each(|col_idx| {
+                    if self.contains_cell(row_idx, col_idx) {
+                        write!(
+                            out,
+                            "{:>8} ",
+                            format!(
+                                "a{}",
+                                self.def.ali_ids_by_col[col_idx]
+                                    [self.logical_to_sparse_row_idx(row_idx, col_idx)]
+                            )
+                        )
+                    } else {
+                        write!(out, "{:>8.3} ", "x")
+                    }
+                })?;
+                writeln!(out)?;
+                writeln!(out)
+            })
+            .context("failed to write matrix")
     }
 }

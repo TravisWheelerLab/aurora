@@ -1,8 +1,8 @@
 use phf::phf_map;
 
 pub trait NucleotideByteUtils {
-    fn into_utf8_string(self) -> String;
     fn to_utf8_string(&self) -> String;
+    fn to_debug_utf8_string(&self) -> String;
 }
 
 impl NucleotideByteUtils for Vec<u8> {
@@ -15,18 +15,107 @@ impl NucleotideByteUtils for Vec<u8> {
         .expect("failed to convert digital nucleotide byte vector to utf8 string")
     }
 
-    fn into_utf8_string(self) -> String {
+    fn to_debug_utf8_string(&self) -> String {
         String::from_utf8(
-            self.into_iter()
-                .map(|b| ALIGNMENT_ALPHABET_UTF8[b as usize])
+            self.iter()
+                .map(|&b| DEBUG_ALIGNMENT_ALPHABET_UTF8[b as usize])
                 .collect::<Vec<u8>>(),
         )
         .expect("failed to convert digital nucleotide byte vector to utf8 string")
     }
 }
 
+impl NucleotideByteUtils for [u8] {
+    fn to_utf8_string(&self) -> String {
+        String::from_utf8(
+            self.iter()
+                .map(|&b| ALIGNMENT_ALPHABET_UTF8[b as usize])
+                .collect::<Vec<u8>>(),
+        )
+        .expect("failed to convert digital nucleotide byte vector to utf8 string")
+    }
+
+    fn to_debug_utf8_string(&self) -> String {
+        String::from_utf8(
+            self.iter()
+                .map(|&b| DEBUG_ALIGNMENT_ALPHABET_UTF8[b as usize])
+                .collect::<Vec<u8>>(),
+        )
+        .expect("failed to convert digital nucleotide byte vector to utf8 string")
+    }
+}
+
+#[derive(Debug)]
+pub enum NucleotideAlignmentType {
+    Match,
+    Transition,
+    Transversion,
+    Indel,
+    Unknown,
+}
+
+impl NucleotideAlignmentType {
+    pub fn from_pair(nucleotide_a: u8, nucleotide_b: u8) -> Self {
+        // Place nucleotides in sorted order...
+        if matches!(nucleotide_a, GAP_EXTEND_DIGITAL | GAP_OPEN_DIGITAL)
+            || matches!(nucleotide_b, GAP_EXTEND_DIGITAL | GAP_OPEN_DIGITAL)
+        {
+            return Self::Indel;
+        }
+
+        if matches!(nucleotide_a, A_DIGITAL..=T_DIGITAL)
+            && matches!(nucleotide_b, A_DIGITAL..=T_DIGITAL)
+        {
+            if nucleotide_a == nucleotide_b {
+                return Self::Match;
+            }
+
+            return match (nucleotide_a, nucleotide_b) {
+                (A_DIGITAL, G_DIGITAL) | (G_DIGITAL, A_DIGITAL) => Self::Transition,
+                (C_DIGITAL, T_DIGITAL) | (T_DIGITAL, C_DIGITAL) => Self::Transition,
+                _ => Self::Transversion,
+            };
+        }
+
+        Self::Unknown
+    }
+}
+
+impl NucleotideByteUtils for u8 {
+    fn to_utf8_string(&self) -> String {
+        ALIGNMENT_ALPHABET_STR[*self as usize].to_string()
+    }
+
+    fn to_debug_utf8_string(&self) -> String {
+        DEBUG_ALIGNMENT_ALPHABET_STR[*self as usize].to_string()
+    }
+}
+
+pub const NUCLEOTIDE_WEIGHTS: [[f64; 4]; 15] = [
+    //A    C    G    T
+    [1.0, 0.0, 0.0, 0.0],     // A
+    [0.0, 1.0, 0.0, 0.0],     // C
+    [0.0, 0.0, 1.0, 0.0],     // G
+    [0.0, 0.0, 0.0, 1.0],     // T
+    [0.0, 0.0, 0.5, 0.5],     // K: G | T
+    [0.5, 0.5, 0.0, 0.0],     // M: A | C
+    [0.25, 0.25, 0.25, 0.25], // N: A | C | G | T
+    [0.5, 0.0, 0.5, 0.0],     // R: A | G
+    [0.0, 0.5, 0.5, 0.0],     // S: C | G
+    [0.5, 0.0, 0.0, 0.5],     // W: A | T
+    [0.0, 0.0, 0.0, 0.0],     // X: I think this is a masked base
+    [0.0, 0.5, 0.0, 0.5],     // Y: C | T
+    [0.0, 0.0, 0.0, 0.0],     // -: gap open
+    [0.0, 0.0, 0.0, 0.0],     // -: gap extend
+    [0.25, 0.25, 0.25, 0.25], // *: A | C | G | T (this isn't a IUPAC code, just an aurora thing)
+];
+
 pub const ALIGNMENT_ALPHABET_STR: [&str; 15] = [
     "A", "C", "G", "T", "K", "M", "N", "R", "S", "W", "X", "Y", "-", "-", "*",
+];
+
+pub const DEBUG_ALIGNMENT_ALPHABET_STR: [&str; 15] = [
+    "A", "C", "G", "T", "K", "M", "N", "R", "S", "W", "X", "Y", "-", "+", "*",
 ];
 
 pub const ALIGNMENT_ALPHABET_UTF8: [u8; 15] = [
@@ -44,6 +133,24 @@ pub const ALIGNMENT_ALPHABET_UTF8: [u8; 15] = [
     "Y".as_bytes()[0],
     "-".as_bytes()[0],
     "-".as_bytes()[0],
+    "*".as_bytes()[0],
+];
+
+pub const DEBUG_ALIGNMENT_ALPHABET_UTF8: [u8; 15] = [
+    "A".as_bytes()[0],
+    "C".as_bytes()[0],
+    "G".as_bytes()[0],
+    "T".as_bytes()[0],
+    "K".as_bytes()[0],
+    "M".as_bytes()[0],
+    "N".as_bytes()[0],
+    "R".as_bytes()[0],
+    "S".as_bytes()[0],
+    "W".as_bytes()[0],
+    "X".as_bytes()[0],
+    "Y".as_bytes()[0],
+    "-".as_bytes()[0],
+    "+".as_bytes()[0],
     "*".as_bytes()[0],
 ];
 
@@ -97,6 +204,9 @@ pub const UTF8_TO_DIGITAL_NUCLEOTIDE: phf::Map<u8, u8> = phf_map! {
     84u8 =>  T_DIGITAL,
     116u8 => T_DIGITAL,
 
+    45u8 => GAP_OPEN_DIGITAL,
+    43u8 => GAP_EXTEND_DIGITAL,
+
     // ambiguity
     75u8 =>  K_DIGITAL,
     107u8 => K_DIGITAL,
@@ -136,6 +246,9 @@ pub const STR_TO_DIGITAL_NUCLEOTIDE: phf::Map<&str, u8> = phf_map! {
 
     "T" =>  T_DIGITAL,
     "t" => T_DIGITAL,
+
+    "-" => GAP_OPEN_DIGITAL,
+    "+" => GAP_EXTEND_DIGITAL,
 
     // ambiguity
     "K" =>  K_DIGITAL,

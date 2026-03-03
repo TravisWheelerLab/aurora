@@ -7,10 +7,12 @@ use std::{fmt, hash};
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::alphabet::{
-    ALIGNMENT_ALPHABET_STR, DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
-    NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, UTF8_TO_DIGITAL_NUCLEOTIDE,
+    NucleotideAlignmentType, NucleotideByteUtils, ALIGNMENT_ALPHABET_STR, A_DIGITAL, C_DIGITAL,
+    DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, G_DIGITAL,
+    NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, T_DIGITAL, UTF8_TO_DIGITAL_NUCLEOTIDE,
 };
 use crate::substitution_matrix::SubstitutionMatrix;
+use crate::util::{StrSliceExt, VecMap};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Strand {
@@ -49,7 +51,7 @@ impl fmt::Display for Strand {
     }
 }
 
-#[derive(Default, Debug, Eq)]
+#[derive(Default, Eq)]
 pub struct Alignment {
     pub target_seq: Vec<u8>,
     pub query_seq: Vec<u8>,
@@ -61,6 +63,157 @@ pub struct Alignment {
     pub id: usize,
     pub query_id: usize,
     pub substitution_matrix_id: usize,
+}
+
+impl Alignment {
+    #[allow(dead_code)]
+    pub fn from_str(str: &str) -> Self {
+        let tokens: Vec<&str> = str.split('\n').collect();
+
+        let target = tokens[0];
+        let query = tokens[1];
+        assert_eq!(target.len(), query.len());
+
+        let target_seq = target.to_digital_nucleotides();
+        let query_seq = query.to_digital_nucleotides();
+
+        let target_len = target_seq
+            .iter()
+            .filter(|&&b| b != GAP_OPEN_DIGITAL && b != GAP_EXTEND_DIGITAL)
+            .count();
+
+        let query_len = query_seq
+            .iter()
+            .filter(|&&b| b != GAP_OPEN_DIGITAL && b != GAP_EXTEND_DIGITAL)
+            .count();
+
+        Self {
+            target_seq,
+            query_seq,
+            target_start: 1,
+            target_end: target_len,
+            query_start: 1,
+            query_end: query_len,
+            strand: Strand::Forward,
+            id: 0,
+            query_id: 0,
+            substitution_matrix_id: 0,
+        }
+    }
+
+    /// Compute the kimura80 score for a slice of the consensus sequence.
+    pub fn kimura80(&self, query_start: usize, query_end: usize) -> f64 {
+        let is_forward = match self.strand {
+            Strand::Forward => true,
+            Strand::Reverse => false,
+            Strand::Unset => panic!("Strand is not set!"),
+        };
+
+        let mut aligned_positions: u64 = 0;
+
+        // Count the CpG weighted transitions and transversions...
+        let mut transitions10x: u64 = 0;
+        let mut transversions: u64 = 0;
+
+        let mut query_offset: usize = self.query_start;
+        let mut prior_pair = (GAP_OPEN_DIGITAL, GAP_EXTEND_DIGITAL);
+
+        let query_iter = self
+            .query_seq
+            .iter()
+            .zip(self.target_seq.iter())
+            .filter_map(|(&q, &t)| {
+                let old_query_offset = query_offset;
+                let old_prior_pair = prior_pair;
+                if matches!(q, A_DIGITAL | C_DIGITAL | T_DIGITAL | G_DIGITAL) {
+                    prior_pair = (q, t);
+                }
+                if matches!(q, GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL) {
+                    return None;
+                }
+
+                if is_forward {
+                    query_offset += 1;
+                } else {
+                    query_offset -= 1;
+                }
+
+                let past_start = if is_forward {
+                    old_query_offset >= query_start
+                } else {
+                    old_query_offset <= query_start
+                };
+
+                if past_start {
+                    Some((old_query_offset, old_prior_pair.0, old_prior_pair.1, q, t))
+                } else {
+                    None
+                }
+            })
+            .take_while(|&val| {
+                if is_forward {
+                    val.0 <= query_end
+                } else {
+                    val.0 >= query_end
+                }
+            });
+
+        for (_i, q_p, t_p, q_c, t_c) in query_iter {
+            let is_cpg_group = q_p == C_DIGITAL && q_c == G_DIGITAL;
+            let current_state = NucleotideAlignmentType::from_pair(q_c, t_c);
+            let prior_state = NucleotideAlignmentType::from_pair(q_p, t_p);
+
+            aligned_positions += matches!(
+                current_state,
+                NucleotideAlignmentType::Match
+                    | NucleotideAlignmentType::Transition
+                    | NucleotideAlignmentType::Transversion
+            ) as u64;
+
+            if is_cpg_group {
+                match current_state {
+                    NucleotideAlignmentType::Transversion => {
+                        if matches!(prior_state, NucleotideAlignmentType::Transition) {
+                            // Correct prior value so it's 1/10th as expected...
+                            transitions10x -= 9;
+                        }
+                        transversions += 1;
+                    }
+                    NucleotideAlignmentType::Transition => {
+                        match prior_state {
+                            // Don't add anything, count double as a single transition...
+                            NucleotideAlignmentType::Transition => {}
+                            // Add 1/10th for anything else...
+                            _ => {
+                                transitions10x += 1;
+                            }
+                        }
+                    }
+                    _ => {
+                        if matches!(prior_state, NucleotideAlignmentType::Transition) {
+                            // Correct prior value so it's 1/10th as expected...
+                            transitions10x -= 9;
+                        }
+                    }
+                }
+            } else {
+                match current_state {
+                    NucleotideAlignmentType::Transversion => {
+                        transversions += 1;
+                    }
+                    NucleotideAlignmentType::Transition => {
+                        transitions10x += 10;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let p = (transitions10x as f64) / ((10 * aligned_positions) as f64);
+        let q = (transversions as f64) / (aligned_positions as f64);
+
+        (-50.0 * ((1.0 - 2.0 * p - q) * (1.0 - 2.0 * q).sqrt()).ln()).abs()
+    }
 }
 
 impl PartialEq for Alignment {
@@ -75,13 +228,31 @@ impl hash::Hash for Alignment {
     }
 }
 
-impl fmt::Display for Alignment {
+impl fmt::Debug for Alignment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "{}: T|{}-{} Q|{}-{}",
             self.query_id, self.target_start, self.target_end, self.query_start, self.query_end
         )
+    }
+}
+
+impl fmt::Display for Alignment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "#{}", self.id)?;
+        writeln!(f, "#T {}..={}", self.target_start, self.target_end)?;
+        writeln!(f, "#Q {}..={}", self.query_start, self.query_end)?;
+        let mid_line: String = self
+            .target_seq
+            .iter()
+            .zip(self.query_seq.iter())
+            .map(|(a, b)| if a == b { "|" } else { " " })
+            .collect();
+
+        writeln!(f, "{}", self.target_seq.to_utf8_string())?;
+        writeln!(f, "{mid_line}")?;
+        writeln!(f, "{}", self.query_seq.to_utf8_string())
     }
 }
 
@@ -247,68 +418,9 @@ pub fn caf_str_to_digital_nucleotides(caf_str: &str) -> (Vec<u8>, Vec<u8>) {
 
         prev_state = new_state;
     }
+    target_bytes_digital.shrink_to_fit();
+    query_bytes_digital.shrink_to_fit();
     (target_bytes_digital, query_bytes_digital)
-}
-
-/// A simple Vec-based map that facilitates mapping
-/// between usize keys and type <T> values
-pub struct VecMap<T: std::cmp::PartialEq> {
-    values: Vec<T>,
-}
-
-impl<T: std::cmp::PartialEq> VecMap<T> {
-    pub fn new() -> Self {
-        Self { values: vec![] }
-    }
-
-    pub fn from(values: Vec<T>) -> Self {
-        Self { values }
-    }
-
-    /// Inserts the value and returns the key. If the
-    /// value was already in the VecMap, return the key.
-    pub fn insert(&mut self, value: T) -> usize {
-        match self.contains(&value) {
-            true => self.key(&value),
-            false => {
-                self.values.push(value);
-                self.values.len() - 1
-            }
-        }
-    }
-
-    pub fn get(&self, key: usize) -> &T {
-        debug_assert!(key < self.values.len(), "invalid key: {key}");
-        &self.values[key]
-    }
-
-    pub fn contains(&self, value: &T) -> bool {
-        self.values.contains(value)
-    }
-
-    pub fn size(&self) -> usize {
-        self.values.len()
-    }
-
-    /// Get the key associated with the value.
-    /// This panics if the value is not in the VecMap.
-    pub fn key(&self, value: &T) -> usize {
-        self.values
-            .iter()
-            .enumerate()
-            .find(|(_, n)| *n == value)
-            .expect("key not found")
-            .0
-    }
-}
-
-impl<T: std::cmp::PartialEq + fmt::Debug> fmt::Debug for VecMap<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        (0..self.size()).for_each(|key| {
-            writeln!(f, "{key}: {:?}", self.values[key]).unwrap();
-        });
-        Ok(())
-    }
 }
 
 #[derive(Debug, Default)]
@@ -340,6 +452,7 @@ struct UltraRecord {
 
 /// A group of alignments that share
 /// the same target sequence
+#[allow(dead_code)]
 pub struct TargetGroup {
     pub target_id: usize,
     pub target_start: usize,
@@ -479,8 +592,7 @@ impl AlignmentData {
                     Strand::Unset => panic!(),
                 }
                 let substitution_matrix_id = substitution_matrices
-                    .values
-                    .iter()
+                    .values()
                     .enumerate()
                     .find(|(_, m)| m.name == substitution_matrix_name)
                     .expect("unknown substitution matrix")
@@ -508,6 +620,11 @@ impl AlignmentData {
                 .into_iter()
                 .enumerate()
                 .for_each(|(idx, r)| {
+                    // TODO: fix the VecMap API to better handle this
+                    if !target_name_map.contains(&r.sequence_name) {
+                        target_name_map.insert(r.sequence_name.clone());
+                    }
+
                     let target_id = target_name_map.key(&r.sequence_name);
 
                     if let Some(group) = target_groups.get_mut(target_id) {
@@ -524,12 +641,16 @@ impl AlignmentData {
                 });
         }
 
-        target_groups.iter_mut().for_each(|g| {
-            g.alignments.sort_by(|a, b| {
-                a.target_start
-                    .cmp(&b.target_start)
-                    .then(a.query_id.cmp(&b.query_id))
-            })
+        target_groups
+            .iter_mut()
+            .for_each(|g| g.alignments.sort_by(|a, b| a.id.cmp(&b.id)));
+
+        target_groups.iter().for_each(|g| {
+            debug_assert!(g
+                .alignments
+                .iter()
+                .zip(g.alignments.iter().skip(1))
+                .all(|(a, b)| a.target_start <= b.target_start));
         });
 
         Ok(Self {
@@ -539,6 +660,31 @@ impl AlignmentData {
             query_lengths,
             substitution_matrices,
         })
+    }
+
+    #[allow(dead_code)]
+    pub fn allocation_size(&self) -> usize {
+        self.target_groups
+            .iter()
+            .flat_map(|g| &g.alignments)
+            .map(|a| {
+                a.target_seq.capacity() + a.query_seq.capacity() + std::mem::size_of::<Alignment>()
+            })
+            .sum::<usize>()
+            + self.substitution_matrices.capacity() * std::mem::size_of::<SubstitutionMatrix>()
+            + self.query_lengths.capacity() * std::mem::size_of::<usize>()
+            + self.query_name_map.capacity() * std::mem::size_of::<String>()
+            + self
+                .query_name_map
+                .values()
+                .map(|s| s.capacity())
+                .sum::<usize>()
+            + self.target_name_map.capacity() * std::mem::size_of::<String>()
+            + self
+                .target_name_map
+                .values()
+                .map(|s| s.capacity())
+                .sum::<usize>()
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::{alignment::Strand, annotation::Annotation};
+use crate::{alignment::Strand, annotation::ConcreteAnnotation};
 
 use super::BlockGroup;
 
@@ -107,12 +107,14 @@ impl BedRecord {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_str(record_str: &str) -> Self {
         let tokens: Vec<&str> = record_str.split_whitespace().collect();
         Self::from_tokens(&tokens)
     }
 
-    pub fn from_joined_annotations(joins: &mut [&Annotation]) -> Self {
+    #[allow(dead_code)]
+    pub fn from_joined_annotations(joins: &mut [&ConcreteAnnotation]) -> Self {
         joins.sort_by_key(|a| a.target_start);
 
         let first = joins.first().unwrap();
@@ -162,7 +164,7 @@ impl BedRecord {
         block_sizes.push((last.target_end - last.target_start + 1) as i32);
         block_starts.push((last.target_start - chrom_start) as i32);
 
-        // creat the right flanking unaligned block
+        // create the right flanking unaligned block
         block_sizes.push(0);
         block_starts.push(-1);
 
@@ -184,6 +186,7 @@ impl BedRecord {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_block_group(group: &BlockGroup) -> Self {
         let mut block_sizes: Vec<i32> = vec![];
         let mut block_starts: Vec<i32> = vec![];

@@ -1,9 +1,6 @@
 use crate::matrix::Matrix;
 
-///
-///
-///
-///
+/// Convert a matrix of alignment scores to a matrix of confidences by normalizing each row's scores to add to 1.
 pub fn confidence(matrix: &mut Matrix<f64>) {
     for col_idx in 0..matrix.num_cols() {
         let mut col_total = 0.0;
