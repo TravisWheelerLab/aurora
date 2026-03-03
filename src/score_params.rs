@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct ScoreParams {
     /// T_m from the paper
     pub query_jump_score: f64,
@@ -15,6 +16,16 @@ pub fn approximate_ideal_skip_state_score(
     penalty_shift: f64,
 ) -> f64 {
     -(query_jump_penalty_nats / num_skip_loops_match_jump) + penalty_shift
+}
+
+fn fast_select(a: f64, b: f64, switch: bool) -> f64 {
+    /*let sw = (!switch as u64).wrapping_sub(1);
+    f64::from_bits((a.to_bits() & sw) | (b.to_bits() & !sw))*/
+    if switch {
+        a
+    } else {
+        b
+    }
 }
 
 impl ScoreParams {
@@ -47,17 +58,15 @@ impl ScoreParams {
             skip_loop_score,
         }
     }
-}
 
-impl std::fmt::Debug for ScoreParams {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(
-            f,
-            "{}\n{}\n{}\n{}",
-            self.query_jump_score,
-            self.query_to_skip_score,
-            self.query_loop_score,
-            self.skip_loop_score
+    /// Compute the log-probability (base e) of transitioning between 2 states, given the following:
+    ///  - Is one of the two states a skip state?
+    ///  - Is the prior state a different row than the current state (different alignment).
+    pub fn transition(&self, is_skip: bool, prior_is_different: bool) -> f64 {
+        fast_select(
+            fast_select(self.query_to_skip_score, self.query_jump_score, is_skip),
+            fast_select(self.skip_loop_score, self.query_loop_score, is_skip),
+            prior_is_different,
         )
     }
 }

@@ -7,8 +7,9 @@ use std::{fmt, hash};
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::alphabet::{
-    NucleotideByteUtils, ALIGNMENT_ALPHABET_STR, DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL,
-    GAP_OPEN_DIGITAL, NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, UTF8_TO_DIGITAL_NUCLEOTIDE,
+    NucleotideAlignmentType, NucleotideByteUtils, ALIGNMENT_ALPHABET_STR, A_DIGITAL, C_DIGITAL,
+    DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, G_DIGITAL,
+    NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, T_DIGITAL, UTF8_TO_DIGITAL_NUCLEOTIDE,
 };
 use crate::substitution_matrix::SubstitutionMatrix;
 use crate::util::{StrSliceExt, VecMap};
@@ -98,6 +99,120 @@ impl Alignment {
             query_id: 0,
             substitution_matrix_id: 0,
         }
+    }
+
+    /// Compute the kimura80 score for a slice of the consensus sequence.
+    pub fn kimura80(&self, query_start: usize, query_end: usize) -> f64 {
+        let is_forward = match self.strand {
+            Strand::Forward => true,
+            Strand::Reverse => false,
+            Strand::Unset => panic!("Strand is not set!"),
+        };
+
+        let mut aligned_positions: u64 = 0;
+
+        // Count the CpG weighted transitions and transversions...
+        let mut transitions10x: u64 = 0;
+        let mut transversions: u64 = 0;
+
+        let mut query_offset: usize = self.query_start;
+        let mut prior_pair = (GAP_OPEN_DIGITAL, GAP_EXTEND_DIGITAL);
+
+        let query_iter = self
+            .query_seq
+            .iter()
+            .zip(self.target_seq.iter())
+            .filter_map(|(&q, &t)| {
+                let old_query_offset = query_offset;
+                let old_prior_pair = prior_pair;
+                if matches!(q, A_DIGITAL | C_DIGITAL | T_DIGITAL | G_DIGITAL) {
+                    prior_pair = (q, t);
+                }
+                if matches!(q, GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL) {
+                    return None;
+                }
+
+                if is_forward {
+                    query_offset += 1;
+                } else {
+                    query_offset -= 1;
+                }
+
+                let past_start = if is_forward {
+                    old_query_offset >= query_start
+                } else {
+                    old_query_offset <= query_start
+                };
+
+                if past_start {
+                    Some((old_query_offset, old_prior_pair.0, old_prior_pair.1, q, t))
+                } else {
+                    None
+                }
+            })
+            .take_while(|&val| {
+                if is_forward {
+                    val.0 <= query_end
+                } else {
+                    val.0 >= query_end
+                }
+            });
+
+        for (_i, q_p, t_p, q_c, t_c) in query_iter {
+            let is_cpg_group = q_p == C_DIGITAL && q_c == G_DIGITAL;
+            let current_state = NucleotideAlignmentType::from_pair(q_c, t_c);
+            let prior_state = NucleotideAlignmentType::from_pair(q_p, t_p);
+
+            aligned_positions += matches!(
+                current_state,
+                NucleotideAlignmentType::Match
+                    | NucleotideAlignmentType::Transition
+                    | NucleotideAlignmentType::Transversion
+            ) as u64;
+
+            if is_cpg_group {
+                match current_state {
+                    NucleotideAlignmentType::Transversion => {
+                        if matches!(prior_state, NucleotideAlignmentType::Transition) {
+                            // Correct prior value so it's 1/10th as expected...
+                            transitions10x -= 9;
+                        }
+                        transversions += 1;
+                    }
+                    NucleotideAlignmentType::Transition => {
+                        match prior_state {
+                            // Don't add anything, count double as a single transition...
+                            NucleotideAlignmentType::Transition => {}
+                            // Add 1/10th for anything else...
+                            _ => {
+                                transitions10x += 1;
+                            }
+                        }
+                    }
+                    _ => {
+                        if matches!(prior_state, NucleotideAlignmentType::Transition) {
+                            // Correct prior value so it's 1/10th as expected...
+                            transitions10x -= 9;
+                        }
+                    }
+                }
+            } else {
+                match current_state {
+                    NucleotideAlignmentType::Transversion => {
+                        transversions += 1;
+                    }
+                    NucleotideAlignmentType::Transition => {
+                        transitions10x += 10;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let p = (transitions10x as f64) / ((10 * aligned_positions) as f64);
+        let q = (transversions as f64) / (aligned_positions as f64);
+
+        (-50.0 * ((1.0 - 2.0 * p - q) * (1.0 - 2.0 * q).sqrt()).ln()).abs()
     }
 }
 

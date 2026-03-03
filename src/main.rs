@@ -1,13 +1,16 @@
 mod alignment;
 mod alphabet;
 mod annotation;
+mod assembly;
+mod balanced_tree;
 mod chunks;
-mod collapse;
 mod confidence;
+mod history_tracing;
 mod matrix;
 mod pipeline;
 mod score_params;
-mod split;
+mod segment_groups;
+mod segments;
 mod substitution_matrix;
 mod support;
 mod util;
@@ -25,13 +28,18 @@ use std::{
 use alignment::AlignmentData;
 use chunks::ProximityGroup;
 
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use clap::{Args, Parser};
 use itertools::Itertools;
 use rayon::prelude::*;
 use viz::VizConstraint;
 
-use crate::{chunks::validate_groups, pipeline::run_pipeline};
+use crate::{
+    annotation::AmbiguousAnnotation,
+    chunks::validate_groups,
+    pipeline::run_pipeline,
+    viz::stats::{write_family_statistics, write_inversion_statistics},
+};
 
 #[cfg(not(target_env = "msvc"))]
 use tikv_jemallocator::Jemalloc;
@@ -117,36 +125,30 @@ pub struct AnnotationArgs {
     )]
     pub target_join_distance: usize,
 
-    /// The max consensus position difference at which
+    /// The maximum overlap in the consensus at which
+    /// a join is considered between compatible alignments.
+    #[arg(
+        short = 'O',
+        long = "consensus-join-overlap",
+        default_value = "200",
+        value_name = "n"
+    )]
+    pub consensus_join_overlap: isize,
+
+    /// The maximum consensus seperation distance at which
     /// a join is considered between compatible alignments.
     #[arg(
         short = 'C',
         long = "consensus-join-distance",
-        default_value = "50",
+        default_value = "2000",
         value_name = "n"
     )]
-    pub consensus_join_distance: usize,
+    pub consensus_join_distance: isize,
 
-    /// The minimum length of an alignment fragment
-    /// at which a join is considered between another
-    /// alignment fragment.
-    #[arg(
-        short = 'M',
-        long = "min-fragment-length",
-        default_value = "10",
-        value_name = "n"
-    )]
-    pub min_fragment_length: usize,
-
-    /// The distance used to approximate various
-    /// alignment overlap conditions.
-    #[arg(
-        short = 'F',
-        long = "fudge-distance",
-        default_value = "10",
-        value_name = "n"
-    )]
-    pub fudge_distance: usize,
+    /// The maximum seperation or overlap in nucleotides on both target and consensus
+    /// for a join to be allowed between inverted alignments.
+    #[arg(long = "inversion-distance", default_value = "20", value_name = "n")]
+    pub inversion_distance: isize,
 
     /// The size of the window looked at to determine a single alignment score in nucleotides.
     #[arg(
@@ -174,10 +176,82 @@ pub struct AnnotationArgs {
         value_name = "f"
     )]
     pub skip_state_score_shift: f64,
+
+    /// The minimum cost for keeping an alignment in a segment for history tracing.
+    #[arg(
+        long = "min-segment-confidence",
+        default_value = "0.1",
+        value_name = "f"
+    )]
+    pub min_block_confidence: f64,
+
+    /// The max depth of the histories used for identifying joins.
+    #[arg(long = "max-history-depth", default_value = "64", value_name = "n")]
+    pub max_history_depth: usize,
+
+    /// The max number of allowed annotations an annotation can consider linking to independantly in front of it...
+    #[arg(long = "max-forward-links", default_value = "5", value_name = "n")]
+    pub max_forward_links: usize,
+
+    /// The total number of histories allowed in a single segment.
+    /// Additional histories are removed, lowest scoring first.
+    /// Set to 0 to disable.
+    #[arg(long = "max-histories", default_value = "10000", value_name = "n")]
+    pub max_histories_per_segment: usize,
+
+    /// The lowest score a history can have before being pruned.
+    /// This is relative to the best scoring history for a segment.
+    /// Set to 0 or greater to disable.
+    #[arg(long = "min-history-score", default_value = "-500.0", value_name = "f")]
+    pub min_relative_history_score: f64,
+
+    /// The amount of overlap between two joinable sequences in the consensus
+    /// before a penalty starts being applied to the join.
+    #[arg(long = "free-join-overlap", default_value = "4", value_name = "n")]
+    pub free_join_consensus_overlap: usize,
+
+    /// The amount of gap between two joinable sequences
+    /// before a penalty starts being applied to the join.
+    #[arg(long = "free-join-gap", default_value = "10", value_name = "n")]
+    pub free_join_consensus_gap: usize,
+
+    /// The amount of penalty to apply to a join at the maximum allowed consensus overlap
+    /// A value of 1 means to apply a penalty equal to a query jump.
+    /// The cost grows linearly to this value as the overlap increases.
+    #[arg(
+        long = "consensus-overlap-penalty",
+        default_value = "1.0",
+        value_name = "f"
+    )]
+    pub join_consensus_overlap_penalty: f64,
+
+    /// The amount of penalty to apply to a join at the maximum allowed consensus gap
+    /// A value of 1 means to apply a penalty equal to a query jump.
+    /// The cost grows linearly to this value as the gap increases.
+    #[arg(
+        long = "consensus-gap-penalty",
+        default_value = "0.5",
+        value_name = "f"
+    )]
+    pub join_consensus_gap_penalty: f64,
+
+    /// The amount of penalty to apply to a join at the maximum allowed target gap
+    /// A value of 1 means to apply a penalty equal to a query jump.
+    /// The cost grows linearly to this value as the gap between the sequences in the target space increases.
+    #[arg(long = "target-gap-penalty", default_value = "0.4", value_name = "f")]
+    pub join_target_gap_penalty: f64,
 }
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct IoArgs {
+    /// Specify path to save aurora annotations to.
+    /// Defaults to sending results to standard output.
+    #[arg(short = 'o', long = "output", value_name = "path")]
+    pub output_path: Option<PathBuf>,
+    /// Specify path to dump verbose annotations (with all ambiguous annotation options) to.
+    /// Defaults to not saving verbose annotations.
+    #[arg(short = 'a', long = "ambiguity-file", value_name = "path")]
+    pub ambiguity_path: Option<PathBuf>,
     /// Produce a file that describes the regions
     #[arg(long = "regions", value_name = "path")]
     pub regions_path: Option<PathBuf>,
@@ -205,10 +279,6 @@ pub struct VisualizationArgs {
     #[arg(long = "viz-out", default_value = "./viz", value_name = "path")]
     pub viz_output_path: PathBuf,
 
-    /// Produce visualization output for potential join "assemblies"
-    #[arg(long = "assembly-viz")]
-    pub assembly_viz: bool,
-
     /// A list of target names, starts, and ends
     /// that will constrain the visualization output
     #[arg(
@@ -218,10 +288,22 @@ pub struct VisualizationArgs {
     )]
     pub viz_constraints: Vec<VizConstraint>,
 
+    /// Enable output of per position scores to the visual.
+    #[arg(long = "viz-enable-scores")]
+    pub viz_enable_scores: bool,
+
     /// The path to the BED file that contains
     /// reference annotations for visualization
     #[arg(short = 'R', long = "viz-ref-bed", value_name = "path")]
     pub viz_reference_bed_path: Option<PathBuf>,
+
+    /// Dump additional debug files to the visualization.
+    #[arg(long = "debug")]
+    pub debug: bool,
+
+    /// Disable history tracing entirely, dumping only visuals.
+    #[arg(long = "disable-tracing")]
+    pub disable_tracing: bool,
 
     #[clap(skip)]
     pub viz_reference_bed_index: HashMap<String, usize>,
@@ -232,7 +314,7 @@ fn main() -> Result<()> {
     let viz_args = &mut args.visualization_args;
 
     if viz_args.viz {
-        if let Ok(metadata) = fs::metadata(&viz_args.viz_output_path) {
+        if let Result::Ok(metadata) = fs::metadata(&viz_args.viz_output_path) {
             if metadata.is_dir() {
                 // TODO: real error
                 panic!(
@@ -324,31 +406,31 @@ fn main() -> Result<()> {
         });
     }
 
-    if viz_args.viz || viz_args.assembly_viz {
+    if viz_args.viz {
         let error_msg = "failed to write to index.html";
         let index_file = File::create(viz_args.viz_output_path.join("index.html")).unwrap();
         let mut index_writer = BufWriter::new(index_file);
 
-        if viz_args.viz {
-            viz_args
-                .viz_constraints
-                .iter()
-                .enumerate()
-                .for_each(|(idx, c)| {
-                    writeln!(
-                        &mut index_writer,
-                        "<a href={}-{}-{}.html>slice {} | {} {}:{}</a><br>",
-                        c.target_name,
-                        c.target_start,
-                        c.target_end,
-                        idx,
-                        c.target_name,
-                        c.target_start,
-                        c.target_end,
-                    )
-                    .expect(error_msg);
-                });
-        }
+        writeln!(&mut index_writer, "<h3>Statistics</h3><a href=\"family_stats.html\">Families</a><br><a href=\"inversion_stats.html\">Inversions</a><br>")?;
+
+        viz_args
+            .viz_constraints
+            .iter()
+            .enumerate()
+            .for_each(|(idx, c)| {
+                writeln!(
+                    &mut index_writer,
+                    "<a href=\"{}-{}-{}.html\">slice {} | {} {}:{}</a><br>",
+                    c.target_name,
+                    c.target_start,
+                    c.target_end,
+                    idx,
+                    c.target_name,
+                    c.target_start,
+                    c.target_end,
+                )
+                .expect(error_msg);
+            });
 
         proximity_groups.iter().enumerate().for_each(|(idx, g)| {
             writeln!(
@@ -361,23 +443,12 @@ fn main() -> Result<()> {
             )
             .expect(error_msg);
 
-            if viz_args.viz {
-                writeln!(
-                    &mut index_writer,
-                    "    <li><a href={}/index.html>annotations</a></li>",
-                    idx,
-                )
-                .expect(error_msg);
-            }
-
-            if viz_args.assembly_viz {
-                writeln!(
-                    &mut index_writer,
-                    "    <li><a href={}/assembly_index.html>assemblies</a></li>",
-                    idx,
-                )
-                .expect(error_msg);
-            }
+            writeln!(
+                &mut index_writer,
+                "    <li><a href=\"{}/index.html\">annotations</a></li>",
+                idx,
+            )
+            .expect(error_msg);
 
             writeln!(&mut index_writer, "</ul>").expect(error_msg);
         });
@@ -388,19 +459,62 @@ fn main() -> Result<()> {
         args.annotation_args.target_join_distance
     ));
 
+    let mut output_file = if let Some(path) = &args.io_args.output_path {
+        Some(File::create(path)?)
+    } else {
+        None
+    };
+
+    let mut ambiguity_file = if let Some(path) = &args.io_args.ambiguity_path {
+        Some(File::create(path)?)
+    } else {
+        None
+    };
+
     rayon::ThreadPoolBuilder::new()
         .num_threads(args.performance_args.num_threads)
         .build_global()
         .unwrap();
 
-    proximity_groups
+    let mut results = proximity_groups
         .par_iter()
         .panic_fuse()
-        // .inspect(|g| println!("{g:?}"))
         .enumerate()
-        .for_each(|(region_idx, group)| {
-            run_pipeline(group, &alignment_data, region_idx, args.clone());
-        });
+        .map(|(region_idx, group)| {
+            (
+                region_idx,
+                run_pipeline(group, &alignment_data, region_idx, args.clone()),
+            )
+        })
+        .collect::<Vec<(usize, Vec<AmbiguousAnnotation>)>>();
+    results.sort_by_key(|v| v.0);
+
+    for (_region, annots) in results.iter() {
+        if let Some(file_out) = output_file.as_mut() {
+            AmbiguousAnnotation::write(annots, file_out, true)?;
+        } else {
+            AmbiguousAnnotation::write(annots, &mut std::io::stdout(), true)?;
+        }
+
+        if let Some(amb_file_out) = ambiguity_file.as_mut() {
+            AmbiguousAnnotation::write(annots, amb_file_out, false)?;
+        }
+    }
+
+    if args.visualization_args.viz {
+        let mut family_stats_writer = File::create(
+            args.visualization_args
+                .viz_output_path
+                .join("family_stats.html"),
+        )?;
+        write_family_statistics(&mut family_stats_writer, &results)?;
+        let mut inv_stats_writer = File::create(
+            args.visualization_args
+                .viz_output_path
+                .join("inversion_stats.html"),
+        )?;
+        write_inversion_statistics(&mut inv_stats_writer, &results)?;
+    }
 
     Ok(())
 }
