@@ -1,4 +1,4 @@
-use std::fmt::{Debug, Display, format};
+use std::fmt::{format, Debug, Display};
 
 use crate::alignment::Strand;
 use itertools::Itertools;
