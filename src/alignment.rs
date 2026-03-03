@@ -188,7 +188,6 @@ impl Alignment {
                                 transitions10x += 1;
                             }
                         }
-                        transitions10x += 10;
                     }
                     _ => {}
                 }
