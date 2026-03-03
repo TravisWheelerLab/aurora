@@ -476,7 +476,7 @@ fn main() -> Result<()> {
         .build_global()
         .unwrap();
 
-    let results = proximity_groups
+    let mut results = proximity_groups
         .par_iter()
         .panic_fuse()
         .enumerate()
@@ -487,6 +487,7 @@ fn main() -> Result<()> {
             )
         })
         .collect::<Vec<(usize, Vec<AmbiguousAnnotation>)>>();
+    results.sort_by_key(|v| v.0);
 
     for (_region, annots) in results.iter() {
         if let Some(file_out) = output_file.as_mut() {
