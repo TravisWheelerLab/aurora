@@ -103,8 +103,8 @@ pub fn write_family_statistics(
             "Family",
             "Occurrences",
             "Coverage",
-            "Kimera80 Boxplot",
-            "Kimera80 KDE",
+            "Kimura80 Boxplot",
+            "Kimura80 KDE",
         ],
         &family_stats
             .iter()

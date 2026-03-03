@@ -189,7 +189,12 @@ impl Alignment {
                             }
                         }
                     }
-                    _ => {}
+                    _ => {
+                        if matches!(prior_state, NucleotideAlignmentType::Transition) {
+                            // Correct prior value so it's 1/10th as expected...
+                            transitions10x -= 9;
+                        }
+                    }
                 }
             } else {
                 match current_state {
