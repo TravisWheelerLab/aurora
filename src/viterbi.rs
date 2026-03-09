@@ -170,6 +170,7 @@ pub type Trace = Vec<TraceStep>;
 #[derive(Clone)]
 pub struct TraceSegment {
     pub query_id: usize,
+    #[allow(dead_code)]
     pub ali_id: usize,
     pub row_idx: usize,
     pub col_start: usize,
@@ -186,7 +187,7 @@ pub fn trace_segments(trace: &Trace) -> Vec<TraceSegment> {
         .iter()
         .zip(trace.iter().skip(1))
         .for_each(|(step, next_step)| {
-            if step.ali_id != next_step.ali_id || step.col_idx + 1 != next_step.col_idx {
+            if step.row_idx != next_step.row_idx || step.col_idx + 1 != next_step.col_idx {
                 debug_assert_eq!(start_step.row_idx, step.row_idx);
                 debug_assert_eq!(start_step.ali_id, step.ali_id);
                 trace_segments.push(TraceSegment {

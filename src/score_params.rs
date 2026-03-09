@@ -34,7 +34,7 @@ impl ScoreParams {
         query_jump_penalty_nats: f64,
         num_skip_loops_eq_to_jump: usize,
     ) -> Self {
-        let query_jump_score = query_jump_penalty_nats - (num_alignments as f64).ln();
+        let query_jump_score = query_jump_penalty_nats - (num_alignments.max(1) as f64).ln();
         // jumping to the skip state and then jumping back to a query sequence
         // should be the same cost as jumping between query sequences
         // note for 2nd term: add a tiny bit of penalty to make entering and leaving asymmetrical

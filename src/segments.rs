@@ -465,7 +465,7 @@ pub fn segments_from_matrix_trace(
 
         let row_filter = |&&row_idx: &&usize| {
             (row_idx == 0)
-                || (seg.ali_id != 0
+                || (seg.row_idx != 0  // If this is a skip state in the first trace, we force it to be one in the second history trace...
                     && (row_conf_sum[row_idx] / (row_valid_cell_count[row_idx].max(1) as f64))
                         > min_confidence)
         };

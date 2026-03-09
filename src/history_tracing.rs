@@ -142,7 +142,7 @@ fn remove_low_scoring_histories(
         .iter()
         .map(history_score)
         .max_by(f64::total_cmp)
-        .unwrap_or(0.0);
+        .unwrap_or(f64::NEG_INFINITY);
 
     let mut next_insertion_point = start_offset;
 
@@ -821,7 +821,7 @@ pub fn history_backtrace_append_block(
 
     if blocks
         .iter()
-        .any(|&b| matches!(b.block_type, BlockType::Alignment))
+        .any(|&b| matches!(b.block_type, BlockType::Alignment | BlockType::TandemRepeat))
     {
         // Case 2: Is part of a join, use shared join index...
         if let Some(&(check_idx, _hist_idx, stack_idx, group_join_idx)) = join_stack.last() {
