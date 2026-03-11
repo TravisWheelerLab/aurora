@@ -211,7 +211,7 @@ impl<'a> AdjudicationSodaData<'a> {
             "confidenceSegmentStrings": self.confidence_segment_strings(),
             "historySegments": self.history_segments(),
             "historyBlocks": self.history_blocks(),
-            "alignmentScores": self.alignment_scores(),
+            "alignmentConfidences": self.alignment_confidences(),
         });
 
         let viz_html = Self::TEMPLATE
@@ -227,7 +227,7 @@ impl<'a> AdjudicationSodaData<'a> {
         std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
     }
 
-    fn alignment_scores(&self) -> Option<Vec<String>> {
+    fn alignment_confidences(&self) -> Option<Vec<String>> {
         if self.dump_confidences {
             let val = self.confidence_matrix;
             let region_start = val.def.target_start;
@@ -249,12 +249,12 @@ impl<'a> AdjudicationSodaData<'a> {
                         let seq_arr = (start..=end)
                             .zip(max_arr.iter())
                             .flat_map(|(col, max_score)| {
-                                (val.get(row, col).ln() - max_score.ln()).to_le_bytes()
+                                ((val.get(row, col).ln() - max_score.ln()) as f32).to_le_bytes()
                             })
                             .collect_vec();
                         let max_arr_enc = max_arr
                             .iter()
-                            .flat_map(|v| v.ln().to_le_bytes())
+                            .flat_map(|v| (v.ln() as f32).to_le_bytes())
                             .collect_vec();
 
                         format!(

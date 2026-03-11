@@ -770,7 +770,7 @@ function run(data) {
         }
 
         if (domainWidth < state.aliThresh) {
-          let annotations = (params.alignmentScores != null)? domainFilter(params.alignmentScores): [];
+          let annotations = (params.alignmentConfidences != null)? domainFilter(params.alignmentConfidences): [];
           annotations = annotations.map((val) => {
             let offset = val.start;
             let domain = this.domain;
@@ -988,7 +988,7 @@ function run(data) {
         inactiveSegments: params.inactiveSegments[state.traceIteration],
         confidenceSegments:
           params.confidenceSegments[state.traceIteration].filter(queryFilter),
-        alignmentScores: (params.alignmentScores != null)? params.alignmentScores.filter(queryFilter): null,
+        alignmentConfidences: (params.alignmentConfidences != null)? params.alignmentConfidences.filter(queryFilter): null,
       };
 
       this.renderParams = filteredParams;
@@ -1355,18 +1355,18 @@ function run(data) {
       let intView = new Uint8Array(dataString.length);
       for(let i = 0; i < dataString.length; i++) intView[i] = dataString.charCodeAt(i);
       if(!isLittleEndian()) {
-        for(let i = 0; i < intView.length; i += 8) {
-          for(let j = 0; j < 8; j++) {
-            let tmp = intView[i + (7 - j)];
-            intView[i + (7 - j)] = intView[i + j];
+        for(let i = 0; i < intView.length; i += 4) {
+          for(let j = 0; j < 4; j++) {
+            let tmp = intView[i + (3 - j)];
+            intView[i + (3 - j)] = intView[i + j];
             intView[i + j] = tmp;
           }
         }
       }
-      return new Float64Array(intView.buffer);
+      return new Float32Array(intView.buffer);
   }
 
-  function prepareAlignmentScores(alScores) {
+  function prepareAlignmentConfidences(alScores) {
     if(alScores == null) return alScores;
 
     let alignment_scores = [];
@@ -1453,7 +1453,7 @@ function run(data) {
       ...prepareConfidenceSegments(data.confidenceSegmentStrings),
       historySegments: prepareSegments(data.historySegments, data.targetStart),
       historyBlocks: prepareBlocks(data.historyBlocks, data.targetStart),
-      alignmentScores: prepareAlignmentScores(data.alignmentScores),
+      alignmentConfidences: prepareAlignmentConfidences(data.alignmentConfidences),
     };
 
     alignments.proxy.forEach((a) => {
