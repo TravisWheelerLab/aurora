@@ -17,7 +17,7 @@ use crate::{
     support::windowed_confidence,
     viterbi::{trace_segments, traceback, viterbi_collapsed},
     viz::{
-        debug::{dump_debug_history_info, dump_final_trace_statistics, dump_history_scores},
+        debug::{dump_debug_history_info, dump_final_trace_statistics},
         AdjudicationSodaData, AdjudicationSodaDataArgs,
     },
     windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
@@ -230,12 +230,6 @@ pub fn run_pipeline(
                 vis_args.viz_output_path.join("history_info.csv"),
             )
             .map_err(|_| eprintln!("Unable to save debug history info!"))
-            .ok();
-            dump_history_scores(
-                &history,
-                vis_args.viz_output_path.join("history_scores.txt"),
-            )
-            .map_err(|_| eprintln!("Unable to save history scores!"))
             .ok();
         }
 
