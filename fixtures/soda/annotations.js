@@ -322,7 +322,7 @@ function run(data) {
     });
 
     let segmentsRenderBlockLinks = (chart, block) => {
-      if(block.link_data == undefined) return undefined;
+      if(block.link_data == undefined || block.link_data.length == 0) return undefined;
       let arc = soda.arc({
         chart: chart,
         annotations: block.link_data,
@@ -509,24 +509,24 @@ function run(data) {
           chart: this,
           annotations: params.historyBlocks,
           click: (s, d) => {
-            let link_data = d.a.link_data;
+            let processedLinks = d.a.link_data;
 
-            if(link_data) {
+            if(processedLinks) {
               delete d.a.link_data;
               if(d.a.arc != undefined) {
                 d.a.arc.remove();
                 delete d.a.arc;
               }
             } else {
-              let links = params.blockLinks[d.a.row - 1];
+              let links = d.a.links;
               if(links == undefined || links.length == 0) return;
 
               let link_data = [];
 
               links.forEach((link) => {
-                let other_segment = params.historyBlocks.find((blk) => blk.row - 1 == link.other);
+                let other_segment = link.segment;
                 if(other_segment == undefined) return;
-                let [s1, s2] = [d.a.segment, other_segment.segment].sort();
+                let [s1, s2] = [d.a.segment, other_segment].sort();
                 
                 link_data.push({
                   start: params.historySegments[s1].end,
@@ -1308,8 +1308,22 @@ function run(data) {
       let join_to = parseInt(tokens[6]);
 
       let confidence = parseFloat(tokens[7]);
+      let alignment_score = parseFloat(tokens[8]);
 
-      let label = tokens[8];
+      let label = tokens[9];
+      let links = undefined;
+      if(tokens[10].trim() != "") {
+        links = tokens[10].split(";").map((v) => {
+          let [segment, row, weight] = v.split(":");
+          return {
+            segment: parseInt(segment),
+            row: parseInt(row),
+            weight: parseFloat(weight)
+          };
+        });
+      } else {
+        links = [];
+      }
 
       blocks.push({
         id: `block-${index}`,
@@ -1321,35 +1335,13 @@ function run(data) {
         query_id,
         join_to,
         confidence,
-        label
+        alignment_score,
+        label,
+        links
       });
     }
 
     return blocks;
-  }
-
-  function prepareBlockLinks(blockLinks) {
-    let new_block_links = [];
-
-    for(const links of blockLinks) {
-      let new_links = [];
-
-      for(const edgeStr of links) {
-        let tokens = edgeStr.split(",");
-
-        let other = parseInt(tokens[0]);
-        let weight = parseFloat(tokens[1]);
-
-        new_links.push({
-          other,
-          weight
-        });
-      }
-
-      new_block_links.push(new_links);
-    }
-
-    return new_block_links;
   }
 
   function isLittleEndian() {
@@ -1461,7 +1453,6 @@ function run(data) {
       ...prepareConfidenceSegments(data.confidenceSegmentStrings),
       historySegments: prepareSegments(data.historySegments, data.targetStart),
       historyBlocks: prepareBlocks(data.historyBlocks, data.targetStart),
-      blockLinks: prepareBlockLinks(data.blockLinks),
       alignmentScores: prepareAlignmentScores(data.alignmentScores),
     };
 

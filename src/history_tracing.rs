@@ -1,5 +1,5 @@
 use crate::{
-    assembly::{Edge, LinkType, SegmentAssemblyGraph},
+    assembly::SegmentAssemblyGraph,
     score_params::ScoreParams,
     segment_groups::SegmentGroups,
     segments::{Block, BlockType, Segment, SegmentedMatrix},

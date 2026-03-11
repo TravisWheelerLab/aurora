@@ -289,7 +289,7 @@ pub fn run_pipeline(
     });
 
     // Grab the annotations...
-    let mut annotations: Vec<AmbiguousAnnotation> = to_annotations(
+    let annotations: Vec<AmbiguousAnnotation> = to_annotations(
         proximity_group,
         alignment_data,
         &refined_trace_segments,
@@ -330,8 +330,8 @@ pub fn run_pipeline(
         });
     }
 
-    annotations.sort_by_key(|r| r.annotations.iter().map(|a| a.target_start).min());
-    annotations.retain(|r| r.annotations.iter().any(|a| a.query_name != "skip"));
+    // annotations.sort_by_key(|r| r.annotations.iter().map(|a| a.target_start).min());
+    // annotations.retain(|r| r.annotations.iter().any(|a| a.query_name != "skip"));
 
     annotations
 }

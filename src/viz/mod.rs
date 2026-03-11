@@ -7,6 +7,7 @@ use bed::*;
 use block::*;
 
 use std::{
+    collections::HashMap,
     fs::File,
     io::{BufRead, BufReader},
     num::ParseIntError,
@@ -20,7 +21,7 @@ use crate::{
         SPACE_UTF8,
     },
     annotation::AmbiguousAnnotation,
-    assembly::AssemblyGraph,
+    assembly::SegmentAssemblyGraph,
     chunks::ProximityGroup,
     history_tracing::{AnnotatedRange, RefinedTraceSegment},
     matrix::Matrix,
@@ -136,7 +137,7 @@ pub struct AdjudicationSodaData<'a> {
     maybe_constraint: Option<&'a VizConstraint>,
     segments: &'a SegmentedMatrix,
     history_counts: &'a [usize],
-    links: &'a AssemblyGraph,
+    links: &'a SegmentAssemblyGraph,
     dump_confidences: bool,
     args: &'a AuroraArgs,
 }
@@ -149,7 +150,7 @@ pub struct AdjudicationSodaDataArgs<'a> {
     pub trace: &'a Vec<RefinedTraceSegment>,
     pub segments: &'a SegmentedMatrix,
     pub history_counts: &'a [usize],
-    pub links: &'a AssemblyGraph,
+    pub links: &'a SegmentAssemblyGraph,
     pub dump_confidences: bool,
     pub args: &'a AuroraArgs,
 }
@@ -210,7 +211,6 @@ impl<'a> AdjudicationSodaData<'a> {
             "confidenceSegmentStrings": self.confidence_segment_strings(),
             "historySegments": self.history_segments(),
             "historyBlocks": self.history_blocks(),
-            "blockLinks": self.block_links(),
             "alignmentScores": self.alignment_scores(),
         });
 
@@ -272,19 +272,6 @@ impl<'a> AdjudicationSodaData<'a> {
         None
     }
 
-    fn block_links(&self) -> Vec<Vec<String>> {
-        self.links
-            .link_graph
-            .iter()
-            .map(|links| {
-                links
-                    .iter()
-                    .map(|edge| format!("{},{}", edge.edge_to, edge.weight))
-                    .collect()
-            })
-            .collect()
-    }
-
     fn history_segments(&self) -> Vec<String> {
         self.segments
             .iter()
@@ -294,42 +281,68 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 
     fn history_blocks(&self) -> Vec<String> {
+        let mut links_per_block: HashMap<(usize, usize), Vec<(usize, usize, f64)>> = HashMap::new();
+
+        for (&(a, b), &w) in self.links.link_graph.iter() {
+            links_per_block
+                .entry(a)
+                .or_default()
+                .push((b.0, b.1, w.weight));
+            links_per_block
+                .entry(b)
+                .or_default()
+                .push((a.0, a.1, w.weight));
+        }
+
         self.segments
             .iter()
             .enumerate()
             .flat_map(|(s_idx, s)| {
-                s.blocks.iter().enumerate().map(move |(b_idx, b)| {
-                    let q_id = match b.query_id {
-                        Some(v) => v.to_string(),
-                        _ => (-1).to_string(),
-                    };
-                    let name = match b.block_type {
-                        BlockType::Skip => "Skip".to_string(),
-                        BlockType::Alignment => self
-                            .alignment_data
-                            .query_name_map
-                            .get(b.query_id.unwrap())
-                            .to_string(),
-                        BlockType::TandemRepeat => format!(
-                            "repeat#{}",
-                            self.group.tandem_repeats[b.row_idx - self.group.alignments.len() - 1]
-                                .consensus_pattern
-                        ),
-                    };
+                s.blocks
+                    .iter()
+                    .enumerate()
+                    .map(|(b_idx, b)| {
+                        let q_id = match b.query_id {
+                            Some(v) => v.to_string(),
+                            _ => (-1).to_string(),
+                        };
+                        let name = match b.block_type {
+                            BlockType::Skip => "Skip".to_string(),
+                            BlockType::Alignment => self
+                                .alignment_data
+                                .query_name_map
+                                .get(b.query_id.unwrap())
+                                .to_string(),
+                            BlockType::TandemRepeat => format!(
+                                "repeat#{}",
+                                self.group.tandem_repeats
+                                    [b.row_idx - self.group.alignments.len() - 1]
+                                    .consensus_pattern
+                            ),
+                        };
 
-                    format!(
-                        "{},{},{},{},{},{},{},{},{}",
-                        s_idx,
-                        b_idx,
-                        b.row_idx,
-                        q_id,
-                        b.target_start,
-                        b.target_end,
-                        b.can_join_up_to,
-                        b.confidence,
-                        name
-                    )
-                })
+                        let links = links_per_block
+                            .get(&(s_idx, b.row_idx))
+                            .iter()
+                            .flat_map(|v| v.iter().map(|&v| format!("{}:{}:{}", v.0, v.1, v.2)))
+                            .join(";");
+
+                        format!(
+                            "{},{},{},{},{},{},{},{},{},{},{}",
+                            s_idx,
+                            b_idx,
+                            b.row_idx,
+                            q_id,
+                            b.col_start,
+                            b.col_end,
+                            b.can_join_up_to,
+                            b.avg_confidence,
+                            b.alignment_score,
+                            name,
+                            links,
+                        )
+                    })
+                    .collect_vec()
             })
             .collect()
     }

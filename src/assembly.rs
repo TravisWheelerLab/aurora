@@ -9,15 +9,6 @@ use crate::{
     AnnotationArgs,
 };
 
-/// The direction of an `Edge` in terms of where
-/// `&Alignment` B (value) is in relation to `&Alignment` A (key)
-/// in the coordinate space of the chromosome
-#[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
-pub enum Direction {
-    Left,
-    Right,
-}
-
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
 pub enum LinkType {
     Forward,
@@ -30,6 +21,7 @@ pub enum LinkType {
 pub struct Edge {
     pub weight: f64,
     pub first_sparse_row: usize,
+    #[allow(dead_code)]
     pub second_sparse_row: usize,
     #[allow(dead_code)]
     pub link_type: LinkType,
@@ -182,7 +174,7 @@ fn link_assemblies(
 
             if within_target_distance_threshold && consensus_is_colinear && is_significant {
                 graph.insert(
-                    ((a.0, a_block.row_idx), (b.1, b_block.row_idx)),
+                    ((a.0, a_block.row_idx), (b.0, b_block.row_idx)),
                     Edge {
                         weight,
                         first_sparse_row: a.1,
@@ -200,6 +192,7 @@ type SegmentAndDenseRow = (usize, usize);
 /// Represents graph of compatable alignments on the genome.
 /// For each alignment, stores all alignments from the same query in front of it.
 pub struct SegmentAssemblyGraph {
+    #[allow(dead_code)]
     pub alignment_block_map: Vec<Vec<(usize, usize)>>, // Maps alignment to it's corresponding blocks...
     pub link_graph: HashMap<(SegmentAndDenseRow, SegmentAndDenseRow), Edge>,
 }
