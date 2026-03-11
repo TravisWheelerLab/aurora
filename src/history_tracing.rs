@@ -1,5 +1,5 @@
 use crate::{
-    assembly::{AssemblyGraph, Direction, Edge, LinkType},
+    assembly::{Edge, LinkType, SegmentAssemblyGraph},
     score_params::ScoreParams,
     segment_groups::SegmentGroups,
     segments::{Block, BlockType, Segment, SegmentedMatrix},
@@ -212,25 +212,17 @@ fn keep_unique_histories(histories: &mut Vec<HistoryEntry>, start_offset: usize)
 }
 
 fn check_for_forward_link(
-    assembly_graph: &AssemblyGraph,
+    assembly_graph: &SegmentAssemblyGraph,
+    start_segment: usize,
+    later_segment: usize,
     start_block: &Block,
     later_block: &Block,
 ) -> Option<f64> {
-    // Weight, direction, and link type are ignored for edges...
-    let edge = Edge {
-        edge_to: later_block.row_idx - 1,
-        weight: 0.0,
-        direction: Direction::Right,
-        link_type: LinkType::Forward,
-    };
-
-    // If we find it in either the forward or reverse graph, check it's in front of the start alignment...
-    if let Some(e1) = assembly_graph.link_graph[start_block.row_idx - 1].get(&edge) {
-        if e1.direction == edge.direction {
-            Some(e1.weight)
-        } else {
-            None
-        }
+    if let Some(e1) = assembly_graph.link_graph.get(&(
+        (start_segment, start_block.row_idx),
+        (later_segment, later_block.row_idx),
+    )) {
+        Some(e1.weight)
     } else {
         None
     }
@@ -260,7 +252,8 @@ fn get_valid_joins_for_current_group(
     current_segment_index: usize,
     prior_segment: &Segment,
     prior_group: &[usize],
-    assembly_graph: &AssemblyGraph,
+    prior_segment_index: usize,
+    assembly_graph: &SegmentAssemblyGraph,
     epsilon: f64,
 ) -> (Vec<usize>, Vec<(usize, f64)>, Vec<usize>) {
     let mut values: Vec<(f64, usize)> = Vec::with_capacity(current_group.len());
@@ -280,9 +273,13 @@ fn get_valid_joins_for_current_group(
                 if query_id1 == query_id2 {
                     if p_block.can_join_up_to >= current_segment_index {
                         // Get cost of connection...
-                        if let Some(weight) =
-                            check_for_forward_link(assembly_graph, p_block, c_block)
-                        {
+                        if let Some(weight) = check_for_forward_link(
+                            assembly_graph,
+                            prior_segment_index,
+                            current_segment_index,
+                            p_block,
+                            c_block,
+                        ) {
                             // If greater or equal to, add it to the list...
                             values.push((weight, current_group[current_idx]));
                             current_idx += 1;
@@ -305,7 +302,8 @@ fn get_valid_joins_for_current_group(
         prior_idx += !current_is_smaller as usize;
     }
 
-    // TODO: Consider replacing this with linear runtime version that possibly adds more histories, as it apears the join confidences are in almost all cases different, so this optimal algorithm is just wasting time....
+    // Comments below are for implementation that minimizes the number of newly created groups, but at O(n log(n)) cost...
+    // Since in most cases a new group has to be made for all, currently using faster linear method...
     // values.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
     let last_weight = f64::NEG_INFINITY;
 
@@ -387,7 +385,7 @@ struct JoinCheckArgs<'a> {
     histories: &'a [HistoryEntry],
     segments: &'a SegmentedMatrix,
     segment_groups: &'a [SegmentGroups],
-    assembly_graph: &'a AssemblyGraph,
+    assembly_graph: &'a SegmentAssemblyGraph,
     current_group_reference: (usize, usize),
     start_entry: usize,
     history_depth: usize,
@@ -446,6 +444,7 @@ fn check_for_joins(args: JoinCheckArgs) -> PossibleJoins {
                             segment_idx,
                             &segments[val.segment],
                             segment_groups[val.segment].get_group(val.group_index),
+                            val.segment,
                             assembly_graph,
                             epsilon,
                         );
@@ -465,7 +464,7 @@ fn check_for_joins(args: JoinCheckArgs) -> PossibleJoins {
 pub fn history_viterbi_on_segments(
     segments: &SegmentedMatrix,
     score_params: &ScoreParams,
-    assembly_graph: &AssemblyGraph,
+    assembly_graph: &SegmentAssemblyGraph,
     history_depth: usize,
     max_history_count: usize,
     min_rel_history_score: f64,
@@ -542,7 +541,7 @@ pub fn history_viterbi_on_segments(
                             + group_transition_cost
                             + segment_groups[segment_idx]
                                 .get_first_block(&segments[segment_idx], new_group_index)
-                                .confidence;
+                                .alignment_score;
 
                         histories.push(HistoryEntry::Join(HistoryInfo {
                             segment: segment_idx,
@@ -562,7 +561,7 @@ pub fn history_viterbi_on_segments(
                         let new_score = history_score(&histories[prior_hist_idx])
                             + segment_groups[segment_idx]
                                 .get_first_block(&segments[segment_idx], group_idx)
-                                .confidence;
+                                .alignment_score;
 
                         histories.push(HistoryEntry::Append(HistoryInfo {
                             segment: segment_idx,
@@ -597,7 +596,7 @@ pub fn history_viterbi_on_segments(
                                 .add_group(&segments[segment_idx], new_matching_group);
                             let new_score = history_score(&histories[prior_hist_idx])
                                 + score_params.transition(is_skip, false)
-                                + current_rep_block.confidence;
+                                + current_rep_block.alignment_score;
 
                             // Add append event for matching blocks, this will have no transition penalty...
                             histories.push(HistoryEntry::Append(HistoryInfo {
@@ -615,7 +614,7 @@ pub fn history_viterbi_on_segments(
                                 .add_group(&segments[segment_idx], new_mismatching_group);
                             let new_score = history_score(&histories[prior_hist_idx])
                                 + score_params.transition(is_skip, true)
-                                + current_rep_block.confidence;
+                                + current_rep_block.alignment_score;
 
                             // Add append event for mismatching blocks, this will have a transition penalty...
                             histories.push(HistoryEntry::Append(HistoryInfo {
@@ -673,6 +672,9 @@ pub struct AnnotatedRange {
     pub row_idx: usize,
     pub col_start: usize,
     pub col_end: usize,
+    pub query_start: usize,
+    pub query_end: usize,
+    pub avg_confidence: f64,
 }
 
 #[derive(Debug)]
@@ -775,8 +777,12 @@ fn get_possible_extensions<'a>(
         .filter_map(|(b, a)| {
             let mut annot = a.clone();
 
-            if b.target_end >= annot.col_start.saturating_sub(1) {
-                annot.col_start = b.target_start;
+            if b.col_end >= annot.col_start.saturating_sub(1) {
+                let w = (b.col_end - b.col_start + 1) as f64 / (a.col_end - b.col_start + 1) as f64;
+
+                annot.col_start = b.col_start;
+                annot.query_start = b.query_start;
+                annot.avg_confidence = a.avg_confidence * (1.0 - w) + b.avg_confidence * w;
                 return Some(annot);
             }
             None
@@ -792,8 +798,11 @@ fn get_joinable_extensions<'a>(
         .map(|(b, _a)| AnnotatedRange {
             query_id: b.query_id,
             row_idx: b.row_idx,
-            col_start: b.target_start,
-            col_end: b.target_end,
+            col_start: b.col_start,
+            col_end: b.col_end,
+            query_start: b.query_start,
+            query_end: b.query_end,
+            avg_confidence: b.avg_confidence,
         })
         .collect_vec()
 }
@@ -857,8 +866,11 @@ pub fn history_backtrace_append_block(
                 .map(|&b| AnnotatedRange {
                     query_id: b.query_id,
                     row_idx: b.row_idx,
-                    col_start: b.target_start,
-                    col_end: b.target_end,
+                    col_start: b.col_start,
+                    col_end: b.col_end,
+                    query_start: b.query_start,
+                    query_end: b.query_end,
+                    avg_confidence: b.avg_confidence,
                 })
                 .collect_vec(),
             join_index,

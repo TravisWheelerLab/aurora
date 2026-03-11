@@ -1,11 +1,11 @@
-use std::{collections::HashSet, hash::Hash};
+use std::{collections::HashMap, hash::Hash};
 
 use itertools::Itertools;
 
 use crate::{
     alignment::{Alignment, Strand},
-    chunks::ProximityGroup,
     score_params::ScoreParams,
+    segments::SegmentedMatrix,
     AnnotationArgs,
 };
 
@@ -28,26 +28,11 @@ pub enum LinkType {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Edge {
-    pub edge_to: usize,
     pub weight: f64,
-    pub direction: Direction,
+    pub first_sparse_row: usize,
+    pub second_sparse_row: usize,
     #[allow(dead_code)]
     pub link_type: LinkType,
-}
-
-// Hashing and equivalence only based on to edge field.
-impl PartialEq for Edge {
-    fn eq(&self, other: &Self) -> bool {
-        self.edge_to == other.edge_to
-    }
-}
-
-impl Eq for Edge {}
-
-impl Hash for Edge {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.edge_to.hash(state);
-    }
 }
 
 fn piecewise_linear_cost(
@@ -108,163 +93,167 @@ fn get_link_cost(
 }
 
 fn link_assemblies(
-    graph: &mut [HashSet<Edge>],
-    alignments: &[(usize, &Alignment)],
+    graph: &mut HashMap<(SegmentAndDenseRow, SegmentAndDenseRow), Edge>,
+    compatable_blocks: impl Iterator<Item = (usize, usize)>,
+    alignments: &[Alignment],
+    segments: &SegmentedMatrix,
     score_params: &ScoreParams,
     args: &AnnotationArgs,
 ) {
     // this relies on the alignments being sorted by target start
     // note: this assertion iter will only run in debug mode
-    alignments
-        .iter()
-        .zip(alignments.iter().skip(1))
-        .for_each(|(a, b)| {
-            debug_assert!(a.1.target_start <= b.1.target_start);
-        });
-    // We also rely on the fact that all alignment indexes are actually in the graph!
-    alignments
-        .iter()
-        .for_each(|a| debug_assert!(a.0 < graph.len()));
+    let compatable_blocks = compatable_blocks.sorted().collect_vec();
 
-    alignments
-        .iter()
-        .enumerate()
-        .for_each(|(idx, &(a_idx, a))| {
-            alignments[idx + 1..].iter().for_each(|&(b_idx, b)| {
-                // TODO: this is highly suspect, as this should never happen
-                //       ?????
-                if a == b {
-                    return;
+    compatable_blocks.iter().enumerate().for_each(|(idx, a)| {
+        compatable_blocks[idx + 1..].iter().for_each(|b| {
+            // Same segment, don't allow merging...
+            if a.0 == b.0 {
+                return;
+            }
+
+            let a_block = &segments[a.0].blocks[a.1];
+            let b_block = &segments[b.0].blocks[b.1];
+
+            // If same alignment, and neighboring segments, don't join...
+            if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
+                return;
+            }
+
+            let target_distance = b_block.col_start as isize - a_block.col_end as isize;
+
+            let a_length = a_block.query_end.abs_diff(a_block.query_start);
+            let b_length = b_block.query_end.abs_diff(b_block.query_start);
+            let min_length = a_length.min(b_length);
+
+            // Query bounds are reversed for reverse sequences, so the start is actually greater than the end (Ex. start: 1510 -> end: 105)
+
+            let (consensus_distance, link_type) = match (
+                alignments[a_block.row_idx - 1].strand,
+                alignments[b_block.row_idx - 1].strand,
+            ) {
+                (Strand::Forward, Strand::Forward) => (
+                    b_block.query_start as isize - a_block.query_end as isize,
+                    LinkType::Forward,
+                ),
+                (Strand::Reverse, Strand::Reverse) => (
+                    a_block.query_end as isize - b_block.query_start as isize,
+                    LinkType::Reverse,
+                ),
+                (Strand::Forward, Strand::Reverse) => (
+                    b_block.query_end as isize - a_block.query_end as isize,
+                    LinkType::FRInversion,
+                ),
+                (Strand::Reverse, Strand::Forward) => (
+                    a_block.query_end as isize - b_block.query_end as isize,
+                    LinkType::RFInversion,
+                ),
+                _ => panic!("Invalid strand types!"),
+            };
+
+            let within_target_distance_threshold = match link_type {
+                LinkType::FRInversion | LinkType::RFInversion => {
+                    target_distance.abs() < args.inversion_distance
                 }
+                _ => target_distance < args.target_join_distance as isize,
+            };
 
-                let target_distance = b.target_start as isize - a.target_end as isize;
+            let consensus_is_colinear = match link_type {
+                LinkType::FRInversion | LinkType::RFInversion => {
+                    consensus_distance.abs() < args.inversion_distance
+                }
+                _ => {
+                    consensus_distance > -args.consensus_join_overlap
+                        && consensus_distance < args.consensus_join_distance
+                }
+            };
 
-                let a_length = a.query_end.abs_diff(a.query_start);
-                let b_length = b.query_end.abs_diff(b.query_start);
-                let min_length = a_length.min(b_length);
+            // TODO: Hardcoded, change later...
+            let is_significant =
+                min_length >= 10 && -consensus_distance <= ((min_length / 2) as isize);
 
-                // Query bounds are reversed for reverse sequences, so the start is actually greater than the end (Ex. start: 1510 -> end: 105)
-                let (consensus_distance, link_type) = match (a.strand, b.strand) {
-                    (Strand::Forward, Strand::Forward) => (
-                        b.query_start as isize - a.query_end as isize,
-                        LinkType::Forward,
-                    ),
-                    (Strand::Reverse, Strand::Reverse) => (
-                        a.query_end as isize - b.query_start as isize,
-                        LinkType::Reverse,
-                    ),
-                    (Strand::Forward, Strand::Reverse) => (
-                        b.query_end as isize - a.query_end as isize,
-                        LinkType::FRInversion,
-                    ),
-                    (Strand::Reverse, Strand::Forward) => (
-                        a.query_end as isize - b.query_end as isize,
-                        LinkType::RFInversion,
-                    ),
-                    _ => panic!("Invalid strand types!"),
-                };
+            let weight = get_link_cost(
+                args,
+                score_params,
+                consensus_distance as f64,
+                target_distance as f64,
+            );
 
-                let within_target_distance_threshold = match link_type {
-                    LinkType::FRInversion | LinkType::RFInversion => {
-                        target_distance.abs() < args.inversion_distance
-                    }
-                    _ => target_distance < args.target_join_distance as isize,
-                };
+            // let not_reached_forward_limit = forward_count < args.max_forward_links;
 
-                let consensus_is_colinear = match link_type {
-                    LinkType::FRInversion | LinkType::RFInversion => {
-                        consensus_distance.abs() < args.inversion_distance
-                    }
-                    _ => {
-                        consensus_distance > -args.consensus_join_overlap
-                            && consensus_distance < args.consensus_join_distance
-                    }
-                };
-
-                // TODO: Hardcoded, change later...
-                let is_significant =
-                    min_length >= 10 && -consensus_distance <= ((min_length / 2) as isize);
-
-                let weight = get_link_cost(
-                    args,
-                    score_params,
-                    consensus_distance as f64,
-                    target_distance as f64,
+            if within_target_distance_threshold && consensus_is_colinear && is_significant {
+                graph.insert(
+                    ((a.0, a_block.row_idx), (b.1, b_block.row_idx)),
+                    Edge {
+                        weight,
+                        first_sparse_row: a.1,
+                        second_sparse_row: b.1,
+                        link_type,
+                    },
                 );
-
-                let forward_count: usize = graph[a_idx]
-                    .iter()
-                    .map(|v| matches!(v.direction, Direction::Right) as usize)
-                    .sum();
-                let not_reached_forward_limit = forward_count < args.max_forward_links;
-
-                if within_target_distance_threshold
-                    && consensus_is_colinear
-                    && is_significant
-                    && not_reached_forward_limit
-                {
-                    graph[a_idx].insert(Edge {
-                        edge_to: b_idx,
-                        weight,
-                        direction: Direction::Right,
-                        link_type,
-                    });
-                    graph[b_idx].insert(Edge {
-                        edge_to: a_idx,
-                        weight,
-                        direction: Direction::Left,
-                        link_type,
-                    });
-                }
-            });
+            }
         });
+    });
 }
+
+type SegmentAndDenseRow = (usize, usize);
 
 /// Represents graph of compatable alignments on the genome.
 /// For each alignment, stores all alignments from the same query in front of it.
-pub struct AssemblyGraph {
-    pub link_graph: Vec<HashSet<Edge>>,
+pub struct SegmentAssemblyGraph {
+    pub alignment_block_map: Vec<Vec<(usize, usize)>>, // Maps alignment to it's corresponding blocks...
+    pub link_graph: HashMap<(SegmentAndDenseRow, SegmentAndDenseRow), Edge>,
 }
 
-impl AssemblyGraph {
+impl SegmentAssemblyGraph {
     pub fn new(
-        group: &ProximityGroup,
+        alignments: &[Alignment],
+        segments: &SegmentedMatrix,
         score_params: &ScoreParams,
         annotation_args: &AnnotationArgs,
     ) -> Self {
-        let mut query_ids: Vec<usize> = group
-            .alignments
-            .iter()
-            .map(|a| a.query_id)
-            .unique()
-            .collect();
+        let mut alignment_block_map = vec![Vec::<SegmentAndDenseRow>::new(); alignments.len()];
+
+        for (s_idx, segment) in segments.iter().enumerate() {
+            for (b_idx, block) in segment.blocks.iter().enumerate() {
+                if block.row_idx > 0 && block.row_idx <= alignments.len() {
+                    alignment_block_map[block.row_idx - 1].push((s_idx, b_idx));
+                }
+            }
+        }
+
+        let mut query_ids: Vec<usize> = alignments.iter().map(|a| a.query_id).unique().collect();
 
         query_ids.sort();
 
-        let mut link_graph: Vec<HashSet<Edge>> = vec![HashSet::new(); group.alignments.len()];
+        let mut link_graph = HashMap::new();
 
         query_ids
             .iter()
             // grab the alignments for this ID
             .map(|id| {
-                (
-                    id,
-                    group
-                        .alignments
-                        .iter()
-                        .enumerate()
-                        .filter(|&(_, a)| a.query_id == *id),
-                )
+                alignments
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, a)| a.query_id == *id)
+                    .flat_map(|(a_idx, _)| alignment_block_map[a_idx].iter().copied())
             })
-            .for_each(|(_query_id, alignments)| {
+            .for_each(|compat_blocks| {
                 link_assemblies(
                     &mut link_graph,
-                    &alignments.collect_vec(),
+                    compat_blocks,
+                    alignments,
+                    segments,
                     score_params,
                     annotation_args,
                 );
             });
 
-        Self { link_graph }
+        // Graph is constructed such that first block is always before the second block, this debug assert checks that...
+        link_graph.keys().for_each(|(a, b)| debug_assert!(a < b));
+
+        Self {
+            alignment_block_map,
+            link_graph,
+        }
     }
 }

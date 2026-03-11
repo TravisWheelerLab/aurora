@@ -41,7 +41,10 @@ impl SegmentGroups {
                     .block_type
                     .cmp(&segment.blocks[b].block_type);
                 if matches!(type_cmp, Ordering::Equal) {
-                    f64::total_cmp(&segment.blocks[a].confidence, &segment.blocks[b].confidence)
+                    f64::total_cmp(
+                        &segment.blocks[a].alignment_score,
+                        &segment.blocks[b].alignment_score,
+                    )
                 } else {
                     type_cmp
                 }
@@ -54,8 +57,8 @@ impl SegmentGroups {
             .filter_map(|next_index| {
                 if last_index == next_index // First iteration, just add a group...
                     || segment.blocks[next_index].block_type != segment.blocks[last_index].block_type
-                    || (segment.blocks[score_ordered[next_index]].confidence
-                        - segment.blocks[score_ordered[last_index]].confidence)
+                    || (segment.blocks[score_ordered[next_index]].alignment_score
+                        - segment.blocks[score_ordered[last_index]].alignment_score)
                         .abs()
                         > delta_threshold
                 {
