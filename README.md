@@ -1,5 +1,5 @@
-<p style="margin: auto">
-    <img style="width: 3em; height: 3em;" src="fixtures/soda/icon-opt.svg" />
+<p align="center">
+    <img style="width: 5em; height: 5em;" src="fixtures/soda/icon-opt.svg" />
 </p>
 
 # aurora
