@@ -32,6 +32,7 @@ use base64::prelude::*;
 use itertools::Itertools;
 
 const SODA_JS: &str = include_str!("../../fixtures/soda/soda.js");
+pub const ICON_SVG: &str = include_str!("../../fixtures/soda/icon-opt.svg");
 
 #[derive(Clone, Debug)]
 pub struct VizConstraint {

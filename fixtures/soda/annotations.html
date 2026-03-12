@@ -1,72 +1,74 @@
 <!doctype html>
 <html>
-  <style>
-    :root {
-      --primary-color: cadetblue;
-      --darker-primary-color: darkcyan;
-      --background-color: white;
-    }
-    body {
-      margin: 0;
-      font-family: "Lato", sans-serif;
-    }
+  <head>
+    <link rel="icon" type="image/x-icon" href="../icon.svg">
+    <style>
+      :root {
+        --primary-color: cadetblue;
+        --darker-primary-color: darkcyan;
+        --background-color: white;
+      }
+      body {
+        margin: 0;
+        font-family: "Lato", sans-serif;
+      }
 
-    .container {
-      display: flex;
-    }
+      .container {
+        display: flex;
+      }
 
-    .sidebar {
-      width: 30px;
-      height: 100vh;
-      border: 1px solid black;
-      overflow-x: hidden;
-      transition: width 0.3s ease;
-      top: 0;
-      position: -webkit-sticky;
-      position: sticky;
-    }
+      .sidebar {
+        width: 30px;
+        height: 100vh;
+        border: 1px solid black;
+        overflow-x: hidden;
+        transition: width 0.3s ease;
+        top: 0;
+        position: -webkit-sticky;
+        position: sticky;
+      }
 
-    .inner-sidebar {
-      width: 200px;
-    }
+      .inner-sidebar {
+        width: 200px;
+      }
 
-    .viz {
-      flex-grow: 1;
-    }
+      .viz {
+        flex-grow: 1;
+      }
 
-    .button {
-      border: none;
-      border-radius: 10px;
-      text-decoration: none;
-      display: inline-block;
-      margin: 4px;
-      padding: 6px 4px;
-      transition-duration: 0.4s;
-      user-select: none;
-      cursor: pointer;
-      outline: none;
-      background: var(--primary-color);
-      color: white;
-    }
+      .button {
+        border: none;
+        border-radius: 10px;
+        text-decoration: none;
+        display: inline-block;
+        margin: 4px;
+        padding: 6px 4px;
+        transition-duration: 0.4s;
+        user-select: none;
+        cursor: pointer;
+        outline: none;
+        background: var(--primary-color);
+        color: white;
+      }
 
-    .button:hover {
-      background: var(--darker-primary-color);
-    }
+      .button:hover {
+        background: var(--darker-primary-color);
+      }
 
-    .widget-horizontal {
-      padding-left: 20px;
-      margin: 10px;
-      display: flex;
-    }
+      .widget-horizontal {
+        padding-left: 20px;
+        margin: 10px;
+        display: flex;
+      }
 
-    .widget-vertical {
-      padding-left: 20px;
-      margin: 10px;
-      display: flex;
-      flex-direction: column;
-    }
-  </style>
-
+      .widget-vertical {
+        padding-left: 20px;
+        margin: 10px;
+        display: flex;
+        flex-direction: column;
+      }
+    </style>
+  </head>
   <body>
     <div class="container">
       <div class="sidebar" id="sidebar">

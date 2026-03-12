@@ -39,6 +39,7 @@ use crate::{
     chunks::validate_groups,
     pipeline::run_pipeline,
     viz::stats::{write_family_statistics, write_inversion_statistics},
+    viz::ICON_SVG,
 };
 
 #[cfg(not(target_env = "msvc"))]
@@ -410,7 +411,8 @@ fn main() -> Result<()> {
         let error_msg = "failed to write to index.html";
         let index_file = File::create(viz_args.viz_output_path.join("index.html")).unwrap();
         let mut index_writer = BufWriter::new(index_file);
-
+        
+        writeln!(&mut index_writer, "<head><link rel=\"icon\" type=\"image/x-icon\" href=\"icon.svg\"></head>")?;
         writeln!(&mut index_writer, "<h3>Statistics</h3><a href=\"family_stats.html\">Families</a><br><a href=\"inversion_stats.html\">Inversions</a><br>")?;
 
         viz_args
@@ -514,6 +516,8 @@ fn main() -> Result<()> {
                 .join("inversion_stats.html"),
         )?;
         write_inversion_statistics(&mut inv_stats_writer, &results)?;
+        let mut icon_file = File::create(args.visualization_args.viz_output_path.join("icon.svg"))?;
+        icon_file.write(ICON_SVG.as_bytes())?;
     }
 
     Ok(())
