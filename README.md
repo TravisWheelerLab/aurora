@@ -1,8 +1,7 @@
+<span align="center">
 <p align="center">
     <img style="width: 5em; height: 5em;" src="fixtures/soda/icon-opt.svg" />
 </p>
-
-<p align="center">
 
 # aurora
 
@@ -14,7 +13,7 @@ Output
 Reliable
 Annotations
 
-</p>
+</span>
 
 ## About
 
