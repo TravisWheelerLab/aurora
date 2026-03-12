@@ -2,6 +2,8 @@
     <img style="width: 5em; height: 5em;" src="fixtures/soda/icon-opt.svg" />
 </p>
 
+<p align="center">
+
 # aurora
 
 AURORA:
@@ -11,6 +13,8 @@ Regions and
 Output
 Reliable
 Annotations
+
+</p>
 
 ## About
 
