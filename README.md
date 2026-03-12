@@ -1,3 +1,7 @@
+<p style="margin: auto">
+    <img src="fixtures/soda/icon-opt.svg" />
+</p>
+
 # aurora
 
 AURORA:
@@ -46,3 +50,4 @@ See `LICENSE` for details.
 ## Authors
 
 Jack Roddy - jroddy@arizona.edu
+Isaac Robinson - isaacrobinson@arizona.edu

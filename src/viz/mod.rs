@@ -9,7 +9,7 @@ use block::*;
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Write},
     num::ParseIntError,
     path::Path,
 };
@@ -33,6 +33,45 @@ use itertools::Itertools;
 
 const SODA_JS: &str = include_str!("../../fixtures/soda/soda.js");
 pub const ICON_SVG: &str = include_str!("../../fixtures/soda/icon-opt.svg");
+const INDEX_TEMPLATE: &str = include_str!("../../fixtures/soda/index.html");
+
+pub fn write_index_file(
+    writer: &mut impl Write,
+    alignment_data: &AlignmentData,
+    proximity_groups: &[ProximityGroup],
+    viz_constraints: &[VizConstraint],
+) -> std::io::Result<()> {
+    let mut index_links = String::new();
+
+    viz_constraints
+        .iter()
+        .enumerate()
+        .for_each(|(idx, c)| {
+            index_links.push_str(&format!(
+                "<div class=\"region\" data-target=\"{name}\" data-start=\"{start}\" data-end=\"{end}\"><a href=\"{name}-{start}-{end}.html\">slice {idx} | {name} {start}:{end}</a></div><br>\n",
+                name = c.target_name,
+                start = c.target_start,
+                end = c.target_end,
+                idx = idx
+            ));
+        });
+
+    proximity_groups.iter().enumerate().for_each(|(idx, g)| {
+        index_links.push_str(&format!(
+            "<div class=\"region\" data-target=\"{name}\" data-start=\"{start}\" data-end=\"{end}\"><a href=\"{idx}/index.html\"><h3>region {idx} | {name} {start}:{end}</h3></a>\n",
+            name = alignment_data.target_name_map.get(g.target_id),
+            start = g.target_start,
+            end = g.target_end,
+            idx = idx,
+        ));
+    });
+
+    writeln!(
+        writer,
+        "{}",
+        INDEX_TEMPLATE.replace("INDEX_LINKS_TARGET", &index_links)
+    )
+}
 
 #[derive(Clone, Debug)]
 pub struct VizConstraint {
@@ -141,6 +180,7 @@ pub struct AdjudicationSodaData<'a> {
     links: &'a SegmentAssemblyGraph,
     dump_confidences: bool,
     args: &'a AuroraArgs,
+    region_index: usize,
 }
 
 pub struct AdjudicationSodaDataArgs<'a> {
@@ -154,6 +194,7 @@ pub struct AdjudicationSodaDataArgs<'a> {
     pub links: &'a SegmentAssemblyGraph,
     pub dump_confidences: bool,
     pub args: &'a AuroraArgs,
+    pub region_index: usize,
 }
 
 impl<'a> AdjudicationSodaData<'a> {
@@ -174,6 +215,7 @@ impl<'a> AdjudicationSodaData<'a> {
             links: args.links,
             dump_confidences: args.dump_confidences,
             args: args.args,
+            region_index: args.region_index,
         }
     }
 
@@ -216,6 +258,7 @@ impl<'a> AdjudicationSodaData<'a> {
         });
 
         let viz_html = Self::TEMPLATE
+            .replace("REGION_INDEX", &self.region_index.to_string())
             .replace("SODA_TARGET", SODA_JS)
             .replace(
                 "DATA_TARGET",

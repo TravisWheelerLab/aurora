@@ -280,6 +280,7 @@ pub fn run_pipeline(
         links: &assembly_graph,
         dump_confidences: args.visualization_args.viz_enable_scores,
         args: &args,
+        region_index: region_idx,
     });
 
     // Grab the annotations...
