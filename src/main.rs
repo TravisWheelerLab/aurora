@@ -482,7 +482,7 @@ fn main() -> Result<()> {
         )?;
         write_inversion_statistics(&mut inv_stats_writer, &results)?;
         let mut icon_file = File::create(args.visualization_args.viz_output_path.join("icon.svg"))?;
-        icon_file.write(ICON_SVG.as_bytes())?;
+        icon_file.write_all(ICON_SVG.as_bytes())?;
     }
 
     Ok(())

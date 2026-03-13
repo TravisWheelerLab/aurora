@@ -8,25 +8,16 @@ use block::*;
 
 use std::{
     collections::HashMap,
-    fs::File,
-    io::{BufRead, BufReader, Write},
+    fs::{self, File},
+    io::{self, BufRead, BufReader, Write},
     num::ParseIntError,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use crate::{
-    alignment::{Alignment, AlignmentData},
-    alphabet::{
-        NucleotideByteUtils, ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
-        SPACE_UTF8,
-    },
-    annotation::AmbiguousAnnotation,
-    assembly::SegmentAssemblyGraph,
-    chunks::ProximityGroup,
-    history_tracing::{AnnotatedRange, RefinedTraceSegment},
-    matrix::Matrix,
-    segments::{BlockType, SegmentedMatrix},
-    AuroraArgs,
+    AuroraArgs, VisualizationArgs, alignment::{Alignment, AlignmentData}, alphabet::{
+        ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, NucleotideByteUtils, SPACE_UTF8
+    }, annotation::AmbiguousAnnotation, assembly::SegmentAssemblyGraph, chunks::ProximityGroup, history_tracing::{AnnotatedRange, RefinedTraceSegment}, matrix::Matrix, segments::{BlockType, SegmentedMatrix}
 };
 use base64::prelude::*;
 use itertools::Itertools;
@@ -167,113 +158,94 @@ impl Alignment {
     }
 }
 
-pub struct AdjudicationSodaData<'a> {
-    group: &'a ProximityGroup<'a>,
-    confidence_matrix: &'a Matrix<'a, f64>,
-    alignment_data: &'a AlignmentData,
-    target_seq: &'a [u8],
-    annotations: Vec<AmbiguousAnnotation>,
-    trace: &'a Vec<RefinedTraceSegment>,
-    maybe_constraint: Option<&'a VizConstraint>,
-    segments: &'a SegmentedMatrix,
-    history_counts: &'a [usize],
-    links: &'a SegmentAssemblyGraph,
-    dump_confidences: bool,
-    args: &'a AuroraArgs,
-    region_index: usize,
+
+pub struct AdjudicationSodaWriter {
+    viz_path: PathBuf,
+    region_idx: usize,
+    has_dumped_confidences: bool,
+    finished: bool,
+    constraints: Vec<VizConstraint>
 }
 
-pub struct AdjudicationSodaDataArgs<'a> {
-    pub group: &'a ProximityGroup<'a>,
-    pub confidence_matrix: &'a Matrix<'a, f64>,
-    pub alignment_data: &'a AlignmentData,
-    pub target_seq: &'a [u8],
-    pub trace: &'a Vec<RefinedTraceSegment>,
-    pub segments: &'a SegmentedMatrix,
-    pub history_counts: &'a [usize],
-    pub links: &'a SegmentAssemblyGraph,
-    pub dump_confidences: bool,
-    pub args: &'a AuroraArgs,
-    pub region_index: usize,
-}
-
-impl<'a> AdjudicationSodaData<'a> {
+impl AdjudicationSodaWriter {
     const TEMPLATE: &'static str = include_str!("../../fixtures/soda/annotations.html");
     const JS: &'static str = include_str!("../../fixtures/soda/annotations.js");
 
-    pub fn new(args: AdjudicationSodaDataArgs<'a>) -> Self {
+    pub fn new(
+        proximity_group: &ProximityGroup,
+        alignment_data: &AlignmentData,
+        viz_path: &impl AsRef<Path>,
+        region_idx: usize,
+        constraints: &[VizConstraint]
+    ) -> Self {
         Self {
-            group: args.group,
-            confidence_matrix: args.confidence_matrix,
-            alignment_data: args.alignment_data,
-            target_seq: args.target_seq,
-            annotations: vec![],
-            trace: args.trace,
-            maybe_constraint: None,
-            segments: args.segments,
-            history_counts: args.history_counts,
-            links: args.links,
-            dump_confidences: args.dump_confidences,
-            args: args.args,
-            region_index: args.region_index,
+            viz_path: viz_path.as_ref().to_path_buf(),
+            region_idx: region_idx,
+            has_dumped_confidences: false,
+            finished: false,
+            constraints: constraints
+                .iter()
+                .filter(|c| &c.target_name == alignment_data.target_name_map.get(proximity_group.target_id))
+                .filter(|c| c.target_start < proximity_group.target_end && c.target_end > proximity_group.target_start)
+                .cloned()
+                .collect_vec()
         }
     }
 
-    pub fn constrain(&mut self, constraint: &'a VizConstraint) {
-        self.maybe_constraint = Some(constraint);
+    pub fn write_confidences(&mut self, confidence_matrix: &Matrix<f64>) -> io::Result<()> {
+        self.write_confidences_internal(Some(confidence_matrix))
     }
 
-    fn constraint(&self) -> VizConstraint {
-        match self.maybe_constraint {
-            Some(constraint) => constraint.clone(),
-            None => VizConstraint {
-                target_name: String::default(),
-                target_start: 0,
-                target_end: usize::MAX,
-            },
+    fn write_confidences_internal(&mut self, confidence_matrix: Option<&Matrix<f64>>) -> io::Result<()> {
+        if self.has_dumped_confidences {
+            return Err(io::Error::other("Attempted to write confidences twice!"));
         }
+        // Extract first part of html template...
+        let html_start = Self::TEMPLATE.split_once("FILE_SPLIT_POINT").ok_or(io::Error::other("HTML template is broken, missing split point."))?.0;
+
+        // Make the directory for the region if it does not exist...
+        let viz_dir = self.viz_path.join(format!("{}", self.region_idx));
+        fs::create_dir_all(&viz_dir)?;
+        
+        self.write_confidences_single(&viz_dir.join("index.html"), html_start, "../", confidence_matrix)?;
+
+        for constraint in self.constraints.iter() {
+            self.write_confidences_single(
+                &self.viz_path.join(
+                    format!("{}-{}-{}.html", constraint.target_name, constraint.target_start, constraint.target_end)
+                ), 
+                html_start,
+                "",
+                confidence_matrix
+            )?;
+        }
+        
+        self.has_dumped_confidences = true;
+        Ok(())
     }
 
-    pub fn write(&self, path: impl AsRef<Path>) {
-        let data = serde_json::json!({
-            "targetStart": self.constrained_target_start(),
-            "targetEnd": self.constrained_target_end(),
-            "targetSeq": self.target_seq(),
-            "numQueries": self.num_queries(),
-            "assemblyStrings": self.assembly_strings(),
-            "auroraAnn": self.aurora_ann(),
-            "referenceAnn": self.reference_ann(),
-            "alignmentStrings": self.alignment_strings(),
-            "tandemRepeatStrings": self.tandem_repeat_strings(),
-            "conclusiveTraceStrings": self.conclusive_trace_strings(),
-            "ambiguousTraceStrings": self.ambiguous_trace_strings(),
-            "resolvedAssemblyRows": self.resolved_assembly_rows(),
-            "unresolvedAssemblyRows": self.unresolved_assembly_rows(),
-            "competedAssemblyRows": self.competed_assembly_rows(),
-            "inactiveSegmentStrings": self.inactive_segment_strings(),
-            "confidenceSegmentStrings": self.confidence_segment_strings(),
-            "historySegments": self.history_segments(),
-            "historyBlocks": self.history_blocks(),
-            "alignmentConfidences": self.alignment_confidences(),
-        });
-
-        let viz_html = Self::TEMPLATE
-            .replace("REGION_INDEX", &self.region_index.to_string())
+    fn write_confidences_single(&self, path: &PathBuf, html_start: &str, relative_path: &str, confidence_matrix: Option<&Matrix<f64>>) -> io::Result<()> {
+        let html_start = html_start
+            .replace("REGION_INDEX", &self.region_idx.to_string())
+            .replace("RELATIVE_PATH_TARGET", relative_path)
             .replace("SODA_TARGET", SODA_JS)
-            .replace(
-                "DATA_TARGET",
-                &serde_json::to_string(&data).expect("failed to serialize JSON data"),
-            )
-            .replace("JS_TARGET", Self::JS);
+            .replace("JS_TARGET", Self::JS)
+            .replace("CONFIDENCE_TARGET", &self.confidence_json(confidence_matrix)?);
 
-        let mut file = std::fs::File::create(path).expect("failed to create file");
-
-        std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
+        let mut file = File::create(path)?;
+        file.write_all(html_start.as_bytes())?;
+        
+        Ok(())
     }
 
-    fn alignment_confidences(&self) -> Option<Vec<String>> {
-        if self.dump_confidences {
-            let val = self.confidence_matrix;
+    fn confidence_json(&self, confidence_matrix: Option<&Matrix<f64>>) -> io::Result<String> {
+        let json = serde_json::json!(self.alignment_confidences(confidence_matrix));
+        let string = serde_json::to_string(&json)?;
+        Ok(string)
+    }
+
+    fn alignment_confidences(&self, confidence_matrix: Option<&Matrix<f64>>) -> Option<Vec<String>> {
+        if let Some(val) = confidence_matrix {
             let region_start = val.def.target_start;
 
             return Some(
@@ -314,6 +286,109 @@ impl<'a> AdjudicationSodaData<'a> {
         }
 
         None
+    }
+
+    pub fn write(&mut self, args: AdjudicationSodaDataArgs) -> io::Result<()> {
+        if !self.has_dumped_confidences {
+            self.write_confidences_internal(None);
+        }
+
+        if self.finished {
+            return Err(io::Error::other("Already fully written the visual!"));
+        }
+
+        let soda_data = AdjudicationSodaData::new(args);
+        let html_end = Self::TEMPLATE.split_once("FILE_SPLIT_POINT").ok_or(io::Error::other("HTML template is broken, missing split point."))?.1;
+
+        
+
+        self.finished = true;
+        Ok(())
+    }
+
+    fn write_single(&mut self, path: &PathBuf, template: &str, args: &AdjudicationSodaData, constraint: Option<VizConstraint>) -> io::Result<()> {
+
+    }
+}
+
+
+struct AdjudicationSodaData<'a> {
+    group: &'a ProximityGroup<'a>,
+    alignment_data: &'a AlignmentData,
+    target_seq: &'a [u8],
+    annotations: &'a [AmbiguousAnnotation],
+    trace: &'a Vec<RefinedTraceSegment>,
+    maybe_constraint: Option<&'a VizConstraint>,
+    segments: &'a SegmentedMatrix,
+    history_counts: &'a [usize],
+    links: &'a SegmentAssemblyGraph,
+    viz_args: &'a VisualizationArgs,
+}
+
+pub struct AdjudicationSodaDataArgs<'a> {
+    pub group: &'a ProximityGroup<'a>,
+    pub alignment_data: &'a AlignmentData,
+    pub annotations: &'a [AmbiguousAnnotation],
+    pub target_seq: &'a [u8],
+    pub trace: &'a Vec<RefinedTraceSegment>,
+    pub segments: &'a SegmentedMatrix,
+    pub history_counts: &'a [usize],
+    pub links: &'a SegmentAssemblyGraph,
+    pub viz_args: &'a VisualizationArgs,
+}
+
+impl<'a> AdjudicationSodaData<'a> {
+    pub fn new(args: AdjudicationSodaDataArgs<'a>) -> Self {
+        Self {
+            group: args.group,
+            alignment_data: args.alignment_data,
+            target_seq: args.target_seq,
+            annotations: args.annotations,
+            trace: args.trace,
+            maybe_constraint: None,
+            segments: args.segments,
+            history_counts: args.history_counts,
+            links: args.links,
+            viz_args: args.viz_args
+        }
+    }
+
+    pub fn constrain(&mut self, constraint: &'a VizConstraint) {
+        self.maybe_constraint = Some(constraint);
+    }
+
+    fn constraint(&self) -> VizConstraint {
+        match self.maybe_constraint {
+            Some(constraint) => constraint.clone(),
+            None => VizConstraint {
+                target_name: String::default(),
+                target_start: 0,
+                target_end: usize::MAX,
+            },
+        }
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "targetStart": self.constrained_target_start(),
+            "targetEnd": self.constrained_target_end(),
+            "targetSeq": self.target_seq(),
+            "numQueries": self.num_queries(),
+            "assemblyStrings": self.assembly_strings(),
+            "auroraAnn": self.aurora_ann(),
+            "referenceAnn": self.reference_ann(),
+            "alignmentStrings": self.alignment_strings(),
+            "tandemRepeatStrings": self.tandem_repeat_strings(),
+            "conclusiveTraceStrings": self.conclusive_trace_strings(),
+            "ambiguousTraceStrings": self.ambiguous_trace_strings(),
+            "resolvedAssemblyRows": self.resolved_assembly_rows(),
+            "unresolvedAssemblyRows": self.unresolved_assembly_rows(),
+            "competedAssemblyRows": self.competed_assembly_rows(),
+            "inactiveSegmentStrings": self.inactive_segment_strings(),
+            "confidenceSegmentStrings": self.confidence_segment_strings(),
+            "historySegments": self.history_segments(),
+            "historyBlocks": self.history_blocks(),
+        })
     }
 
     fn history_segments(&self) -> Vec<String> {
@@ -409,10 +484,6 @@ impl<'a> AdjudicationSodaData<'a> {
             .collect()
     }
 
-    pub fn set_annotations(&mut self, annotations: Vec<AmbiguousAnnotation>) {
-        self.annotations = annotations;
-    }
-
     fn target_start(&self) -> usize {
         self.group.target_start
     }
@@ -477,9 +548,8 @@ impl<'a> AdjudicationSodaData<'a> {
             .get(self.group.target_id);
 
         if let (Some(path), Some(&offset)) = (
-            &self.args.visualization_args.viz_reference_bed_path,
-            self.args
-                .visualization_args
+            &self.viz_args.viz_reference_bed_path,
+            self.viz_args
                 .viz_reference_bed_index
                 .get(target_name),
         ) {
@@ -658,29 +728,24 @@ impl<'a> AdjudicationSodaData<'a> {
                     // get the row idx of the assembly
                     .map(|(i, a)| (i + 1, a))
                     .map(move |(row_idx, ali)| {
-                        let col_start =
-                            seg_target_start.max(ali.target_start) - self.target_start();
-                        let col_end = seg_target_end.min(ali.target_end) - self.target_start();
+                        let conf = self.links.alignment_block_map[row_idx]
+                            .iter()
+                            .map(|&(seg, blk)| self.segments[seg].blocks[blk].avg_confidence)
+                            .sum::<f64>() / (self.links.alignment_block_map[row_idx].len().max(1) as f64);
 
-                        let mut conf = 0.0;
-                        (col_start..=col_end).for_each(|col_idx| {
-                            conf += self.confidence_matrix.get(row_idx, col_idx)
-                        });
-                        conf /= (col_end - col_start + 1) as f64;
                         format!(
                             "{},{},{},{:3.2},{},{},{},{},{},{}",
                             seg_target_start.max(ali.target_start),
                             seg_target_end.min(ali.target_end),
                             row_idx,
                             conf,
-                            self.confidence_matrix
-                                .consensus_position(row_idx, col_start),
-                            self.confidence_matrix.consensus_position(row_idx, col_end),
+                            ali.query_start,
+                            ali.query_end,
                             self.alignment_data
                                 .query_lengths
                                 .get(&ali.query_id)
                                 .unwrap(),
-                            self.confidence_matrix.strand_of_row(row_idx),
+                            ali.strand,
                             self.alignment_data.query_name_map.get(ali.query_id),
                             ali.id,
                         )
