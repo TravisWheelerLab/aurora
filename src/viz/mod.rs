@@ -15,9 +15,18 @@ use std::{
 };
 
 use crate::{
-    AuroraArgs, VisualizationArgs, alignment::{Alignment, AlignmentData}, alphabet::{
-        ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, NucleotideByteUtils, SPACE_UTF8
-    }, annotation::AmbiguousAnnotation, assembly::SegmentAssemblyGraph, chunks::ProximityGroup, history_tracing::{AnnotatedRange, RefinedTraceSegment}, matrix::Matrix, segments::{BlockType, SegmentedMatrix}
+    alignment::{Alignment, AlignmentData},
+    alphabet::{
+        NucleotideByteUtils, ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL,
+        SPACE_UTF8,
+    },
+    annotation::AmbiguousAnnotation,
+    assembly::SegmentAssemblyGraph,
+    chunks::ProximityGroup,
+    history_tracing::{AnnotatedRange, RefinedTraceSegment},
+    matrix::Matrix,
+    segments::{BlockType, SegmentedMatrix},
+    VisualizationArgs,
 };
 use base64::prelude::*;
 use itertools::Itertools;
@@ -158,13 +167,12 @@ impl Alignment {
     }
 }
 
-
 pub struct AdjudicationSodaWriter {
     viz_path: PathBuf,
     region_idx: usize,
     has_dumped_confidences: bool,
     finished: bool,
-    constraints: Vec<VizConstraint>
+    constraints: Vec<VizConstraint>,
 }
 
 impl AdjudicationSodaWriter {
@@ -176,7 +184,7 @@ impl AdjudicationSodaWriter {
         alignment_data: &AlignmentData,
         viz_path: &impl AsRef<Path>,
         region_idx: usize,
-        constraints: &[VizConstraint]
+        constraints: &[VizConstraint],
     ) -> Self {
         Self {
             viz_path: viz_path.as_ref().to_path_buf(),
@@ -185,10 +193,18 @@ impl AdjudicationSodaWriter {
             finished: false,
             constraints: constraints
                 .iter()
-                .filter(|c| &c.target_name == alignment_data.target_name_map.get(proximity_group.target_id))
-                .filter(|c| c.target_start < proximity_group.target_end && c.target_end > proximity_group.target_start)
+                .filter(|c| {
+                    &c.target_name
+                        == alignment_data
+                            .target_name_map
+                            .get(proximity_group.target_id)
+                })
+                .filter(|c| {
+                    c.target_start < proximity_group.target_end
+                        && c.target_end > proximity_group.target_start
+                })
                 .cloned()
-                .collect_vec()
+                .collect_vec(),
         }
     }
 
@@ -196,45 +212,68 @@ impl AdjudicationSodaWriter {
         self.write_confidences_internal(Some(confidence_matrix))
     }
 
-    fn write_confidences_internal(&mut self, confidence_matrix: Option<&Matrix<f64>>) -> io::Result<()> {
+    fn write_confidences_internal(
+        &mut self,
+        confidence_matrix: Option<&Matrix<f64>>,
+    ) -> io::Result<()> {
         if self.has_dumped_confidences {
             return Err(io::Error::other("Attempted to write confidences twice!"));
         }
         // Extract first part of html template...
-        let html_start = Self::TEMPLATE.split_once("FILE_SPLIT_POINT").ok_or(io::Error::other("HTML template is broken, missing split point."))?.0;
+        let html_start = Self::TEMPLATE
+            .split_once("FILE_SPLIT_POINT")
+            .ok_or(io::Error::other(
+                "HTML template is broken, missing split point.",
+            ))?
+            .0;
 
         // Make the directory for the region if it does not exist...
         let viz_dir = self.viz_path.join(format!("{}", self.region_idx));
         fs::create_dir_all(&viz_dir)?;
-        
-        self.write_confidences_single(&viz_dir.join("index.html"), html_start, "../", confidence_matrix)?;
+
+        self.write_confidences_single(
+            &viz_dir.join("index.html"),
+            html_start,
+            "../",
+            confidence_matrix,
+        )?;
 
         for constraint in self.constraints.iter() {
             self.write_confidences_single(
-                &self.viz_path.join(
-                    format!("{}-{}-{}.html", constraint.target_name, constraint.target_start, constraint.target_end)
-                ), 
+                &self.viz_path.join(format!(
+                    "{}-{}-{}.html",
+                    constraint.target_name, constraint.target_start, constraint.target_end
+                )),
                 html_start,
                 "",
-                confidence_matrix
+                confidence_matrix,
             )?;
         }
-        
+
         self.has_dumped_confidences = true;
         Ok(())
     }
 
-    fn write_confidences_single(&self, path: &PathBuf, html_start: &str, relative_path: &str, confidence_matrix: Option<&Matrix<f64>>) -> io::Result<()> {
+    fn write_confidences_single(
+        &self,
+        path: &PathBuf,
+        html_start: &str,
+        relative_path: &str,
+        confidence_matrix: Option<&Matrix<f64>>,
+    ) -> io::Result<()> {
         let html_start = html_start
             .replace("REGION_INDEX", &self.region_idx.to_string())
             .replace("RELATIVE_PATH_TARGET", relative_path)
             .replace("SODA_TARGET", SODA_JS)
             .replace("JS_TARGET", Self::JS)
-            .replace("CONFIDENCE_TARGET", &self.confidence_json(confidence_matrix)?);
+            .replace(
+                "CONFIDENCE_TARGET",
+                &self.confidence_json(confidence_matrix)?,
+            );
 
         let mut file = File::create(path)?;
         file.write_all(html_start.as_bytes())?;
-        
+
         Ok(())
     }
 
@@ -244,7 +283,10 @@ impl AdjudicationSodaWriter {
         Ok(string)
     }
 
-    fn alignment_confidences(&self, confidence_matrix: Option<&Matrix<f64>>) -> Option<Vec<String>> {
+    fn alignment_confidences(
+        &self,
+        confidence_matrix: Option<&Matrix<f64>>,
+    ) -> Option<Vec<String>> {
         if let Some(val) = confidence_matrix {
             let region_start = val.def.target_start;
 
@@ -298,27 +340,65 @@ impl AdjudicationSodaWriter {
         }
 
         let soda_data = AdjudicationSodaData::new(args);
-        let html_end = Self::TEMPLATE.split_once("FILE_SPLIT_POINT").ok_or(io::Error::other("HTML template is broken, missing split point."))?.1;
+        let html_end = Self::TEMPLATE
+            .split_once("FILE_SPLIT_POINT")
+            .ok_or(io::Error::other(
+                "HTML template is broken, missing split point.",
+            ))?
+            .1;
 
-        
+        self.write_single(
+            &self
+                .viz_path
+                .join(format!("{}/index.html", self.region_idx)),
+            html_end,
+            &soda_data,
+            None,
+        )?;
+
+        for constraint in self.constraints.clone().iter() {
+            self.write_single(
+                &self.viz_path.join(format!(
+                    "{}-{}-{}.html",
+                    constraint.target_name, constraint.target_start, constraint.target_end
+                )),
+                html_end,
+                &soda_data,
+                Some(constraint),
+            )?;
+        }
 
         self.finished = true;
         Ok(())
     }
 
-    fn write_single(&mut self, path: &PathBuf, template: &str, args: &AdjudicationSodaData, constraint: Option<VizConstraint>) -> io::Result<()> {
+    fn write_single(
+        &mut self,
+        path: &PathBuf,
+        template: &str,
+        args: &AdjudicationSodaData,
+        constraint: Option<&VizConstraint>,
+    ) -> io::Result<()> {
+        args.constrain(constraint);
 
+        let result = template.replace("DATA_TARGET", &serde_json::to_string(&args.to_json())?);
+        let mut file = File::options().create(false).append(true).open(path)?;
+
+        file.write_all(result.as_bytes())?;
+
+        Ok(())
     }
 }
 
-
 struct AdjudicationSodaData<'a> {
     group: &'a ProximityGroup<'a>,
+    alignment_confidences: &'a [f64],
+    active_columns: &'a [(usize, usize)],
     alignment_data: &'a AlignmentData,
     target_seq: &'a [u8],
     annotations: &'a [AmbiguousAnnotation],
     trace: &'a Vec<RefinedTraceSegment>,
-    maybe_constraint: Option<&'a VizConstraint>,
+    maybe_constraint: Option<VizConstraint>,
     segments: &'a SegmentedMatrix,
     history_counts: &'a [usize],
     links: &'a SegmentAssemblyGraph,
@@ -327,6 +407,8 @@ struct AdjudicationSodaData<'a> {
 
 pub struct AdjudicationSodaDataArgs<'a> {
     pub group: &'a ProximityGroup<'a>,
+    pub alignment_confidences: &'a [f64],
+    pub active_columns: &'a [(usize, usize)],
     pub alignment_data: &'a AlignmentData,
     pub annotations: &'a [AmbiguousAnnotation],
     pub target_seq: &'a [u8],
@@ -341,6 +423,8 @@ impl<'a> AdjudicationSodaData<'a> {
     pub fn new(args: AdjudicationSodaDataArgs<'a>) -> Self {
         Self {
             group: args.group,
+            alignment_confidences: args.alignment_confidences,
+            active_columns: args.active_columns,
             alignment_data: args.alignment_data,
             target_seq: args.target_seq,
             annotations: args.annotations,
@@ -349,16 +433,16 @@ impl<'a> AdjudicationSodaData<'a> {
             segments: args.segments,
             history_counts: args.history_counts,
             links: args.links,
-            viz_args: args.viz_args
+            viz_args: args.viz_args,
         }
     }
 
-    pub fn constrain(&mut self, constraint: &'a VizConstraint) {
-        self.maybe_constraint = Some(constraint);
+    pub fn constrain(&mut self, constraint: Option<&VizConstraint>) {
+        self.maybe_constraint = constraint.cloned();
     }
 
     fn constraint(&self) -> VizConstraint {
-        match self.maybe_constraint {
+        match &self.maybe_constraint {
             Some(constraint) => constraint.clone(),
             None => VizConstraint {
                 target_name: String::default(),
@@ -549,9 +633,7 @@ impl<'a> AdjudicationSodaData<'a> {
 
         if let (Some(path), Some(&offset)) = (
             &self.viz_args.viz_reference_bed_path,
-            self.viz_args
-                .viz_reference_bed_index
-                .get(target_name),
+            self.viz_args.viz_reference_bed_index.get(target_name),
         ) {
             let file = File::open(path).expect("failed to open reference bed");
             let reader = BufReader::new(file);
@@ -629,19 +711,13 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 
     fn trace_string(&self, seg: &AnnotatedRange) -> String {
-        let mut conf = 0.0;
-        (seg.col_start..=seg.col_end)
-            .for_each(|col_idx| conf += self.confidence_matrix.get(seg.row_idx, col_idx));
-
-        conf /= (seg.col_end - seg.col_start + 1) as f64;
-
         format!(
             "{},{},{},{},{:3.2}",
             seg.col_start,
             seg.col_end,
             seg.query_id.unwrap_or(0),
             seg.row_idx,
-            conf
+            seg.avg_confidence
         )
     }
 
@@ -665,7 +741,12 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 
     fn resolved_assembly_rows(&self) -> Vec<Vec<usize>> {
-        vec![self.confidence_matrix.initial_active_cols()]
+        let columns = self
+            .active_columns
+            .iter()
+            .flat_map(|&(start, end)| (start..=end))
+            .collect_vec();
+        vec![columns]
     }
 
     fn unresolved_assembly_rows(&self) -> Vec<Vec<usize>> {
@@ -677,14 +758,13 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 
     fn inactive_segment_strings(&self) -> Vec<Vec<String>> {
-        let active_cols = self.confidence_matrix.initial_active_cols();
         let mut inactive_col_ranges: Vec<(usize, usize)> = vec![];
-        active_cols
+        self.active_columns
             .iter()
-            .zip(active_cols.iter().skip(1))
+            .zip(self.active_columns.iter().skip(1))
             .for_each(|(&a, &b)| {
-                if b - 1 != a {
-                    inactive_col_ranges.push((a + 1, b - 1));
+                if b.0 - 1 != a.1 {
+                    inactive_col_ranges.push((a.1 + 1, b.0 - 1));
                 }
             });
 
@@ -728,10 +808,7 @@ impl<'a> AdjudicationSodaData<'a> {
                     // get the row idx of the assembly
                     .map(|(i, a)| (i + 1, a))
                     .map(move |(row_idx, ali)| {
-                        let conf = self.links.alignment_block_map[row_idx]
-                            .iter()
-                            .map(|&(seg, blk)| self.segments[seg].blocks[blk].avg_confidence)
-                            .sum::<f64>() / (self.links.alignment_block_map[row_idx].len().max(1) as f64);
+                        let conf = self.alignment_confidences[row_idx];
 
                         format!(
                             "{},{},{},{:3.2},{},{},{},{},{},{}",
