@@ -37,7 +37,7 @@ use viz::VizConstraint;
 use crate::{
     annotation::AmbiguousAnnotation,
     chunks::validate_groups,
-    pipeline::run_pipeline,
+    pipeline::{run_history_trace, run_naive_trace},
     viz::{
         stats::{write_family_statistics, write_inversion_statistics},
         write_index_file, ICON_SVG,
@@ -448,9 +448,10 @@ fn main() -> Result<()> {
         .panic_fuse()
         .enumerate()
         .map(|(region_idx, group)| {
+            let mut naive_trace = run_naive_trace(group, &alignment_data, region_idx, &args);
             (
                 region_idx,
-                run_pipeline(group, &alignment_data, region_idx, args.clone()),
+                run_history_trace(group, &alignment_data, &mut naive_trace, &args),
             )
         })
         .collect::<Vec<(usize, Vec<AmbiguousAnnotation>)>>();

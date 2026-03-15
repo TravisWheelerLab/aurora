@@ -332,14 +332,14 @@ impl AdjudicationSodaWriter {
 
     pub fn write(&mut self, args: AdjudicationSodaDataArgs) -> io::Result<()> {
         if !self.has_dumped_confidences {
-            self.write_confidences_internal(None);
+            self.write_confidences_internal(None)?;
         }
 
         if self.finished {
             return Err(io::Error::other("Already fully written the visual!"));
         }
 
-        let soda_data = AdjudicationSodaData::new(args);
+        let mut soda_data = AdjudicationSodaData::new(args);
         let html_end = Self::TEMPLATE
             .split_once("FILE_SPLIT_POINT")
             .ok_or(io::Error::other(
@@ -352,18 +352,18 @@ impl AdjudicationSodaWriter {
                 .viz_path
                 .join(format!("{}/index.html", self.region_idx)),
             html_end,
-            &soda_data,
+            &mut soda_data,
             None,
         )?;
 
-        for constraint in self.constraints.clone().iter() {
+        for constraint in self.constraints.iter() {
             self.write_single(
                 &self.viz_path.join(format!(
                     "{}-{}-{}.html",
                     constraint.target_name, constraint.target_start, constraint.target_end
                 )),
                 html_end,
-                &soda_data,
+                &mut soda_data,
                 Some(constraint),
             )?;
         }
@@ -373,10 +373,10 @@ impl AdjudicationSodaWriter {
     }
 
     fn write_single(
-        &mut self,
+        &self,
         path: &PathBuf,
         template: &str,
-        args: &AdjudicationSodaData,
+        args: &mut AdjudicationSodaData,
         constraint: Option<&VizConstraint>,
     ) -> io::Result<()> {
         args.constrain(constraint);
