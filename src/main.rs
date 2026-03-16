@@ -37,7 +37,7 @@ use viz::VizConstraint;
 use crate::{
     annotation::AmbiguousAnnotation,
     chunks::validate_groups,
-    pipeline::{run_history_trace, run_naive_trace},
+    pipeline::{run_history_trace, run_naive_trace, NaiveTraceResults},
     viz::{
         stats::{write_family_statistics, write_inversion_statistics},
         write_index_file, ICON_SVG,
@@ -443,18 +443,29 @@ fn main() -> Result<()> {
         .build_global()
         .unwrap();
 
-    let mut results = proximity_groups
+    let mut naive_results = proximity_groups
         .par_iter()
         .panic_fuse()
         .enumerate()
         .map(|(region_idx, group)| {
-            let mut naive_trace = run_naive_trace(group, &alignment_data, region_idx, &args);
+            (
+                region_idx,
+                run_naive_trace(group, &alignment_data, region_idx, &args),
+            )
+        })
+        .collect::<Vec<(usize, NaiveTraceResults)>>();
+    naive_results.sort_by_key(|v| v.0);
+
+    let mut results: Vec<(usize, Vec<AmbiguousAnnotation>)> = proximity_groups
+        .par_iter()
+        .zip(naive_results)
+        .map(|(group, (region_idx, mut naive_trace))| {
             (
                 region_idx,
                 run_history_trace(group, &alignment_data, &mut naive_trace, &args),
             )
         })
-        .collect::<Vec<(usize, Vec<AmbiguousAnnotation>)>>();
+        .collect();
     results.sort_by_key(|v| v.0);
 
     for (_region, annots) in results.iter() {

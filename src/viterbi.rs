@@ -169,6 +169,7 @@ pub type Trace = Vec<TraceStep>;
 /// is selected for multiple columns in a row.
 #[derive(Clone)]
 pub struct TraceSegment {
+    #[allow(dead_code)]
     pub query_id: usize,
     #[allow(dead_code)]
     pub ali_id: usize,

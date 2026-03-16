@@ -5,7 +5,6 @@ use itertools::Itertools;
 use crate::{
     alignment::{AlignmentData, Strand},
     annotation::{AmbiguousAnnotation, SimpleAnnotation},
-    assembly::SegmentAssemblyGraph,
     chunks::ProximityGroup,
     confidence::confidence,
     history_tracing::{
@@ -13,7 +12,7 @@ use crate::{
     },
     matrix::{Matrix, MatrixDef},
     score_params::{approximate_ideal_skip_state_score, ScoreParams},
-    segments::{segments_and_assemblies_from_trace, SegmentedMatrix},
+    segments::{assemble_and_link_segments, segments_from_matrix_trace, InitialSegments},
     support::windowed_confidence,
     viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment},
     viz::{
@@ -142,9 +141,8 @@ fn get_active_columns<T: Copy + Default + Display>(matrix: &Matrix<T>) -> Vec<(u
 
 pub struct NaiveTraceResults {
     pub trace_segments: Vec<TraceSegment>,
-    pub segments: SegmentedMatrix,
+    pub segments: InitialSegments,
     pub score_params: ScoreParams,
-    pub assembly_graph: SegmentAssemblyGraph,
     pub alignment_confidences: Vec<f64>,
     pub active_columns: Vec<(usize, usize)>,
     pub viz_writer: AdjudicationSodaWriter,
@@ -205,7 +203,6 @@ pub fn run_naive_trace(
 
     let segments;
     let simple_trace;
-    let assembly_graph;
 
     // In a new block so initial viterbi matricies/sources are freed right after being used...
     {
@@ -226,7 +223,7 @@ pub fn run_naive_trace(
 
         simple_trace = trace_segments(&trace);
 
-        (segments, assembly_graph) = segments_and_assemblies_from_trace(
+        segments = segments_from_matrix_trace(
             proximity_group,
             &simple_trace,
             &confidence_matrix,
@@ -253,7 +250,6 @@ pub fn run_naive_trace(
         trace_segments: simple_trace,
         segments,
         score_params,
-        assembly_graph,
         alignment_confidences: confidence_by_row,
         active_columns: get_active_columns(&confidence_matrix),
         viz_writer,
@@ -269,10 +265,18 @@ pub fn run_history_trace(
 ) -> Vec<AmbiguousAnnotation> {
     let vis_args = &args.visualization_args;
 
-    let history = history_viterbi_on_segments(
-        &naive_trace.segments,
+    let (segments, assembly_graph) = assemble_and_link_segments(
+        proximity_group,
+        &mut naive_trace.segments,
+        &naive_trace.trace_segments,
         &naive_trace.score_params,
-        &naive_trace.assembly_graph,
+        &args.annotation_args,
+    );
+
+    let history = history_viterbi_on_segments(
+        segments,
+        &naive_trace.score_params,
+        &assembly_graph,
         args.annotation_args.max_history_depth,
         args.annotation_args.max_histories_per_segment,
         args.annotation_args.min_relative_history_score,
@@ -283,7 +287,7 @@ pub fn run_history_trace(
     if args.visualization_args.debug {
         dump_debug_history_info(
             &history,
-            &naive_trace.segments,
+            segments,
             proximity_group.target_start,
             &history_lengths,
             vis_args.viz_output_path.join("history_info.csv"),
@@ -292,13 +296,12 @@ pub fn run_history_trace(
         .ok();
     }
 
-    let refined_trace_segments =
-        backtrace_histories(&naive_trace.segments, &history, naive_trace.region_index);
+    let refined_trace_segments = backtrace_histories(segments, &history, naive_trace.region_index);
 
     if args.visualization_args.debug {
         dump_final_trace_statistics(
             &history,
-            &naive_trace.segments,
+            segments,
             &refined_trace_segments,
             vis_args.viz_output_path.join("final_trace_stats.csv"),
         )
@@ -329,9 +332,9 @@ pub fn run_history_trace(
                     proximity_group.target_end - proximity_group.target_start + 1,
                 ),
                 trace: &refined_trace_segments,
-                segments: &naive_trace.segments,
+                segments: segments,
                 history_counts: &get_history_lengths(&history),
-                links: &naive_trace.assembly_graph,
+                links: &assembly_graph,
                 viz_args: &vis_args,
             })
             .expect("Unable to write visualization!");

@@ -200,6 +200,11 @@ where
     }
 }
 
+pub struct InitialSegments {
+    segments: SegmentedMatrix,
+    initial_trace_scores: Vec<f64>,
+}
+
 impl<I: Iterator, J: Iterator<Item = I::Item>, F: Fn(&I::Item, &I::Item) -> Ordering> Iterator
     for MergeIterator<I, J, F>
 where
@@ -368,13 +373,13 @@ fn finalize_segments(
     }
 }
 
-fn simple_segments_from_matrix_trace(
+pub fn segments_from_matrix_trace(
     group: &ProximityGroup,
     trace_segments: &[TraceSegment],
     confidence_matrix: &Matrix<f64>,
     score_params: &ScoreParams,
     annotation_args: &AnnotationArgs,
-) -> (SegmentedMatrix, Vec<f64>) {
+) -> InitialSegments {
     // Matrix should always have at least 1 row (for the skip state)...
     debug_assert!(confidence_matrix.def.num_rows > 0);
     debug_assert!(
@@ -524,34 +529,34 @@ fn simple_segments_from_matrix_trace(
         segments.push(new_segment);
     }
 
-    (segments, trace_row_scores)
+    InitialSegments {
+        segments,
+        initial_trace_scores: trace_row_scores,
+    }
 }
 
-pub fn segments_and_assemblies_from_trace(
-    group: &ProximityGroup,
+pub fn assemble_and_link_segments<'a>(
+    proximity_group: &ProximityGroup,
+    initial_segments: &'a mut InitialSegments,
     trace_segments: &[TraceSegment],
-    confidence_matrix: &Matrix<f64>,
     score_params: &ScoreParams,
     annotation_args: &AnnotationArgs,
-) -> (SegmentedMatrix, SegmentAssemblyGraph) {
-    let (mut segments, initial_trace_scores) = simple_segments_from_matrix_trace(
-        group,
-        trace_segments,
-        confidence_matrix,
+) -> (&'a SegmentedMatrix, SegmentAssemblyGraph) {
+    let assembly_graph = SegmentAssemblyGraph::new(
+        &proximity_group.alignments,
+        &initial_segments.segments,
         score_params,
         annotation_args,
     );
-    let assembly_graph =
-        SegmentAssemblyGraph::new(group.alignments, &segments, score_params, annotation_args);
     finalize_segments(
-        &mut segments,
+        &mut initial_segments.segments,
         trace_segments,
-        &initial_trace_scores,
+        &initial_segments.initial_trace_scores,
         score_params,
         &assembly_graph,
     );
 
-    (segments, assembly_graph)
+    (&initial_segments.segments, assembly_graph)
 }
 
 #[cfg(test)]
