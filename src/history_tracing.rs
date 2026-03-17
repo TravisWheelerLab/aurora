@@ -218,14 +218,13 @@ fn check_for_forward_link(
     start_block: &Block,
     later_block: &Block,
 ) -> Option<f64> {
-    if let Some(e1) = assembly_graph.link_graph.get(&(
-        (start_segment, start_block.row_idx),
-        (later_segment, later_block.row_idx),
-    )) {
-        Some(e1.weight)
-    } else {
-        None
-    }
+    assembly_graph
+        .link_graph
+        .get(&(
+            (start_segment, start_block.row_idx),
+            (later_segment, later_block.row_idx),
+        ))
+        .map(|e1| e1.weight)
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -246,16 +245,30 @@ fn get_group_block_optional<'a>(
     }
 }
 
+struct SegmentGroupInfo<'a> {
+    segment: &'a Segment,
+    group: &'a [usize],
+    segment_index: usize,
+}
+
 fn get_valid_joins_for_current_group(
-    current_segment: &Segment,
-    current_group: &[usize],
-    current_segment_index: usize,
-    prior_segment: &Segment,
-    prior_group: &[usize],
-    prior_segment_index: usize,
+    current_group_info: SegmentGroupInfo,
+    prior_group_info: SegmentGroupInfo,
     assembly_graph: &SegmentAssemblyGraph,
     epsilon: f64,
 ) -> (Vec<usize>, Vec<(usize, f64)>, Vec<usize>) {
+    let SegmentGroupInfo {
+        segment: current_segment,
+        group: current_group,
+        segment_index: current_segment_index,
+    } = current_group_info;
+
+    let SegmentGroupInfo {
+        segment: prior_segment,
+        group: prior_group,
+        segment_index: prior_segment_index,
+    } = prior_group_info;
+
     let mut values: Vec<(f64, usize)> = Vec::with_capacity(current_group.len());
     let mut remaining_values = Vec::with_capacity(current_group.len());
 
@@ -439,12 +452,16 @@ fn check_for_joins(args: JoinCheckArgs) -> PossibleJoins {
 
                     let (valid_blocks, valid_group_splits, remaining_block_indexes) =
                         get_valid_joins_for_current_group(
-                            &segments[segment_idx],
-                            &current_group_indexes,
-                            segment_idx,
-                            &segments[val.segment],
-                            segment_groups[val.segment].get_group(val.group_index),
-                            val.segment,
+                            SegmentGroupInfo {
+                                segment: &segments[segment_idx],
+                                group: &current_group_indexes,
+                                segment_index: segment_idx,
+                            },
+                            SegmentGroupInfo {
+                                segment: &segments[val.segment],
+                                group: segment_groups[val.segment].get_group(val.group_index),
+                                segment_index: val.segment,
+                            },
                             assembly_graph,
                             epsilon,
                         );

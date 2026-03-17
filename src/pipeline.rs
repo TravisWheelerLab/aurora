@@ -321,7 +321,7 @@ pub fn run_history_trace(
         naive_trace
             .viz_writer
             .write(AdjudicationSodaDataArgs {
-                group: &proximity_group,
+                group: proximity_group,
                 alignment_confidences: &naive_trace.alignment_confidences,
                 active_columns: &naive_trace.active_columns,
                 alignment_data,
@@ -332,10 +332,10 @@ pub fn run_history_trace(
                     proximity_group.target_end - proximity_group.target_start + 1,
                 ),
                 trace: &refined_trace_segments,
-                segments: segments,
+                segments,
                 history_counts: &get_history_lengths(&history),
                 links: &assembly_graph,
-                viz_args: &vis_args,
+                viz_args: vis_args,
             })
             .expect("Unable to write visualization!");
     }

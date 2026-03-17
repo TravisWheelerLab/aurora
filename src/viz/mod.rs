@@ -188,7 +188,7 @@ impl AdjudicationSodaWriter {
     ) -> Self {
         Self {
             viz_path: viz_path.as_ref().to_path_buf(),
-            region_idx: region_idx,
+            region_idx,
             has_dumped_confidences: false,
             finished: false,
             constraints: constraints
@@ -484,7 +484,10 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 
     fn history_blocks(&self) -> Vec<String> {
-        let mut links_per_block: HashMap<(usize, usize), Vec<(usize, usize, f64)>> = HashMap::new();
+        type BlockLocation = (usize, usize); // segment index, dense block index.
+        type BlockEdge = (usize, usize, f64); // other segment index, other dense block index, edge weight
+
+        let mut links_per_block: HashMap<BlockLocation, Vec<BlockEdge>> = HashMap::new();
 
         for (&(a, b), &w) in self.links.link_graph.iter() {
             links_per_block

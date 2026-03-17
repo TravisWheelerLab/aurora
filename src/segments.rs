@@ -543,7 +543,7 @@ pub fn assemble_and_link_segments<'a>(
     annotation_args: &AnnotationArgs,
 ) -> (&'a SegmentedMatrix, SegmentAssemblyGraph) {
     let assembly_graph = SegmentAssemblyGraph::new(
-        &proximity_group.alignments,
+        proximity_group.alignments,
         &initial_segments.segments,
         score_params,
         annotation_args,
