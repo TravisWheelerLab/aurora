@@ -48,6 +48,7 @@ fn write_table<const N: usize, A: std::fmt::Display, B: std::fmt::Display>(
 
 fn write_statistics_table_page<const N: usize, A: std::fmt::Display, B: std::fmt::Display>(
     writer: &mut impl Write,
+    title: &str,
     header: &[A; N],
     data: &[[B; N]],
 ) -> std::io::Result<()> {
@@ -55,10 +56,13 @@ fn write_statistics_table_page<const N: usize, A: std::fmt::Display, B: std::fmt
 
     write_table(&mut tmp_writer, header, data)?;
 
-    let table_page = TABLE_HTML.replace("SODA_TARGET", SODA_JS).replace(
-        "TABLE_TARGET",
-        str::from_utf8(&tmp_writer).expect("UTF8 decoding failed!"),
-    );
+    let table_page = TABLE_HTML
+        .replace("PAGE_TITLE", title)
+        .replace("SODA_TARGET", SODA_JS)
+        .replace(
+            "TABLE_TARGET",
+            str::from_utf8(&tmp_writer).expect("UTF8 decoding failed!"),
+        );
 
     write!(writer, "{}", table_page)?;
 
@@ -95,6 +99,7 @@ pub fn write_family_statistics(
 
     write_statistics_table_page(
         stats_writer,
+        "Family Statistics",
         &[
             "Family",
             "Occurrences",
@@ -159,6 +164,7 @@ pub fn write_inversion_statistics(
 
     write_statistics_table_page(
         stats_writer,
+        "Inversion Statistics",
         &["Region", "Inversions", "Normal Joins"],
         &inversion_stats
             .iter()

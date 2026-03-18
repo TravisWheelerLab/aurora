@@ -38,7 +38,10 @@ use crate::{
     annotation::AmbiguousAnnotation,
     chunks::validate_groups,
     pipeline::run_pipeline,
-    viz::stats::{write_family_statistics, write_inversion_statistics},
+    viz::{
+        stats::{write_family_statistics, write_inversion_statistics},
+        write_index_file, ICON_SVG,
+    },
 };
 
 #[cfg(not(target_env = "msvc"))]
@@ -259,7 +262,7 @@ pub struct IoArgs {
 
 #[derive(Args, Debug, Clone)]
 pub struct UltraArgs {
-    /// The path to ULTRA output
+    /// The path to ULTRA output. Must be ULTRA's JSON output format.
     #[arg(short = 'U', long = "ultra-file", value_name = "path")]
     pub ultra_file_path: Option<PathBuf>,
 
@@ -407,51 +410,15 @@ fn main() -> Result<()> {
     }
 
     if viz_args.viz {
-        let error_msg = "failed to write to index.html";
-        let index_file = File::create(viz_args.viz_output_path.join("index.html")).unwrap();
-        let mut index_writer = BufWriter::new(index_file);
+        let mut index_file = File::create(viz_args.viz_output_path.join("index.html")).unwrap();
 
-        writeln!(&mut index_writer, "<h3>Statistics</h3><a href=\"family_stats.html\">Families</a><br><a href=\"inversion_stats.html\">Inversions</a><br>")?;
-
-        viz_args
-            .viz_constraints
-            .iter()
-            .enumerate()
-            .for_each(|(idx, c)| {
-                writeln!(
-                    &mut index_writer,
-                    "<a href=\"{}-{}-{}.html\">slice {} | {} {}:{}</a><br>",
-                    c.target_name,
-                    c.target_start,
-                    c.target_end,
-                    idx,
-                    c.target_name,
-                    c.target_start,
-                    c.target_end,
-                )
-                .expect(error_msg);
-            });
-
-        proximity_groups.iter().enumerate().for_each(|(idx, g)| {
-            writeln!(
-                &mut index_writer,
-                "<h3>region {} | {} {}:{}</h3>\n<ul>",
-                idx,
-                alignment_data.target_name_map.get(g.target_id),
-                g.target_start,
-                g.target_end,
-            )
-            .expect(error_msg);
-
-            writeln!(
-                &mut index_writer,
-                "    <li><a href=\"{}/index.html\">annotations</a></li>",
-                idx,
-            )
-            .expect(error_msg);
-
-            writeln!(&mut index_writer, "</ul>").expect(error_msg);
-        });
+        write_index_file(
+            &mut index_file,
+            &alignment_data,
+            &proximity_groups,
+            &viz_args.viz_constraints,
+        )
+        .expect("failed to write to index.html");
     }
 
     debug_assert!(validate_groups(
@@ -514,6 +481,8 @@ fn main() -> Result<()> {
                 .join("inversion_stats.html"),
         )?;
         write_inversion_statistics(&mut inv_stats_writer, &results)?;
+        let mut icon_file = File::create(args.visualization_args.viz_output_path.join("icon.svg"))?;
+        icon_file.write(ICON_SVG.as_bytes())?;
     }
 
     Ok(())

@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+    <head>
+        <title>AURORA Results</title>
+        <link rel="icon" type="image/x-icon" href="icon.svg"/>
+        <script>
+            "use strict";
+            document.addEventListener("DOMContentLoaded", () => {
+                let target_input = document.getElementById("target-input");
+                let target_pos_input = document.getElementById("target-pos-input");
+                let region_elements = document.querySelectorAll("div.region");
+
+                function onSearch(evt) {
+                    let target_name = target_input.value;
+                    let search_digit_text = target_pos_input.value;
+                    let search_number = parseInt(target_pos_input.value);
+
+                    for(let div of region_elements) {
+                        let is_name_match = !target_name || div.dataset.target.includes(target_name);
+                        let start = parseInt(div.dataset.start);
+                        let end = parseInt(div.dataset.end);
+                        let is_pos_match = (
+                            !search_digit_text 
+                            || search_number != search_number 
+                            || (search_number >= start && search_number <= end)
+                            || (String(start).startsWith(search_digit_text))
+                            || (String(end).startsWith(search_digit_text))
+                        );
+                        let is_exact_range_match = search_number >= start && search_number <= end;
+
+                        if(is_name_match && is_pos_match) {
+                            div.style.display = "block";
+                            if(is_exact_range_match) {
+                                div.style.backgroundColor = "yellow";
+                            } else {
+                                div.style.backgroundColor = "transparent";
+                            }
+                        } else {
+                            div.style.display = "none";
+                            div.style.backgroundColor = "transparent"; 
+                        }
+                    }
+                }
+
+                target_input.addEventListener("input", onSearch);
+                target_pos_input.addEventListener("input", onSearch);
+            });
+        </script>
+    </head>
+    <body>
+        <h1>Statistics</h1>
+        <a href="family_stats.html">Families</a>
+        <br>
+        <a href="inversion_stats.html">Inversions</a>
+        <br>
+        <h1>Filters</h1>
+        <p>Target Name: <input id="target-input" type="text" /></p>
+        <p>Target Postition (Prefix or <span style="background-color: yellow;">Exact</span>): <input id="target-pos-input" pattern="[0-9]*" type="text" /></p>
+        <h1>Regions</h1>
+        INDEX_LINKS_TARGET
+    </body>
+</html>

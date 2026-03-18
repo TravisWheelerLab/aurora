@@ -3,9 +3,8 @@ use std::fs;
 use itertools::Itertools;
 
 use crate::{
-    alignment::AlignmentData,
+    alignment::{AlignmentData, Strand},
     annotation::{AmbiguousAnnotation, SimpleAnnotation},
-    assembly::AssemblyGraph,
     chunks::ProximityGroup,
     confidence::confidence,
     history_tracing::{
@@ -14,11 +13,11 @@ use crate::{
     },
     matrix::{Matrix, MatrixDef},
     score_params::{approximate_ideal_skip_state_score, ScoreParams},
-    segments::segments_from_matrix_trace,
+    segments::segments_and_assemblies_from_trace,
     support::windowed_confidence,
     viterbi::{trace_segments, traceback, viterbi_collapsed},
     viz::{
-        debug::{dump_debug_history_info, dump_final_trace_statistics, dump_history_scores},
+        debug::{dump_debug_history_info, dump_final_trace_statistics},
         AdjudicationSodaData, AdjudicationSodaDataArgs,
     },
     windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
@@ -28,7 +27,6 @@ use crate::{
 pub fn to_annotations(
     proximity_group: &ProximityGroup,
     alignment_data: &AlignmentData,
-    confidence_matrix: &Matrix<f64>,
     trace_segments: &[RefinedTraceSegment],
     region_idx: usize,
 ) -> Vec<AmbiguousAnnotation> {
@@ -36,16 +34,7 @@ pub fn to_annotations(
         .iter()
         .filter(|v| v.annotated.iter().any(|a| a.row_idx != 0))
         .map(|s| {
-            let confidence = s
-                .annotated
-                .iter()
-                .map(|a| {
-                    (a.col_start..=a.col_end)
-                        .map(|col_idx| confidence_matrix.get(a.row_idx, col_idx))
-                        .sum::<f64>()
-                        / (a.col_end - a.col_start + 1) as f64
-                })
-                .sum::<f64>()
+            let confidence = s.annotated.iter().map(|a| a.avg_confidence).sum::<f64>()
                 / (s.annotated.len().max(1) as f64);
 
             AmbiguousAnnotation {
@@ -80,17 +69,20 @@ pub fn to_annotations(
                                     .get(a.query_id.expect("Annotation has no query id!"))
                                     .clone(),
                             },
-                            query_start: confidence_matrix
-                                .consensus_position(a.row_idx, a.col_start),
-                            query_end: confidence_matrix.consensus_position(a.row_idx, a.col_end),
-                            strand: confidence_matrix.strand_of_row(a.row_idx),
+                            query_start: a.query_start,
+                            query_end: a.query_end,
+                            strand: if a.row_idx > 0
+                                && a.row_idx <= proximity_group.alignments.len()
+                            {
+                                proximity_group.alignments[a.row_idx - 1].strand
+                            } else {
+                                Strand::Forward
+                            },
                             kimura80: if a.row_idx > 0
                                 && a.row_idx <= proximity_group.alignments.len()
                             {
-                                proximity_group.alignments[a.row_idx - 1].kimura80(
-                                    confidence_matrix.consensus_position(a.row_idx, a.col_start),
-                                    confidence_matrix.consensus_position(a.row_idx, a.col_end),
-                                )
+                                proximity_group.alignments[a.row_idx - 1]
+                                    .kimura80(a.query_start, a.query_end)
                             } else {
                                 0.0
                             },
@@ -180,11 +172,11 @@ pub fn run_pipeline(
     .unwrap();
 
     confidence(&mut confidence_matrix);
-    let (_confidence_avg_by_id, _confidence_by_id) = windowed_confidence(&mut confidence_matrix);
+    windowed_confidence(&mut confidence_matrix);
 
-    let assembly_graph = AssemblyGraph::new(proximity_group, &score_params, &args.annotation_args);
     let segments;
     let simple_trace;
+    let assembly_graph;
 
     // In a new block so initial viterbi matricies/sources are freed right after being used...
     {
@@ -205,12 +197,11 @@ pub fn run_pipeline(
 
         simple_trace = trace_segments(&trace);
 
-        segments = segments_from_matrix_trace(
+        (segments, assembly_graph) = segments_and_assemblies_from_trace(
             proximity_group,
             &simple_trace,
             &confidence_matrix,
             &score_params,
-            &assembly_graph,
             &args.annotation_args,
         );
     }
@@ -240,12 +231,6 @@ pub fn run_pipeline(
             )
             .map_err(|_| eprintln!("Unable to save debug history info!"))
             .ok();
-            dump_history_scores(
-                &history,
-                vis_args.viz_output_path.join("history_scores.txt"),
-            )
-            .map_err(|_| eprintln!("Unable to save history scores!"))
-            .ok();
         }
 
         refined_trace_segments = backtrace_histories(&segments, &history, region_idx);
@@ -270,6 +255,9 @@ pub fn run_pipeline(
                     row_idx: v.row_idx,
                     col_start: v.col_start,
                     col_end: v.col_end,
+                    query_start: confidence_matrix.consensus_position(v.row_idx, v.col_start),
+                    query_end: confidence_matrix.consensus_position(v.row_idx, v.col_end),
+                    avg_confidence: 0.0,
                 }],
                 join_index: i,
                 score: 0.0,
@@ -292,13 +280,13 @@ pub fn run_pipeline(
         links: &assembly_graph,
         dump_confidences: args.visualization_args.viz_enable_scores,
         args: &args,
+        region_index: region_idx,
     });
 
     // Grab the annotations...
-    let mut annotations: Vec<AmbiguousAnnotation> = to_annotations(
+    let annotations: Vec<AmbiguousAnnotation> = to_annotations(
         proximity_group,
         alignment_data,
-        &confidence_matrix,
         &refined_trace_segments,
         region_idx,
     );
@@ -337,8 +325,8 @@ pub fn run_pipeline(
         });
     }
 
-    annotations.sort_by_key(|r| r.annotations.iter().map(|a| a.target_start).min());
-    annotations.retain(|r| r.annotations.iter().any(|a| a.query_name != "skip"));
+    // annotations.sort_by_key(|r| r.annotations.iter().map(|a| a.target_start).min());
+    // annotations.retain(|r| r.annotations.iter().any(|a| a.query_name != "skip"));
 
     annotations
 }

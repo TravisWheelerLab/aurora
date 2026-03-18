@@ -7,8 +7,9 @@ use bed::*;
 use block::*;
 
 use std::{
+    collections::HashMap,
     fs::File,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Write},
     num::ParseIntError,
     path::Path,
 };
@@ -20,7 +21,7 @@ use crate::{
         SPACE_UTF8,
     },
     annotation::AmbiguousAnnotation,
-    assembly::AssemblyGraph,
+    assembly::SegmentAssemblyGraph,
     chunks::ProximityGroup,
     history_tracing::{AnnotatedRange, RefinedTraceSegment},
     matrix::Matrix,
@@ -31,6 +32,46 @@ use base64::prelude::*;
 use itertools::Itertools;
 
 const SODA_JS: &str = include_str!("../../fixtures/soda/soda.js");
+pub const ICON_SVG: &str = include_str!("../../fixtures/soda/icon-opt.svg");
+const INDEX_TEMPLATE: &str = include_str!("../../fixtures/soda/index.html");
+
+pub fn write_index_file(
+    writer: &mut impl Write,
+    alignment_data: &AlignmentData,
+    proximity_groups: &[ProximityGroup],
+    viz_constraints: &[VizConstraint],
+) -> std::io::Result<()> {
+    let mut index_links = String::new();
+
+    viz_constraints
+        .iter()
+        .enumerate()
+        .for_each(|(idx, c)| {
+            index_links.push_str(&format!(
+                "<div class=\"region\" data-target=\"{name}\" data-start=\"{start}\" data-end=\"{end}\"><a href=\"{name}-{start}-{end}.html\">slice {idx} | {name} {start}:{end}</a></div><br>\n",
+                name = c.target_name,
+                start = c.target_start,
+                end = c.target_end,
+                idx = idx
+            ));
+        });
+
+    proximity_groups.iter().enumerate().for_each(|(idx, g)| {
+        index_links.push_str(&format!(
+            "<div class=\"region\" data-target=\"{name}\" data-start=\"{start}\" data-end=\"{end}\"><a href=\"{idx}/index.html\"><h3>region {idx} | {name} {start}:{end}</h3></a>\n",
+            name = alignment_data.target_name_map.get(g.target_id),
+            start = g.target_start,
+            end = g.target_end,
+            idx = idx,
+        ));
+    });
+
+    writeln!(
+        writer,
+        "{}",
+        INDEX_TEMPLATE.replace("INDEX_LINKS_TARGET", &index_links)
+    )
+}
 
 #[derive(Clone, Debug)]
 pub struct VizConstraint {
@@ -136,9 +177,10 @@ pub struct AdjudicationSodaData<'a> {
     maybe_constraint: Option<&'a VizConstraint>,
     segments: &'a SegmentedMatrix,
     history_counts: &'a [usize],
-    links: &'a AssemblyGraph,
+    links: &'a SegmentAssemblyGraph,
     dump_confidences: bool,
     args: &'a AuroraArgs,
+    region_index: usize,
 }
 
 pub struct AdjudicationSodaDataArgs<'a> {
@@ -149,9 +191,10 @@ pub struct AdjudicationSodaDataArgs<'a> {
     pub trace: &'a Vec<RefinedTraceSegment>,
     pub segments: &'a SegmentedMatrix,
     pub history_counts: &'a [usize],
-    pub links: &'a AssemblyGraph,
+    pub links: &'a SegmentAssemblyGraph,
     pub dump_confidences: bool,
     pub args: &'a AuroraArgs,
+    pub region_index: usize,
 }
 
 impl<'a> AdjudicationSodaData<'a> {
@@ -172,6 +215,7 @@ impl<'a> AdjudicationSodaData<'a> {
             links: args.links,
             dump_confidences: args.dump_confidences,
             args: args.args,
+            region_index: args.region_index,
         }
     }
 
@@ -210,11 +254,11 @@ impl<'a> AdjudicationSodaData<'a> {
             "confidenceSegmentStrings": self.confidence_segment_strings(),
             "historySegments": self.history_segments(),
             "historyBlocks": self.history_blocks(),
-            "blockLinks": self.block_links(),
-            "alignmentScores": self.alignment_scores(),
+            "alignmentConfidences": self.alignment_confidences(),
         });
 
         let viz_html = Self::TEMPLATE
+            .replace("REGION_INDEX", &self.region_index.to_string())
             .replace("SODA_TARGET", SODA_JS)
             .replace(
                 "DATA_TARGET",
@@ -227,7 +271,7 @@ impl<'a> AdjudicationSodaData<'a> {
         std::io::Write::write_all(&mut file, viz_html.as_bytes()).expect("failed to write to file");
     }
 
-    fn alignment_scores(&self) -> Option<Vec<String>> {
+    fn alignment_confidences(&self) -> Option<Vec<String>> {
         if self.dump_confidences {
             let val = self.confidence_matrix;
             let region_start = val.def.target_start;
@@ -249,12 +293,12 @@ impl<'a> AdjudicationSodaData<'a> {
                         let seq_arr = (start..=end)
                             .zip(max_arr.iter())
                             .flat_map(|(col, max_score)| {
-                                (val.get(row, col).ln() - max_score.ln()).to_le_bytes()
+                                ((val.get(row, col).ln() - max_score.ln()) as f32).to_le_bytes()
                             })
                             .collect_vec();
                         let max_arr_enc = max_arr
                             .iter()
-                            .flat_map(|v| v.ln().to_le_bytes())
+                            .flat_map(|v| (v.ln() as f32).to_le_bytes())
                             .collect_vec();
 
                         format!(
@@ -272,19 +316,6 @@ impl<'a> AdjudicationSodaData<'a> {
         None
     }
 
-    fn block_links(&self) -> Vec<Vec<String>> {
-        self.links
-            .link_graph
-            .iter()
-            .map(|links| {
-                links
-                    .iter()
-                    .map(|edge| format!("{},{}", edge.edge_to, edge.weight))
-                    .collect()
-            })
-            .collect()
-    }
-
     fn history_segments(&self) -> Vec<String> {
         self.segments
             .iter()
@@ -294,42 +325,68 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 
     fn history_blocks(&self) -> Vec<String> {
+        let mut links_per_block: HashMap<(usize, usize), Vec<(usize, usize, f64)>> = HashMap::new();
+
+        for (&(a, b), &w) in self.links.link_graph.iter() {
+            links_per_block
+                .entry(a)
+                .or_default()
+                .push((b.0, b.1, w.weight));
+            links_per_block
+                .entry(b)
+                .or_default()
+                .push((a.0, a.1, w.weight));
+        }
+
         self.segments
             .iter()
             .enumerate()
             .flat_map(|(s_idx, s)| {
-                s.blocks.iter().enumerate().map(move |(b_idx, b)| {
-                    let q_id = match b.query_id {
-                        Some(v) => v.to_string(),
-                        _ => (-1).to_string(),
-                    };
-                    let name = match b.block_type {
-                        BlockType::Skip => "Skip".to_string(),
-                        BlockType::Alignment => self
-                            .alignment_data
-                            .query_name_map
-                            .get(b.query_id.unwrap())
-                            .to_string(),
-                        BlockType::TandemRepeat => format!(
-                            "repeat#{}",
-                            self.group.tandem_repeats[b.row_idx - self.group.alignments.len() - 1]
-                                .consensus_pattern
-                        ),
-                    };
+                s.blocks
+                    .iter()
+                    .enumerate()
+                    .map(|(b_idx, b)| {
+                        let q_id = match b.query_id {
+                            Some(v) => v.to_string(),
+                            _ => (-1).to_string(),
+                        };
+                        let name = match b.block_type {
+                            BlockType::Skip => "Skip".to_string(),
+                            BlockType::Alignment => self
+                                .alignment_data
+                                .query_name_map
+                                .get(b.query_id.unwrap())
+                                .to_string(),
+                            BlockType::TandemRepeat => format!(
+                                "repeat#{}",
+                                self.group.tandem_repeats
+                                    [b.row_idx - self.group.alignments.len() - 1]
+                                    .consensus_pattern
+                            ),
+                        };
 
-                    format!(
-                        "{},{},{},{},{},{},{},{},{}",
-                        s_idx,
-                        b_idx,
-                        b.row_idx,
-                        q_id,
-                        b.target_start,
-                        b.target_end,
-                        b.can_join_up_to,
-                        b.confidence,
-                        name
-                    )
-                })
+                        let links = links_per_block
+                            .get(&(s_idx, b.row_idx))
+                            .iter()
+                            .flat_map(|v| v.iter().map(|&v| format!("{}:{}:{}", v.0, v.1, v.2)))
+                            .join(";");
+
+                        format!(
+                            "{},{},{},{},{},{},{},{},{},{},{}",
+                            s_idx,
+                            b_idx,
+                            b.row_idx,
+                            q_id,
+                            b.col_start,
+                            b.col_end,
+                            b.can_join_up_to,
+                            b.avg_confidence,
+                            b.alignment_score,
+                            name,
+                            links,
+                        )
+                    })
+                    .collect_vec()
             })
             .collect()
     }

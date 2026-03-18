@@ -1,5 +1,5 @@
 use crate::{
-    history_tracing::{history_score, History, HistoryEntry, RefinedTraceSegment},
+    history_tracing::{history_score, History, RefinedTraceSegment},
     segments::SegmentedMatrix,
 };
 use itertools::{izip, Itertools};
@@ -8,30 +8,6 @@ use std::{
     io::{self, Write},
     path::Path,
 };
-
-pub fn dump_history_scores(history: &History, path: impl AsRef<Path>) -> io::Result<()> {
-    let mut file = File::create(path)?;
-
-    history
-        .segment_offsets
-        .iter()
-        .skip(1)
-        .zip(
-            history
-                .segment_offsets
-                .iter()
-                .skip(2)
-                .chain([history.entries.len()].iter()),
-        )
-        .try_for_each(|(&start, &end)| {
-            for entry in history.entries[start..end].iter() {
-                if let HistoryEntry::Append(val) | HistoryEntry::Join(val) = entry {
-                    write!(&mut file, "{:e} ", val.score)?;
-                }
-            }
-            writeln!(&mut file)
-        })
-}
 
 pub fn dump_final_trace_statistics(
     history: &History,
