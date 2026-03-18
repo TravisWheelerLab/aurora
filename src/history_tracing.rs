@@ -1,5 +1,5 @@
 use crate::{
-    assembly::SegmentAssemblyGraph,
+    assembly::{LinkType, SegmentAssemblyGraph},
     score_params::ScoreParams,
     segment_groups::SegmentGroups,
     segments::{Block, BlockType, Segment, SegmentedMatrix},
@@ -114,6 +114,7 @@ fn remove_expired_history_entries(
         }
     }
 
+    // If we reach max history depth, simply return the index of the root history...
     0
 }
 
@@ -217,14 +218,14 @@ fn check_for_forward_link(
     later_segment: usize,
     start_block: &Block,
     later_block: &Block,
-) -> Option<f64> {
+) -> Option<(f64, bool)> {
     assembly_graph
         .link_graph
         .get(&(
             (start_segment, start_block.row_idx),
             (later_segment, later_block.row_idx),
         ))
-        .map(|e1| e1.weight)
+        .map(|e1| (e1.weight, e1.link_type.is_inversion()))
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -286,7 +287,7 @@ fn get_valid_joins_for_current_group(
                 if query_id1 == query_id2 {
                     if p_block.can_join_up_to >= current_segment_index {
                         // Get cost of connection...
-                        if let Some(weight) = check_for_forward_link(
+                        if let Some((weight, _is_inversion)) = check_for_forward_link(
                             assembly_graph,
                             prior_segment_index,
                             current_segment_index,

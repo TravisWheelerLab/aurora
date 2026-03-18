@@ -205,6 +205,24 @@ pub struct InitialSegments {
     initial_trace_scores: Vec<f64>,
 }
 
+#[allow(dead_code)]
+pub struct SegmentView<'a> {
+    pub start_col: usize,
+    pub end_col: usize,
+    pub blocks: &'a [Block],
+}
+
+#[allow(dead_code)]
+impl InitialSegments {
+    pub fn iter_segments(&self) -> impl Iterator<Item = SegmentView> {
+        self.segments.iter().map(|v| SegmentView {
+            start_col: v.start_col,
+            end_col: v.end_col,
+            blocks: &v.blocks,
+        })
+    }
+}
+
 impl<I: Iterator, J: Iterator<Item = I::Item>, F: Fn(&I::Item, &I::Item) -> Ordering> Iterator
     for MergeIterator<I, J, F>
 where

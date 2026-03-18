@@ -13,8 +13,21 @@ use crate::{
 pub enum LinkType {
     Forward,
     Reverse,
-    FRInversion,
-    RFInversion,
+    // Forward to reverse strand inversions...
+    FRInversion1, // 1st sequence flipped.
+    FRInversion2, // 2nd sequence flipped.
+    // Reverse to forward strand inversions...
+    RFInversion1, // 1st sequence flipped...
+    RFInversion2, // 2nd sequence flipped...
+}
+
+impl LinkType {
+    pub fn is_inversion(&self) -> bool {
+        matches!(
+            self,
+            Self::FRInversion1 | Self::FRInversion2 | Self::RFInversion1 | Self::RFInversion2
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -133,30 +146,23 @@ fn link_assemblies(
                 ),
                 (Strand::Forward, Strand::Reverse) => (
                     b_block.query_end as isize - a_block.query_end as isize,
-                    LinkType::FRInversion,
+                    LinkType::FRInversion1,
                 ),
                 (Strand::Reverse, Strand::Forward) => (
                     a_block.query_end as isize - b_block.query_end as isize,
-                    LinkType::RFInversion,
+                    LinkType::RFInversion1,
                 ),
                 _ => panic!("Invalid strand types!"),
             };
 
-            let within_target_distance_threshold = match link_type {
-                LinkType::FRInversion | LinkType::RFInversion => {
-                    target_distance.abs() < args.inversion_distance
-                }
-                _ => target_distance < args.target_join_distance as isize,
-            };
+            let within_target_distance_threshold =
+                target_distance < args.target_join_distance as isize;
 
-            let consensus_is_colinear = match link_type {
-                LinkType::FRInversion | LinkType::RFInversion => {
-                    consensus_distance.abs() < args.inversion_distance
-                }
-                _ => {
-                    consensus_distance > -args.consensus_join_overlap
-                        && consensus_distance < args.consensus_join_distance
-                }
+            let consensus_is_colinear = if link_type.is_inversion() {
+                consensus_distance.abs() < args.inversion_distance
+            } else {
+                consensus_distance > -args.consensus_join_overlap
+                    && consensus_distance < args.consensus_join_distance
             };
 
             // TODO: Hardcoded, change later...

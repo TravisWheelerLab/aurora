@@ -150,7 +150,7 @@ pub struct AnnotationArgs {
 
     /// The maximum seperation or overlap in nucleotides on both target and consensus
     /// for a join to be allowed between inverted alignments.
-    #[arg(long = "inversion-distance", default_value = "20", value_name = "n")]
+    #[arg(long = "inversion-distance", default_value = "50", value_name = "n")]
     pub inversion_distance: isize,
 
     /// The size of the window looked at to determine a single alignment score in nucleotides.
