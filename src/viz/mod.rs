@@ -381,7 +381,7 @@ impl AdjudicationSodaWriter {
     ) -> io::Result<()> {
         args.constrain(constraint);
 
-        let result = template.replace("DATA_TARGET", &serde_json::to_string(&args.to_json())?);
+        let result = template.replace("DATA_TARGET", &serde_json::to_string(&args.to_json()?)?);
         let mut file = File::options().create(false).append(true).open(path)?;
 
         file.write_all(result.as_bytes())?;
@@ -452,15 +452,15 @@ impl<'a> AdjudicationSodaData<'a> {
         }
     }
 
-    pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
+    pub fn to_json(&self) -> io::Result<serde_json::Value> {
+        Ok(serde_json::json!({
             "targetStart": self.constrained_target_start(),
             "targetEnd": self.constrained_target_end(),
             "targetSeq": self.target_seq(),
             "numQueries": self.num_queries(),
             "assemblyStrings": self.assembly_strings(),
             "auroraAnn": self.aurora_ann(),
-            "referenceAnn": self.reference_ann(),
+            "referenceAnn": self.reference_ann()?,
             "alignmentStrings": self.alignment_strings(),
             "tandemRepeatStrings": self.tandem_repeat_strings(),
             "conclusiveTraceStrings": self.conclusive_trace_strings(),
@@ -472,7 +472,7 @@ impl<'a> AdjudicationSodaData<'a> {
             "confidenceSegmentStrings": self.confidence_segment_strings(),
             "historySegments": self.history_segments(),
             "historyBlocks": self.history_blocks(),
-        })
+        }))
     }
 
     fn history_segments(&self) -> Vec<String> {
@@ -626,7 +626,7 @@ impl<'a> AdjudicationSodaData<'a> {
             .collect()
     }
 
-    fn reference_ann(&self) -> Vec<BlockGroup> {
+    fn reference_ann(&self) -> io::Result<Vec<BlockGroup>> {
         let mut overlapping_bed = vec![];
 
         let target_name = self
@@ -640,27 +640,26 @@ impl<'a> AdjudicationSodaData<'a> {
         ) {
             let file = File::open(path).expect("failed to open reference bed");
             let reader = BufReader::new(file);
-            reader
-                .lines()
-                .skip(offset)
-                .map(|l| l.expect("failed to read line"))
-                .for_each(|line| {
-                    let tokens: Vec<&str> = line.split_whitespace().collect();
+            for line in reader.lines().skip(offset) {
+                let line = line?;
 
-                    let target = tokens[0];
-                    if target != target_name {
-                        return;
-                    }
+                let tokens: Vec<&str> = line.split_whitespace().collect();
 
-                    let thick_start = tokens[6].parse::<usize>().expect("failed to parse usize");
-                    let thick_end = tokens[7].parse::<usize>().expect("failed to parse usize");
-                    if thick_start < self.target_end() && thick_end > self.target_start() {
-                        overlapping_bed.push(BedRecord::from_tokens(&tokens));
-                    }
-                });
+                let target = tokens[0];
+                if target != target_name {
+                    continue;
+                }
+
+                let thick_start = tokens[6].parse::<usize>().expect("failed to parse usize");
+                let thick_end = tokens[7].parse::<usize>().expect("failed to parse usize");
+                if thick_start < self.target_end() && thick_end > self.target_start() {
+                    overlapping_bed
+                        .push(BedRecord::from_tokens(&tokens).map_err(|e| io::Error::other(e))?);
+                }
+            }
         }
 
-        overlapping_bed
+        Ok(overlapping_bed
             .iter()
             // constraint filter
             .filter(|b| {
@@ -668,7 +667,7 @@ impl<'a> AdjudicationSodaData<'a> {
                     && b.chrom_end >= self.constrained_target_start()
             })
             .map(BlockGroup::from_bed_record)
-            .collect()
+            .collect())
     }
 
     fn alignment_strings(&self) -> Vec<String> {

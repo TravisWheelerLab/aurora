@@ -130,6 +130,14 @@ fn link_assemblies(
             let b_length = b_block.query_end.abs_diff(b_block.query_start);
             let min_length = a_length.min(b_length);
 
+            let select_closest = |prop1: (isize, LinkType), prop2: (isize, LinkType)| {
+                if prop1.0.abs() < prop2.0.abs() {
+                    prop1
+                } else {
+                    prop2
+                }
+            };
+
             // Query bounds are reversed for reverse sequences, so the start is actually greater than the end (Ex. start: 1510 -> end: 105)
 
             let (consensus_distance, link_type) = match (
@@ -144,13 +152,25 @@ fn link_assemblies(
                     a_block.query_end as isize - b_block.query_start as isize,
                     LinkType::Reverse,
                 ),
-                (Strand::Forward, Strand::Reverse) => (
-                    b_block.query_end as isize - a_block.query_end as isize,
-                    LinkType::FRInversion1,
+                (Strand::Forward, Strand::Reverse) => select_closest(
+                    (
+                        a_block.query_start as isize - b_block.query_start as isize,
+                        LinkType::FRInversion1,
+                    ),
+                    (
+                        b_block.query_end as isize - a_block.query_end as isize,
+                        LinkType::FRInversion2,
+                    ),
                 ),
-                (Strand::Reverse, Strand::Forward) => (
-                    a_block.query_end as isize - b_block.query_end as isize,
-                    LinkType::RFInversion1,
+                (Strand::Reverse, Strand::Forward) => select_closest(
+                    (
+                        b_block.query_start as isize - a_block.query_start as isize,
+                        LinkType::RFInversion1,
+                    ),
+                    (
+                        a_block.query_end as isize - b_block.query_end as isize,
+                        LinkType::RFInversion2,
+                    ),
                 ),
                 _ => panic!("Invalid strand types!"),
             };

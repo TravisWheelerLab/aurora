@@ -113,11 +113,11 @@
 
           <div class="widget-horizontal">
             <label>
-              <input 
+              <input
                 type="checkbox"
                 id="onlyTrace"
                 name="onlyTrace"
-                checked 
+                checked
               />
               Only show trace
             </label>
@@ -145,7 +145,7 @@
           <div class="widget-horizontal">
             <label>
               <input type="checkbox" id="showSegments" name="showSegments"/>
-              Show history segments and blocks. 
+              Show history segments and blocks.
             </label>
           </div>
 
@@ -168,6 +168,7 @@
 
     let data = DATA_TARGET;
     data.alignmentConfidences = confidences;
+    window.auroraData = data;
 
     run(data);
   </script>

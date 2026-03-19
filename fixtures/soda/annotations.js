@@ -342,7 +342,7 @@ function run(data) {
       rowHeight: 30,
       rowColors: ["whitesmoke", "white"],
       updateLayout(params) {
-        // Must update the domain first inorder to properly layout the graph, by default this runs after this function but before draw 
+        // Must update the domain first inorder to properly layout the graph, by default this runs after this function but before draw
         // causing the graph to be out of sync...
         this.updateDomain(params);
 
@@ -370,7 +370,7 @@ function run(data) {
           let r_floor = Math.floor(r);
           let new_r = query_to_row.get(r_floor) ?? -1;
           return new_r + (r % 1);
-        }        
+        }
         this.layout = {
           row: (d) => {
             let abs_row = to_absolute_row(d.a);
@@ -527,7 +527,7 @@ function run(data) {
                 let other_segment = link.segment;
                 if(other_segment == undefined) return;
                 let [s1, s2] = [d.a.segment, other_segment].sort();
-                
+
                 link_data.push({
                   start: params.historySegments[s1].end,
                   end: params.historySegments[s2].start,
@@ -633,7 +633,7 @@ function run(data) {
         this.removeRowStripes();
         d3.select(this.highlightSelection.node().parentNode.parentNode)
           .style("background", `repeating-linear-gradient(to bottom, whitesmoke 0px, whitesmoke ${this.rowHeight}px, white  ${this.rowHeight}px, white ${this.rowHeight * 2}px)`);
-        
+
         let domainWidth = this.domain[1] - this.domain[0];
 
         let domainFilter = (ann) =>
@@ -786,7 +786,7 @@ function run(data) {
               end: end + 0.5
             };
           });
-          
+
           let heatmap_selection = soda.heatmap({
             chart: this,
             selector: "ali-seq-conf",
@@ -1024,13 +1024,13 @@ function run(data) {
       });
 
       // aligned
-      for (const record of group.aligned) {
+      for (const [index, record] of group.aligned.entries()) {
         let tokens = record.split(",");
         aligned.push({
           id: tokens[0],
           start: parseInt(tokens[1]),
           end: parseInt(tokens[2]),
-          strand: group.strand,
+          strand: group.strands[index],
           label: group.query,
         });
       }

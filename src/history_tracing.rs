@@ -218,14 +218,14 @@ fn check_for_forward_link(
     later_segment: usize,
     start_block: &Block,
     later_block: &Block,
-) -> Option<(f64, bool)> {
+) -> Option<(f64, LinkType)> {
     assembly_graph
         .link_graph
         .get(&(
             (start_segment, start_block.row_idx),
             (later_segment, later_block.row_idx),
         ))
-        .map(|e1| (e1.weight, e1.link_type.is_inversion()))
+        .map(|e1| (e1.weight, e1.link_type))
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
