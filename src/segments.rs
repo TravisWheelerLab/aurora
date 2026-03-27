@@ -101,7 +101,6 @@ pub struct Segment {
     pub blocks: Vec<Block>,
 }
 
-// type SegmentedMatrix = Vec<Segment>;
 pub type SegmentedMatrix = Vec<Segment>;
 
 #[derive(Copy, Clone, Debug)]

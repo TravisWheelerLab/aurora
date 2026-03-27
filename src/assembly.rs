@@ -21,12 +21,50 @@ pub enum LinkType {
     RFInversion2, // 2nd sequence flipped...
 }
 
+/// The side of the sequence being referred to, in target (genome), space...
+#[derive(Debug, Clone, Ord, PartialEq, PartialOrd, Eq, Copy)]
+pub enum Side {
+    Left,
+    Right,
+}
+
+impl Side {
+    pub fn flip(&self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
+    }
+
+    pub fn to_index(&self) -> usize {
+        match self {
+            Self::Left => 0,
+            Self::Right => 1,
+        }
+    }
+}
+
 impl LinkType {
     pub fn is_inversion(&self) -> bool {
         matches!(
             self,
             Self::FRInversion1 | Self::FRInversion2 | Self::RFInversion1 | Self::RFInversion2
         )
+    }
+
+    /// Get the linked sides of two segments. The first one is from the first sequence the genome, the second from the second one.
+    pub fn get_linked_sides(&self) -> (Side, Side) {
+        match self {
+            Self::Forward | Self::Reverse => (Side::Right, Side::Left),
+            Self::FRInversion1 | Self::RFInversion1 => (Side::Left, Side::Left),
+            Self::FRInversion2 | Self::RFInversion2 => (Side::Right, Side::Right),
+        }
+    }
+
+    /// Get the unlinked, or still open sides of two segments. The first one is from the first sequence the genome, the second from the second one.
+    pub fn get_open_sides(&self) -> (Side, Side) {
+        let linked = self.get_linked_sides();
+        (linked.0.flip(), linked.1.flip())
     }
 }
 
