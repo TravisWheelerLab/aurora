@@ -13,6 +13,7 @@ mod segment_groups;
 mod segments;
 mod substitution_matrix;
 mod support;
+mod union_find;
 mod util;
 mod viterbi;
 mod viz;
