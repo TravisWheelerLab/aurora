@@ -1,5 +1,7 @@
 pub enum RepresentativeType {
+    #[allow(dead_code)]
     DEFAULT,
+    #[allow(dead_code)]
     SMALLEST,
     LARGEST,
 }
@@ -80,6 +82,7 @@ impl UnionFind {
         return self.representative[root];
     }
 
+    #[allow(dead_code)]
     pub fn find_unmut(&self, node: usize) -> usize {
         let root = self._root(node);
         return self.representative[root];

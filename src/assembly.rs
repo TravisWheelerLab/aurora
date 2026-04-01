@@ -61,6 +61,7 @@ impl LinkType {
         }
     }
 
+    #[allow(dead_code)]
     /// Get the unlinked, or still open sides of two segments. The first one is from the first sequence the genome, the second from the second one.
     pub fn get_open_sides(&self) -> (Side, Side) {
         let linked = self.get_linked_sides();
@@ -157,10 +158,11 @@ fn link_assemblies(
             let a_block = &segments[a.0].blocks[a.1];
             let b_block = &segments[b.0].blocks[b.1];
 
+            // We allow this now, otherwise inversions might not properly join...
             // If same alignment, and neighboring segments, don't join...
-            if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
-                return;
-            }
+            //if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
+            //    return;
+            //}
 
             let target_distance = b_block.col_start as isize - a_block.col_end as isize;
 
@@ -227,12 +229,16 @@ fn link_assemblies(
             let is_significant =
                 min_length >= 10 && -consensus_distance <= ((min_length / 2) as isize);
 
-            let weight = get_link_cost(
-                args,
-                score_params,
-                consensus_distance as f64,
-                target_distance as f64,
-            );
+            let weight = if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
+                score_params.query_loop_score
+            } else {
+                get_link_cost(
+                    args,
+                    score_params,
+                    consensus_distance as f64,
+                    target_distance as f64,
+                )
+            };
 
             // let not_reached_forward_limit = forward_count < args.max_forward_links;
 
