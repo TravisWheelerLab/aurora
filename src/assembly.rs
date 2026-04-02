@@ -240,8 +240,6 @@ fn link_assemblies(
                 )
             };
 
-            // let not_reached_forward_limit = forward_count < args.max_forward_links;
-
             if within_target_distance_threshold && consensus_is_colinear && is_significant {
                 graph.insert(
                     ((a.0, a_block.row_idx), (b.0, b_block.row_idx)),
