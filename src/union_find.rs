@@ -16,7 +16,6 @@ pub struct UnionFind {
 }
 
 /// Optimal implementation of union-find with consistent representatives for each group...
-/// The representative for a group is always the smallest element in the group.
 impl UnionFind {
     pub fn new(size: usize, mode: RepresentativeType) -> Self {
         Self {
