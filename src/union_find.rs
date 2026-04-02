@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub enum RepresentativeType {
     #[allow(dead_code)]
     DEFAULT,
@@ -6,6 +7,7 @@ pub enum RepresentativeType {
     LARGEST,
 }
 
+#[derive(Debug)]
 pub struct UnionFind {
     representative_mode: RepresentativeType,
     parents: Vec<usize>,
@@ -20,7 +22,7 @@ impl UnionFind {
         Self {
             representative_mode: mode,
             parents: (0..size).collect(),
-            sizes: vec![0; size],
+            sizes: vec![1; size],
             representative: (0..size).collect(),
         }
     }
@@ -33,6 +35,7 @@ impl UnionFind {
     }
 
     fn _collapse_path(&mut self, mut node: usize, root: usize) {
+        // Collapse node and all it's parents to point to root.
         while self.parents[node] != root {
             let new_node = self.parents[node];
             self.parents[node] = root;
@@ -40,12 +43,12 @@ impl UnionFind {
         }
     }
 
-    pub fn union(&mut self, node1: usize, node2: usize) {
+    pub fn union(&mut self, node1: usize, node2: usize) -> usize {
         let mut root1 = self._find_root(node1);
         let mut root2 = self._find_root(node2);
 
         if root1 == root2 {
-            return;
+            return self.representative[root1];
         }
 
         // If 1st root is smaller, swap so we merge smaller into larger tree...
@@ -68,13 +71,15 @@ impl UnionFind {
                     self.representative[root1].max(self.representative[root2])
             }
         };
+
+        self.representative[root1]
     }
 
     fn _find_root(&mut self, node: usize) -> usize {
         let root = self._root(node);
         self._collapse_path(node, root);
 
-        node
+        root
     }
 
     pub fn find(&mut self, node: usize) -> usize {
@@ -86,5 +91,34 @@ impl UnionFind {
     pub fn find_unmut(&self, node: usize) -> usize {
         let root = self._root(node);
         return self.representative[root];
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use itertools::izip;
+
+    use super::{RepresentativeType, UnionFind};
+
+    #[test]
+    fn test_union_find() {
+        let uf_links = [[(1, 5), (5, 7), (1, 2)], [(1, 5), (5, 7), (1, 2)]];
+        let uf_results = [
+            [0, 1, 1, 3, 4, 1, 6, 1, 8, 9],
+            [0, 7, 7, 3, 4, 7, 6, 7, 8, 9],
+        ];
+        let modes = [RepresentativeType::SMALLEST, RepresentativeType::LARGEST];
+
+        for (links, results, mode) in izip!(uf_links, uf_results, modes) {
+            let mut uf = UnionFind::new(10, mode);
+
+            for link in links {
+                uf.union(link.0, link.1);
+            }
+
+            for (src, &dst) in results.iter().enumerate() {
+                assert_eq!(uf.find(src), dst);
+            }
+        }
     }
 }
