@@ -69,6 +69,8 @@ function run(data) {
     traceIteration: undefined,
     numTraceIterations: undefined,
     onlyTrace: true,
+    showSegments: false,
+    showInversions: false,
     showInactive: false,
     traceRowsByIter: undefined,
   };
@@ -102,6 +104,7 @@ function run(data) {
       "onlyTrace",
       "showInactive",
       "showSegments",
+      "showInversions",
     ];
     let numeric = ["confThresh", "aliThresh"];
     let text = ["regex"];
@@ -134,6 +137,10 @@ function run(data) {
 
     clearTimeout(optionTimeoutId);
     optionTimeoutId = window.setTimeout(() => {
+      if (input == "showInversions") {
+        charts.reference.render(params.reference);
+        charts.aurora.render(params.aurora);
+      }
       renderBottom(false);
     }, optionTimeoutTime);
   }
@@ -156,6 +163,10 @@ function run(data) {
     inputs.set("onlyTrace", document.querySelector("input#onlyTrace"));
     inputs.set("showInactive", document.querySelector("input#showInactive"));
     inputs.set("showSegments", document.querySelector("input#showSegments"));
+    inputs.set(
+      "showInversions",
+      document.querySelector("input#showInversions"),
+    );
     inputs.set("regex", document.querySelector("input#regex"));
 
     // grab the entire sidebar
@@ -250,6 +261,16 @@ function run(data) {
           }
         }
 
+        soda.rectangle({
+          chart: this,
+          selector: "inversion-highlight",
+          annotations: state.showInversions ? params.inversions : [],
+          fillColor: "yellow",
+          fillOpacity: 0.5,
+          y: 0,
+          height: this.viewportHeightPx,
+        });
+
         // fragments
         soda.chevronRectangle({
           chart: this,
@@ -257,6 +278,11 @@ function run(data) {
           annotations: params.aligned,
           orientation: (d) => d.a.strand,
           strokeColor: classColor,
+          fillColor: (d) => {
+            return state.showInversions && d.a.in_inversion
+              ? "yellow"
+              : "white";
+          },
           strokeWidth: 2,
         });
 
@@ -299,7 +325,7 @@ function run(data) {
     let genome = new soda.Chart({
       ...chartConf,
       upperPadSize: 25,
-      updateLayout() { },
+      updateLayout() {},
       draw(params) {
         this.clear();
         this.addAxis();
@@ -322,19 +348,20 @@ function run(data) {
     });
 
     let segmentsRenderBlockLinks = (chart, block) => {
-      if(block.link_data == undefined || block.link_data.length == 0) return undefined;
+      if (block.link_data == undefined || block.link_data.length == 0)
+        return undefined;
       let arc = soda.arc({
         chart: chart,
         annotations: block.link_data,
         strokeColor: "red",
         strokeWidth: 3,
         row: (d) => {
-          return (chart.layout.absRowToRow(d.a.row) - 1) + (14.5 / chart.rowHeight);
+          return chart.layout.absRowToRow(d.a.row) - 1 + 14.5 / chart.rowHeight;
         },
         height: 12,
       });
       return arc;
-    }
+    };
 
     let segments = new soda.Chart({
       ...chartConf,
@@ -349,18 +376,21 @@ function run(data) {
         let query_to_row = new Map();
         //let fullRowCount = (state.showSegments)? Math.max(...params.historyBlocks.map((blk) => blk.query_id)) + 3: 0;
 
-        let to_absolute_row = (blk) => (blk.row == 0)? 0: blk.query_id + 2;
+        let to_absolute_row = (blk) => (blk.row == 0 ? 0 : blk.query_id + 2);
 
-        let visible_queries = params.historyBlocks.filter((blk) => {
-          let start = blk.start;
-          let end = blk.end;
-          // Check if alignment is 'in bounds'...
-          return end > this.domain[0] && start < this.domain[1];
-        }).map(to_absolute_row).sort((a, b) => a - b);
+        let visible_queries = params.historyBlocks
+          .filter((blk) => {
+            let start = blk.start;
+            let end = blk.end;
+            // Check if alignment is 'in bounds'...
+            return end > this.domain[0] && start < this.domain[1];
+          })
+          .map(to_absolute_row)
+          .sort((a, b) => a - b);
 
         let i = 0;
-        for(const q_id of visible_queries) {
-          if(!query_to_row.has(q_id)) {
+        for (const q_id of visible_queries) {
+          if (!query_to_row.has(q_id)) {
             query_to_row.set(q_id, i);
             i += 1;
           }
@@ -370,7 +400,7 @@ function run(data) {
           let r_floor = Math.floor(r);
           let new_r = query_to_row.get(r_floor) ?? -1;
           return new_r + (r % 1);
-        }
+        };
         this.layout = {
           row: (d) => {
             let abs_row = to_absolute_row(d.a);
@@ -378,29 +408,31 @@ function run(data) {
           },
           toAbsRow: to_absolute_row,
           absRowToRow: abs_row_to_row,
-          rowCount: (state.showSegments)? query_to_row.size: 0,
+          rowCount: state.showSegments ? query_to_row.size : 0,
         };
       },
       draw(params) {
         this.clear();
-        if(this.showSegments) return;
+        if (this.showSegments) return;
 
         let y = (d) => this.rowHeight * this.layout.row(d) + 14;
         let x = (d) => this.xScale(d.a.start - 0.25);
         let width = (d) => this.xScale(d.a.end) - this.xScale(d.a.start - 0.5);
         let height = 13;
 
-        let join_info = params.historyBlocks.filter((blk) => blk.segment != blk.join_to).map((blk) => {
-          return {
-            row: this.layout.toAbsRow(blk),
-            start: params.historySegments[blk.segment].end,
-            end: params.historySegments[blk.join_to].start,
-          }
-        });
+        let join_info = params.historyBlocks
+          .filter((blk) => blk.segment != blk.join_to)
+          .map((blk) => {
+            return {
+              row: this.layout.toAbsRow(blk),
+              start: params.historySegments[blk.segment].end,
+              end: params.historySegments[blk.join_to].start,
+            };
+          });
 
         function classColor(d) {
-          if(d.a.row == 0) {
-            return "#4d4d4dff"
+          if (d.a.row == 0) {
+            return "#4d4d4dff";
           }
           let lbl = d.a.label;
           let firstSplit = lbl.split("#");
@@ -421,7 +453,7 @@ function run(data) {
           chart: this,
           selector: "segments",
           annotations: params.historySegments,
-          fillColor: (d) => (d.a.index % 2) ? "red" : "blue",
+          fillColor: (d) => (d.a.index % 2 ? "red" : "blue"),
           fillOpacity: 0.1,
           y: 0,
           x,
@@ -436,8 +468,8 @@ function run(data) {
           annotations: params.historySegments,
           row: 0,
           text: (d) => {
-            return [`${d.a.index}: ${d.a.history_count}`, `${d.a.index}`]
-          }
+            return [`${d.a.index}: ${d.a.history_count}`, `${d.a.index}`];
+          },
         });
 
         // Render the blocks...
@@ -460,7 +492,7 @@ function run(data) {
           selector: "blockJoins",
           annotations: join_info,
           row: (d) => {
-            return (this.layout.absRowToRow(d.a.row) - 1) + (14.5 / this.rowHeight);
+            return this.layout.absRowToRow(d.a.row) - 1 + 14.5 / this.rowHeight;
           },
           height: 12,
         });
@@ -476,16 +508,21 @@ function run(data) {
           fontWeight: 500,
           fillColor: "black",
           text: (d) => {
-            return [d.a.label, d.a.label.split("#")[0], d.a.label.charAt(0), ""];
-          }
+            return [
+              d.a.label,
+              d.a.label.split("#")[0],
+              d.a.label.charAt(0),
+              "",
+            ];
+          },
         });
 
-        for(let block of params.historyBlocks) {
+        for (let block of params.historyBlocks) {
           block.arc = segmentsRenderBlockLinks(this, block);
         }
       },
       postRender(params) {
-        if(this.showSegments) return;
+        if (this.showSegments) return;
 
         let y = (d) => this.rowHeight * this.layout.row(d) + 14;
         let x = (d) => this.xScale(d.a.start - 0.25);
@@ -511,21 +548,21 @@ function run(data) {
           click: (s, d) => {
             let processedLinks = d.a.link_data;
 
-            if(processedLinks) {
+            if (processedLinks) {
               delete d.a.link_data;
-              if(d.a.arc != undefined) {
+              if (d.a.arc != undefined) {
                 d.a.arc.remove();
                 delete d.a.arc;
               }
             } else {
               let links = d.a.links;
-              if(links == undefined || links.length == 0) return;
+              if (links == undefined || links.length == 0) return;
 
               let link_data = [];
 
               links.forEach((link) => {
                 let other_segment = link.segment;
-                if(other_segment == undefined) return;
+                if (other_segment == undefined) return;
                 let [s1, s2] = [d.a.segment, other_segment].sort();
 
                 link_data.push({
@@ -539,7 +576,7 @@ function run(data) {
               d.a.link_data = link_data;
               d.a.arc = segmentsRenderBlockLinks(this, d.a);
             }
-          }
+          },
         });
 
         soda.tooltip({
@@ -549,11 +586,13 @@ function run(data) {
           x,
           width,
           text: (d) => {
-            return Object.entries(d.a).map((val) => {
-              let [k, v] = val;
-              return `${k}: ${v}`
-            }).join("<br>\n");
-          }
+            return Object.entries(d.a)
+              .map((val) => {
+                let [k, v] = val;
+                return `${k}: ${v}`;
+              })
+              .join("<br>\n");
+          },
         });
 
         soda.tooltip({
@@ -564,13 +603,15 @@ function run(data) {
           width,
           height,
           text: (d) => {
-            return Object.entries(d.a).map((val) => {
-              let [k, v] = val;
-              return `${k}: ${v}`
-            }).join("<br>\n");
-          }
+            return Object.entries(d.a)
+              .map((val) => {
+                let [k, v] = val;
+                return `${k}: ${v}`;
+              })
+              .join("<br>\n");
+          },
         });
-      }
+      },
     });
 
     let alignments = new soda.Chart({
@@ -631,8 +672,10 @@ function run(data) {
         this.clear();
         // Doesn't work correctly....
         this.removeRowStripes();
-        d3.select(this.highlightSelection.node().parentNode.parentNode)
-          .style("background", `repeating-linear-gradient(to bottom, whitesmoke 0px, whitesmoke ${this.rowHeight}px, white  ${this.rowHeight}px, white ${this.rowHeight * 2}px)`);
+        d3.select(this.highlightSelection.node().parentNode.parentNode).style(
+          "background",
+          `repeating-linear-gradient(to bottom, whitesmoke 0px, whitesmoke ${this.rowHeight}px, white  ${this.rowHeight}px, white ${this.rowHeight * 2}px)`,
+        );
 
         let domainWidth = this.domain[1] - this.domain[0];
 
@@ -770,7 +813,10 @@ function run(data) {
         }
 
         if (domainWidth < state.aliThresh) {
-          let annotations = (params.alignmentConfidences != null)? domainFilter(params.alignmentConfidences): [];
+          let annotations =
+            params.alignmentConfidences != null
+              ? domainFilter(params.alignmentConfidences)
+              : [];
           annotations = annotations.map((val) => {
             let offset = val.start;
             let domain = this.domain;
@@ -779,11 +825,13 @@ function run(data) {
             return {
               id: val.id,
               row: val.row,
-              values: val.values.slice(start - offset, end + 1 - offset).map(Math.exp),
+              values: val.values
+                .slice(start - offset, end + 1 - offset)
+                .map(Math.exp),
               scores: val.values.slice(start - offset, end + 1 - offset),
               norms: val.norms.slice(start - offset, end + 1 - offset),
               start: start - 0.5,
-              end: end + 0.5
+              end: end + 0.5,
             };
           });
 
@@ -799,7 +847,7 @@ function run(data) {
             .selectAll(function () {
               return this.children;
             })
-            .on("mouseover", function(data) {
+            .on("mouseover", function (data) {
               let element = this;
               let d3 = soda.internalD3;
               let bbox = element.getBoundingClientRect();
@@ -816,7 +864,9 @@ function run(data) {
                 .select(".heatmap-highlight-tooltip")
                 .remove();
 
-              let cellX = Math.round(bbox.left + (cell * (bbox.width / data.a.scores.length)));
+              let cellX = Math.round(
+                bbox.left + cell * (bbox.width / data.a.scores.length),
+              );
               let cellY = bbox.top;
               let cellWidth = Math.round(bbox.width / data.a.scores.length);
               let cellHeight = Math.round(bbox.height);
@@ -844,9 +894,11 @@ function run(data) {
                 .style("border-radius", "3px")
                 .style("transform", "translate(-50%, -100%)")
                 .style("padding", "3px")
-                .html(`Log Score: ${data.a.scores[cell] + data.a.norms[cell]}<br>Normalized Log Score: ${data.a.scores[cell]}<br>Normalized Score: ${data.a.values[cell]}`);
+                .html(
+                  `Log Score: ${data.a.scores[cell] + data.a.norms[cell]}<br>Normalized Log Score: ${data.a.scores[cell]}<br>Normalized Score: ${data.a.values[cell]}`,
+                );
             })
-            .on("mouseout", function() {
+            .on("mouseout", function () {
               let d3 = soda.internalD3;
               d3.select(document.body)
                 .select(".heatmap-hover-tooltip")
@@ -988,7 +1040,10 @@ function run(data) {
         inactiveSegments: params.inactiveSegments[state.traceIteration],
         confidenceSegments:
           params.confidenceSegments[state.traceIteration].filter(queryFilter),
-        alignmentConfidences: (params.alignmentConfidences != null)? params.alignmentConfidences.filter(queryFilter): null,
+        alignmentConfidences:
+          params.alignmentConfidences != null
+            ? params.alignmentConfidences.filter(queryFilter)
+            : null,
       };
 
       this.renderParams = filteredParams;
@@ -1001,7 +1056,15 @@ function run(data) {
       this.draw(filteredParams);
       this.postRender(filteredParams);
     };
-    return { reference, referenceZoom, aurora, auroraZoom, genome, segments, alignments };
+    return {
+      reference,
+      referenceZoom,
+      aurora,
+      auroraZoom,
+      genome,
+      segments,
+      alignments,
+    };
   }
 
   function prepareAnn(ann) {
@@ -1011,6 +1074,9 @@ function run(data) {
     let left = [];
     let right = [];
     let labels = [];
+    let inversions = [];
+
+    let inversionId = 0;
 
     // for every group of joined annotations
     for (const group of ann) {
@@ -1023,16 +1089,40 @@ function run(data) {
         label: group.query,
       });
 
-      // aligned
+      let inversionLeft = -1;
+      let inversionRight = -1;
+
+      // aligned + inversions
       for (const [index, record] of group.aligned.entries()) {
         let tokens = record.split(",");
+        let is_in_inversion =
+          (index > 0 && group.strands[index] != group.strands[index - 1]) ||
+          (index + 1 < group.strands.length &&
+            group.strands[index] != group.strands[index + 1]);
+
         aligned.push({
           id: tokens[0],
           start: parseInt(tokens[1]),
           end: parseInt(tokens[2]),
           strand: group.strands[index],
           label: group.query,
+          in_inversion: is_in_inversion,
         });
+
+        if (is_in_inversion) {
+          inversionLeft = inversionLeft < 0 ? index : inversionLeft;
+          inversionRight = index;
+        }
+      }
+
+      if (inversionLeft >= 0 && inversionRight >= 0) {
+        inversions.push({
+          id: "inv-" + inversionId,
+          start: parseInt(group.aligned[inversionLeft].split(",")[1]),
+          end: parseInt(group.aligned[inversionRight].split(",")[2]),
+          label: group.query,
+        });
+        inversionId += 1;
       }
 
       // inner
@@ -1077,6 +1167,7 @@ function run(data) {
       left,
       right,
       labels,
+      inversions,
     };
   }
 
@@ -1086,21 +1177,21 @@ function run(data) {
     let labelMap = new Map();
     let id = 0;
     let blank = "\u2000";
-    let gaps = []
+    let gaps = [];
     for (const a of ali) {
       let tokens = a.split(",");
       let green = tokens[0].replace(/ /g, blank);
       let orange = tokens[1].replace(/ /g, blank);
-      let ali_gaps = []
+      let ali_gaps = [];
       if (tokens[2] != "") {
         ali_gaps = tokens[2].split("|").map((s) => {
           let [seq, start] = s.split(":");
-          start = parseInt(start)
+          start = parseInt(start);
           return {
             start,
             end: start + seq.length,
-            sequence: seq
-          }
+            sequence: seq,
+          };
         });
       }
       let start = parseInt(tokens[3]);
@@ -1287,7 +1378,7 @@ function run(data) {
         index,
         start,
         end,
-        history_count
+        history_count,
       });
     }
 
@@ -1312,13 +1403,13 @@ function run(data) {
 
       let label = tokens[9];
       let links = undefined;
-      if(tokens[10].trim() != "") {
+      if (tokens[10].trim() != "") {
         links = tokens[10].split(";").map((v) => {
           let [segment, row, weight] = v.split(":");
           return {
             segment: parseInt(segment),
             row: parseInt(row),
-            weight: parseFloat(weight)
+            weight: parseFloat(weight),
           };
         });
       } else {
@@ -1337,7 +1428,7 @@ function run(data) {
         confidence,
         alignment_score,
         label,
-        links
+        links,
       });
     }
 
@@ -1351,28 +1442,29 @@ function run(data) {
   }
 
   function base64ToFloats(data) {
-      let dataString = atob(data);
-      let intView = new Uint8Array(dataString.length);
-      for(let i = 0; i < dataString.length; i++) intView[i] = dataString.charCodeAt(i);
-      if(!isLittleEndian()) {
-        for(let i = 0; i < intView.length; i += 4) {
-          for(let j = 0; j < 4; j++) {
-            let tmp = intView[i + (3 - j)];
-            intView[i + (3 - j)] = intView[i + j];
-            intView[i + j] = tmp;
-          }
+    let dataString = atob(data);
+    let intView = new Uint8Array(dataString.length);
+    for (let i = 0; i < dataString.length; i++)
+      intView[i] = dataString.charCodeAt(i);
+    if (!isLittleEndian()) {
+      for (let i = 0; i < intView.length; i += 4) {
+        for (let j = 0; j < 4; j++) {
+          let tmp = intView[i + (3 - j)];
+          intView[i + (3 - j)] = intView[i + j];
+          intView[i + j] = tmp;
         }
       }
-      return new Float32Array(intView.buffer);
+    }
+    return new Float32Array(intView.buffer);
   }
 
   function prepareAlignmentConfidences(alScores) {
-    if(alScores == null) return alScores;
+    if (alScores == null) return alScores;
 
     let alignment_scores = [];
     let i = 0;
 
-    for(const entry of alScores) {
+    for (const entry of alScores) {
       let tokens = entry.split(",");
 
       let start = parseInt(tokens[0]);
@@ -1453,7 +1545,9 @@ function run(data) {
       ...prepareConfidenceSegments(data.confidenceSegmentStrings),
       historySegments: prepareSegments(data.historySegments, data.targetStart),
       historyBlocks: prepareBlocks(data.historyBlocks, data.targetStart),
-      alignmentConfidences: prepareAlignmentConfidences(data.alignmentConfidences),
+      alignmentConfidences: prepareAlignmentConfidences(
+        data.alignmentConfidences,
+      ),
     };
 
     alignments.proxy.forEach((a) => {
@@ -1490,7 +1584,7 @@ function run(data) {
           [0, 0],
           [chart.viewportWidthPx, chart.viewportHeightPx + 1],
         ])
-        .on("start", () => { })
+        .on("start", () => {})
         .on("brush", () => {
           let brushRange = soda.internalD3.event.selection;
           brushDomain = [
@@ -1530,14 +1624,19 @@ function run(data) {
     charts.segments.render({
       ...params.alignments,
       labels: params.aurora.labels,
-      ...coords
-    })
+      ...coords,
+    });
 
     charts.alignments.render({
       updateDomain,
       ...params.alignments,
       ...coords,
     });
+
+    // Remove generated svg elements...
+    for (let emptySvg of document.querySelectorAll("body > svg")) {
+      emptySvg.remove();
+    }
   }
 
   function render() {
