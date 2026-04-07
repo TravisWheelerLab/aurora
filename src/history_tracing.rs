@@ -1204,6 +1204,7 @@ fn history_backtrace_append_block(
     blocks: &[&Block],
     score: f64,
     segment: usize,
+    region_idx: usize,
 ) {
     // Case 1: Same row index and touches start of segment in front of it, extend the segment backwards to include this...
     if let Some(ref_seg) = refined_segments.last_mut() {
@@ -1231,7 +1232,7 @@ fn history_backtrace_append_block(
 
             // Should not be possible assuming a join was allowed in the first place...
             if joins.is_empty() {
-                panic!("Annotation from join made with 0 elements! This should not be possible!");
+                panic!("Annotation from join made with 0 elements! This should not be possible! (Region: {}, Segment: {})", region_idx, segment);
             }
 
             refined_segments.push(RefinedTraceSegment {
@@ -1311,6 +1312,7 @@ pub fn backtrace_histories(
             &blocks,
             entry_info.score,
             entry_info.segment,
+            region_idx,
         );
 
         // If this is a join, link segments it joins to so they can be constructed correctly later...
