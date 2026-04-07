@@ -43,7 +43,7 @@ pub struct BlockGroup {
     pub visual_end: usize,
     pub align_start: usize,
     pub align_end: usize,
-    pub strand: Strand,
+    pub strands: Vec<Strand>,
     pub query: String,
     pub target: String,
     pub left: Block,
@@ -152,19 +152,16 @@ impl BlockGroup {
 
         let query_name = first.annotations.iter().map(|a| &a.query_name).join(",");
 
-        let mut first_loop = true;
-        let mut strand = Strand::Unset;
-
-        for a in first.annotations.iter() {
-            if first_loop {
-                strand = a.strand;
-                first_loop = false;
-            }
-            if a.strand != strand {
-                strand = Strand::Unset;
-                break;
-            }
-        }
+        let strands = joins
+            .iter()
+            .map(|v| {
+                v.annotations
+                    .iter()
+                    .map(|v| v.strand)
+                    .all_equal_value()
+                    .unwrap_or(Strand::Unset)
+            })
+            .collect_vec();
 
         Self {
             id: format!("{}-{}", first.region_id, first.join_id),
@@ -172,13 +169,37 @@ impl BlockGroup {
             visual_end,
             align_start,
             align_end,
-            strand,
+            strands,
             query: query_name,
             target: first.target_name.clone(),
             left,
             right,
             aligned,
             inner,
+        }
+    }
+
+    fn bed_description_to_strands(bed: &BedRecord, expected_entries: usize) -> Vec<Strand> {
+        let desc_entires = bed
+            .description
+            .split(",")
+            .filter_map(|v| {
+                let elems = v.trim().split(" ").collect_vec();
+                if elems.len() < 9 {
+                    None
+                } else {
+                    match elems[8] {
+                        "C" => Some(bed.strand),
+                        _ => Some(Strand::from_str(elems[8])),
+                    }
+                }
+            })
+            .collect_vec();
+
+        if desc_entires.len() != expected_entries {
+            vec![bed.strand; expected_entries]
+        } else {
+            desc_entires
         }
     }
 
@@ -258,7 +279,7 @@ impl BlockGroup {
             visual_end: bed.chrom_end,
             align_start: bed.thick_start,
             align_end: bed.thick_end,
-            strand: bed.strand,
+            strands: Self::bed_description_to_strands(bed, aligned.len()),
             query: bed.name.clone(),
             target: bed.chrom.clone(),
             left,

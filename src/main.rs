@@ -13,6 +13,7 @@ mod segment_groups;
 mod segments;
 mod substitution_matrix;
 mod support;
+mod union_find;
 mod util;
 mod viterbi;
 mod viz;
@@ -37,7 +38,7 @@ use viz::VizConstraint;
 use crate::{
     annotation::AmbiguousAnnotation,
     chunks::validate_groups,
-    pipeline::run_pipeline,
+    pipeline::{run_history_trace, run_naive_trace, NaiveTraceResults},
     viz::{
         stats::{write_family_statistics, write_inversion_statistics},
         write_index_file, ICON_SVG,
@@ -150,7 +151,7 @@ pub struct AnnotationArgs {
 
     /// The maximum seperation or overlap in nucleotides on both target and consensus
     /// for a join to be allowed between inverted alignments.
-    #[arg(long = "inversion-distance", default_value = "20", value_name = "n")]
+    #[arg(long = "inversion-distance", default_value = "50", value_name = "n")]
     pub inversion_distance: isize,
 
     /// The size of the window looked at to determine a single alignment score in nucleotides.
@@ -191,10 +192,6 @@ pub struct AnnotationArgs {
     /// The max depth of the histories used for identifying joins.
     #[arg(long = "max-history-depth", default_value = "64", value_name = "n")]
     pub max_history_depth: usize,
-
-    /// The max number of allowed annotations an annotation can consider linking to independantly in front of it...
-    #[arg(long = "max-forward-links", default_value = "5", value_name = "n")]
-    pub max_forward_links: usize,
 
     /// The total number of histories allowed in a single segment.
     /// Additional histories are removed, lowest scoring first.
@@ -443,17 +440,29 @@ fn main() -> Result<()> {
         .build_global()
         .unwrap();
 
-    let mut results = proximity_groups
+    let mut naive_results = proximity_groups
         .par_iter()
         .panic_fuse()
         .enumerate()
         .map(|(region_idx, group)| {
             (
                 region_idx,
-                run_pipeline(group, &alignment_data, region_idx, args.clone()),
+                run_naive_trace(group, &alignment_data, region_idx, &args),
             )
         })
-        .collect::<Vec<(usize, Vec<AmbiguousAnnotation>)>>();
+        .collect::<Vec<(usize, NaiveTraceResults)>>();
+    naive_results.sort_by_key(|v| v.0);
+
+    let mut results: Vec<(usize, Vec<AmbiguousAnnotation>)> = proximity_groups
+        .par_iter()
+        .zip(naive_results)
+        .map(|(group, (region_idx, mut naive_trace))| {
+            (
+                region_idx,
+                run_history_trace(group, &alignment_data, &mut naive_trace, &args),
+            )
+        })
+        .collect();
     results.sort_by_key(|v| v.0);
 
     for (_region, annots) in results.iter() {
@@ -482,7 +491,7 @@ fn main() -> Result<()> {
         )?;
         write_inversion_statistics(&mut inv_stats_writer, &results)?;
         let mut icon_file = File::create(args.visualization_args.viz_output_path.join("icon.svg"))?;
-        icon_file.write(ICON_SVG.as_bytes())?;
+        icon_file.write_all(ICON_SVG.as_bytes())?;
     }
 
     Ok(())

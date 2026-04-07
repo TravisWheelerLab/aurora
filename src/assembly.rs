@@ -13,8 +13,60 @@ use crate::{
 pub enum LinkType {
     Forward,
     Reverse,
-    FRInversion,
-    RFInversion,
+    // Forward to reverse strand inversions...
+    FRInversion1, // 1st sequence flipped.
+    FRInversion2, // 2nd sequence flipped.
+    // Reverse to forward strand inversions...
+    RFInversion1, // 1st sequence flipped...
+    RFInversion2, // 2nd sequence flipped...
+}
+
+/// The side of the sequence being referred to, in target (genome), space...
+#[derive(Debug, Clone, Ord, PartialEq, PartialOrd, Eq, Copy)]
+pub enum Side {
+    Left,
+    Right,
+}
+
+impl Side {
+    pub fn flip(&self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
+    }
+
+    pub fn to_index(&self) -> usize {
+        match self {
+            Self::Left => 0,
+            Self::Right => 1,
+        }
+    }
+}
+
+impl LinkType {
+    pub fn is_inversion(&self) -> bool {
+        matches!(
+            self,
+            Self::FRInversion1 | Self::FRInversion2 | Self::RFInversion1 | Self::RFInversion2
+        )
+    }
+
+    /// Get the linked sides of two segments. The first one is from the first sequence the genome, the second from the second one.
+    pub fn get_linked_sides(&self) -> (Side, Side) {
+        match self {
+            Self::Forward | Self::Reverse => (Side::Right, Side::Left),
+            Self::FRInversion1 | Self::RFInversion1 => (Side::Left, Side::Left),
+            Self::FRInversion2 | Self::RFInversion2 => (Side::Right, Side::Right),
+        }
+    }
+
+    #[allow(dead_code)]
+    /// Get the unlinked, or still open sides of two segments. The first one is from the first sequence the genome, the second from the second one.
+    pub fn get_open_sides(&self) -> (Side, Side) {
+        let linked = self.get_linked_sides();
+        (linked.0.flip(), linked.1.flip())
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -106,16 +158,25 @@ fn link_assemblies(
             let a_block = &segments[a.0].blocks[a.1];
             let b_block = &segments[b.0].blocks[b.1];
 
+            // We allow this now, otherwise inversions might not properly join...
             // If same alignment, and neighboring segments, don't join...
-            if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
-                return;
-            }
+            //if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
+            //    return;
+            //}
 
             let target_distance = b_block.col_start as isize - a_block.col_end as isize;
 
             let a_length = a_block.query_end.abs_diff(a_block.query_start);
             let b_length = b_block.query_end.abs_diff(b_block.query_start);
             let min_length = a_length.min(b_length);
+
+            let select_closest = |prop1: (isize, LinkType), prop2: (isize, LinkType)| {
+                if prop1.0.abs() < prop2.0.abs() {
+                    prop1
+                } else {
+                    prop2
+                }
+            };
 
             // Query bounds are reversed for reverse sequences, so the start is actually greater than the end (Ex. start: 1510 -> end: 105)
 
@@ -131,46 +192,53 @@ fn link_assemblies(
                     a_block.query_end as isize - b_block.query_start as isize,
                     LinkType::Reverse,
                 ),
-                (Strand::Forward, Strand::Reverse) => (
-                    b_block.query_end as isize - a_block.query_end as isize,
-                    LinkType::FRInversion,
+                (Strand::Forward, Strand::Reverse) => select_closest(
+                    (
+                        a_block.query_start as isize - b_block.query_start as isize,
+                        LinkType::FRInversion1,
+                    ),
+                    (
+                        b_block.query_end as isize - a_block.query_end as isize,
+                        LinkType::FRInversion2,
+                    ),
                 ),
-                (Strand::Reverse, Strand::Forward) => (
-                    a_block.query_end as isize - b_block.query_end as isize,
-                    LinkType::RFInversion,
+                (Strand::Reverse, Strand::Forward) => select_closest(
+                    (
+                        b_block.query_start as isize - a_block.query_start as isize,
+                        LinkType::RFInversion1,
+                    ),
+                    (
+                        a_block.query_end as isize - b_block.query_end as isize,
+                        LinkType::RFInversion2,
+                    ),
                 ),
                 _ => panic!("Invalid strand types!"),
             };
 
-            let within_target_distance_threshold = match link_type {
-                LinkType::FRInversion | LinkType::RFInversion => {
-                    target_distance.abs() < args.inversion_distance
-                }
-                _ => target_distance < args.target_join_distance as isize,
-            };
+            let within_target_distance_threshold =
+                target_distance < args.target_join_distance as isize;
 
-            let consensus_is_colinear = match link_type {
-                LinkType::FRInversion | LinkType::RFInversion => {
-                    consensus_distance.abs() < args.inversion_distance
-                }
-                _ => {
-                    consensus_distance > -args.consensus_join_overlap
-                        && consensus_distance < args.consensus_join_distance
-                }
+            let consensus_is_colinear = if link_type.is_inversion() {
+                consensus_distance.abs() < args.inversion_distance
+            } else {
+                consensus_distance > -args.consensus_join_overlap
+                    && consensus_distance < args.consensus_join_distance
             };
 
             // TODO: Hardcoded, change later...
             let is_significant =
                 min_length >= 10 && -consensus_distance <= ((min_length / 2) as isize);
 
-            let weight = get_link_cost(
-                args,
-                score_params,
-                consensus_distance as f64,
-                target_distance as f64,
-            );
-
-            // let not_reached_forward_limit = forward_count < args.max_forward_links;
+            let weight = if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
+                score_params.query_loop_score
+            } else {
+                get_link_cost(
+                    args,
+                    score_params,
+                    consensus_distance as f64,
+                    target_distance as f64,
+                )
+            };
 
             if within_target_distance_threshold && consensus_is_colinear && is_significant {
                 graph.insert(

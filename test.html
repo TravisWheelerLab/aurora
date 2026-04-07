@@ -2,83 +2,13 @@
 <html>
   <head>
     <title>Region REGION_INDEX</title>
-    <link rel="icon" type="image/x-icon" href="RELATIVE_PATH_TARGETicon.svg"/>
-    <style>
-      :root {
-        --primary-color: cadetblue;
-        --darker-primary-color: darkcyan;
-        --background-color: white;
-      }
-      body {
-        margin: 0;
-        font-family: "Lato", sans-serif;
-      }
-
-      .container {
-        display: flex;
-      }
-
-      .sidebar {
-        width: 30px;
-        height: 100vh;
-        border: 1px solid black;
-        overflow-x: hidden;
-        transition: width 0.3s ease;
-        top: 0;
-        position: -webkit-sticky;
-        position: sticky;
-      }
-
-      .inner-sidebar {
-        width: 200px;
-      }
-
-      .viz {
-        flex-grow: 1;
-      }
-
-      .button {
-        border: none;
-        border-radius: 10px;
-        text-decoration: none;
-        display: inline-block;
-        margin: 1px;
-        transition-duration: 0.4s;
-        width: 28px;
-        height: 28px;
-        line-height: 28px;
-        text-align: center;
-        vertical-align: middle;
-        user-select: none;
-        cursor: pointer;
-        outline: none;
-        background: var(--primary-color);
-        color: white;
-      }
-
-      .button:hover {
-        background: var(--darker-primary-color);
-      }
-
-      .widget-horizontal {
-        padding-left: 20px;
-        margin: 10px;
-        display: flex;
-      }
-
-      .widget-vertical {
-        padding-left: 20px;
-        margin: 10px;
-        display: flex;
-        flex-direction: column;
-      }
-    </style>
+    <link rel="icon" type="image/x-icon" href="../icon.svg"/>
   </head>
   <body>
     <div class="container">
       <div class="sidebar" id="sidebar">
         <div class="inner-sidebar">
-          <a class="button" style="font-size: 1.5em;" href="RELATIVE_PATH_TARGETindex.html">&#x1F878;</a><br>
+          <a class="button" style="font-size: 1.5em;" href="../index.html">&#x1F878;</a><br>
           <span class="button" id="toggle">&#xFF0B;</span>
 
           <div class="widget-vertical">
@@ -113,11 +43,11 @@
 
           <div class="widget-horizontal">
             <label>
-              <input
+              <input 
                 type="checkbox"
                 id="onlyTrace"
                 name="onlyTrace"
-                checked
+                checked 
               />
               Only show trace
             </label>
@@ -145,14 +75,7 @@
           <div class="widget-horizontal">
             <label>
               <input type="checkbox" id="showSegments" name="showSegments"/>
-              Show history segments and blocks.
-            </label>
-          </div>
-
-          <div class="widget-horizontal">
-            <label>
-              <input type="checkbox" id="showInversions" name="showInversions"/>
-              Highlight Inversions
+              Show history segments and blocks. 
             </label>
           </div>
 
@@ -166,17 +89,14 @@
     </div>
   </body>
 
-  <script type="module">
-    SODA_TARGET;
-    JS_TARGET;
-
-    let confidences = CONFIDENCE_TARGET;
-    FILE_SPLIT_POINT
-
-    let data = DATA_TARGET;
-    data.alignmentConfidences = confidences;
-    window.auroraData = data;
+  <script defer>
+    let data2 = "hello!!!";
+  </script>
+  <script defer>
+    console.log(data2);
+    let data = {};
 
     run(data);
   </script>
 </html>
+

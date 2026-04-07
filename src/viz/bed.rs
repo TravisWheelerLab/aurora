@@ -1,4 +1,6 @@
 use crate::{alignment::Strand, annotation::ConcreteAnnotation};
+use std::num::ParseIntError;
+use thiserror::Error;
 
 use super::BlockGroup;
 
@@ -62,8 +64,16 @@ impl PartialEq for BedRecord {
     }
 }
 
+#[derive(Error, Debug)]
+pub enum BedParserError {
+    #[error("Bed file row only had `{count}` columns, expected at least 14.")]
+    NotEnoughColumns { count: usize },
+    #[error("Unable to parse member!")]
+    ParseMember(#[from] ParseIntError),
+}
+
 impl BedRecord {
-    pub fn from_tokens(tokens: &[&str]) -> Self {
+    pub fn from_tokens(tokens: &[&str]) -> Result<Self, BedParserError> {
         // repetetive element annotation schema:
         //   0 string  chrom;          "Reference sequence chromosome or scaffold"
         //   1 uint    chromStart;     "Start position of visualization on chromosome"
@@ -79,17 +89,23 @@ impl BedRecord {
         //   11 lstring blockStarts;    "A comma-separated list of the block starts(+/-)"
         //   12 uint    id;             "A unique identifier for the joined annotations in this record"
         //   13 lstring description;    "A comma separated list of technical annotation descriptions"
-        Self {
+        if tokens.len() < 14 {
+            return Err(BedParserError::NotEnoughColumns {
+                count: tokens.len(),
+            });
+        }
+
+        Ok(Self {
             chrom: tokens[0].to_string(),
-            chrom_start: tokens[1].parse::<usize>().unwrap(),
-            chrom_end: tokens[2].parse::<usize>().unwrap(),
+            chrom_start: tokens[1].parse::<usize>()?,
+            chrom_end: tokens[2].parse::<usize>()?,
             name: tokens[3].to_string(),
-            score: tokens[4].parse::<usize>().unwrap(),
+            score: tokens[4].parse::<usize>()?,
             strand: Strand::from_str(tokens[5]),
-            thick_start: tokens[6].parse::<usize>().unwrap(),
-            thick_end: tokens[7].parse::<usize>().unwrap(),
+            thick_start: tokens[6].parse::<usize>()?,
+            thick_end: tokens[7].parse::<usize>()?,
             reserved: 0,
-            block_count: tokens[9].parse::<usize>().unwrap(),
+            block_count: tokens[9].parse::<usize>()?,
             block_sizes: tokens[10]
                 .split(',')
                 .collect::<Vec<&str>>()
@@ -102,13 +118,13 @@ impl BedRecord {
                 .iter()
                 .map(|d| d.parse::<i32>().unwrap())
                 .collect(),
-            id: tokens[12].parse::<usize>().unwrap(),
-            description: tokens[13].to_string(),
-        }
+            id: tokens[12].parse::<usize>()?,
+            description: tokens[13..].join(" "),
+        })
     }
 
     #[allow(dead_code)]
-    pub fn from_str(record_str: &str) -> Self {
+    pub fn from_str(record_str: &str) -> Result<Self, BedParserError> {
         let tokens: Vec<&str> = record_str.split_whitespace().collect();
         Self::from_tokens(&tokens)
     }
@@ -223,7 +239,7 @@ impl BedRecord {
             chrom_end: group.visual_end,
             name: group.query.clone(),
             score: 0,
-            strand: group.strand,
+            strand: *group.strands.first().unwrap_or(&Strand::Unset),
             thick_start: group.align_start,
             thick_end: group.align_end,
             block_count: 2 + group.aligned.len() + group.inner.len(),

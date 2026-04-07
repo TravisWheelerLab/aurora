@@ -358,6 +358,7 @@ where
         self.def.query_id_by_logical_row[self.def.active_rows_by_col[col][sparse_row]]
     }
 
+    #[allow(dead_code)]
     pub fn ali_id(&self, row: usize, col: usize) -> usize {
         let sparse_row_idx = self.logical_to_sparse_row_idx(row, col);
         self.def.ali_ids_by_col[col][sparse_row_idx]
@@ -367,6 +368,7 @@ where
         self.def.ali_ids_by_col[col][sparse_row]
     }
 
+    #[allow(dead_code)]
     pub fn strand_of_row(&self, row: usize) -> Strand {
         self.def.strand_by_logical_row[row]
     }
