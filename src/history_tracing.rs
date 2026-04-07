@@ -548,12 +548,10 @@ fn check_for_joins(args: JoinCheckArgs) -> (PossibleJoinLinks, JoinBlockIndexes,
         .enumerate()
         .filter_map(|(i, v)| {
             if let Some(val) = prior_val {
-                if v.iter().zip(val.iter()).any(|(v1, v2)| {
-                    !((v1.is_none() && v2.is_none())
-                        || (&v1)
-                            .as_ref()
-                            .unwrap()
-                            .match_within_epsilon(v2.as_ref().unwrap(), epsilon))
+                if v.iter().zip(val.iter()).any(|(v1, v2)| match (v1, v2) {
+                    (Some(jl1), Some(jl2)) => !jl1.match_within_epsilon(jl2, epsilon),
+                    (None, None) => false,
+                    _ => true,
                 }) {
                     prior_val = Some(v);
                     Some(i)
