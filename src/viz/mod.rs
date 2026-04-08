@@ -58,7 +58,7 @@ pub fn write_index_file(
 
     proximity_groups.iter().enumerate().for_each(|(idx, g)| {
         index_links.push_str(&format!(
-            "<div class=\"region\" data-target=\"{name}\" data-start=\"{start}\" data-end=\"{end}\"><a href=\"{idx}/index.html\"><h3>region {idx} | {name} {start}:{end}</h3></a>\n",
+            "<div class=\"region\" data-target=\"{name}\" data-start=\"{start}\" data-end=\"{end}\"><a href=\"{idx}/index.html\"><h3>region {idx} | {name} {start}:{end}</h3></a></div><br>\n",
             name = alignment_data.target_name_map.get(g.target_id),
             start = g.target_start,
             end = g.target_end,
@@ -746,7 +746,7 @@ impl<'a> AdjudicationSodaData<'a> {
         let columns = self
             .active_columns
             .iter()
-            .flat_map(|&(start, end)| (start..=end))
+            .flat_map(|&(start, end)| start..=end)
             .collect_vec();
         vec![columns]
     }

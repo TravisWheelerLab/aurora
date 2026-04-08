@@ -45,6 +45,7 @@ impl BackgroundFrequencies for Background<'_> {
     }
 }
 
+#[allow(dead_code)]
 pub struct DummyBackground {}
 
 impl BackgroundFrequencies for DummyBackground {

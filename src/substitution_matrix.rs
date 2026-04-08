@@ -9,6 +9,7 @@ use crate::alphabet::{
 };
 
 pub trait AlignmentScore {
+    #[allow(dead_code)]
     fn score(&self, target_char: u8, query_char: u8) -> f64;
     fn score_with_background(&self, target_char: u8, query_char: u8, frequencies: &[f64; 4])
         -> f64;

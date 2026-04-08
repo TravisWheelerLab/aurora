@@ -181,7 +181,7 @@ impl<T: Into<usize> + TryFrom<usize> + Copy + Debug> AVLIndexSet<T> {
     }
 
     /// Iterate over the elements in the tree, in sorted order. Returns the element index and the depth of the element in the tree.
-    pub fn iter(&self) -> AVLInOrderSetIterator<T> {
+    pub fn iter(&self) -> AVLInOrderSetIterator<'_, T> {
         let mut stack = Vec::with_capacity(self.depth() + 1);
         if let Some(root) = self.root {
             stack.push((root, 0_u8));
@@ -190,7 +190,7 @@ impl<T: Into<usize> + TryFrom<usize> + Copy + Debug> AVLIndexSet<T> {
         AVLInOrderSetIterator { tree: self, stack }
     }
 
-    pub fn bfs(&self) -> AVLBFSSetIterator<T> {
+    pub fn bfs(&self) -> AVLBFSSetIterator<'_, T> {
         let mut queue = VecDeque::new();
 
         if let Some(root) = self.root {

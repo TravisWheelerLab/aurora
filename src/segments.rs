@@ -213,7 +213,7 @@ pub struct SegmentView<'a> {
 
 #[allow(dead_code)]
 impl InitialSegments {
-    pub fn iter_segments(&self) -> impl Iterator<Item = SegmentView> {
+    pub fn iter_segments(&self) -> impl Iterator<Item = SegmentView<'_>> {
         self.segments.iter().map(|v| SegmentView {
             start_col: v.start_col,
             end_col: v.end_col,

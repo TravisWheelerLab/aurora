@@ -15,7 +15,7 @@ impl<T: std::cmp::PartialEq> VecMap<T> {
         Self { values }
     }
 
-    pub fn values(&self) -> std::slice::Iter<T> {
+    pub fn values(&self) -> std::slice::Iter<'_, T> {
         self.values.iter()
     }
 
