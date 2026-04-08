@@ -48,7 +48,7 @@ pub fn write_index_file(
         .enumerate()
         .for_each(|(idx, c)| {
             index_links.push_str(&format!(
-                "<div class=\"region\" data-target=\"{name}\" data-start=\"{start}\" data-end=\"{end}\"><a href=\"{name}-{start}-{end}.html\">slice {idx} | {name} {start}:{end}</a><br></div>\n",
+                "<div class=\"region\" data-target=\"{name}\" data-start=\"{start}\" data-end=\"{end}\"><a href=\"{name}-{start}-{end}.html\"><h3>slice {idx} | {name} {start}:{end}</h3></a></div>\n",
                 name = c.target_name,
                 start = c.target_start,
                 end = c.target_end,
