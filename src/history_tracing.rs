@@ -3,7 +3,6 @@ use crate::{
     score_params::ScoreParams,
     segment_groups::SegmentGroups,
     segments::{Block, BlockType, Segment, SegmentedMatrix},
-    union_find::{RepresentativeType, UnionFind},
 };
 use itertools::Itertools;
 use std::cmp::Ordering;
@@ -213,7 +212,7 @@ fn keep_unique_histories(histories: &mut Vec<HistoryEntry>, start_offset: usize)
         }
     }
 
-    assert!(histories[start_offset..current_unique + 1]
+    debug_assert!(histories[start_offset..current_unique + 1]
         .iter()
         .any(|v| history_score(v) >= max_score));
 
@@ -1159,61 +1158,118 @@ fn get_joinable_extensions<'a>(
         .collect_vec()
 }
 
-struct Joiner {
-    uf: UnionFind,
-    stack_position_and_join_index: Vec<Option<(usize, usize)>>,
-    next_join_index: usize,
+struct JoinStackEntry {
+    joined_history_offset: usize,
+    trace_segment_offset: usize,
+    join_index: usize,
 }
 
-impl Joiner {
-    fn new(segment_count: usize) -> Self {
-        Self {
-            uf: UnionFind::new(segment_count, RepresentativeType::LARGEST),
-            stack_position_and_join_index: vec![None; segment_count],
+struct AddedBlockInfo {
+    history_index: usize,
+    trace_stack_index: usize,
+    join_index: usize,
+}
+
+struct JoinStack {
+    pub stack: Vec<JoinStackEntry>,
+    pub next_join_index: usize,
+}
+
+enum BlockAction {
+    // join index, trace stack index...
+    Join(usize, usize),
+    // join index...
+    Add(usize),
+}
+
+impl JoinStack {
+    fn new() -> Self {
+        JoinStack {
+            stack: Vec::new(),
             next_join_index: 0,
         }
     }
 
-    fn add_block(&mut self, segment: usize, stack_position: usize) -> (usize, usize) {
-        let repr = self.uf.find(segment);
-        if let Some((prior_stack_pos, join_idx)) = self.stack_position_and_join_index[repr] {
-            (prior_stack_pos, join_idx)
-        } else {
-            let join_idx = self.next_join_index;
-            self.stack_position_and_join_index[repr] = Some((stack_position, join_idx));
-            self.next_join_index += 1;
-            (stack_position, join_idx)
+    /// Try adding one or two joins to the join stack if this block is a join and has linked edges.
+    fn try_push(&mut self, entry: &HistoryEntry, added_block_info: Option<&AddedBlockInfo>) {
+        if let (HistoryEntry::Join(val), Some(info)) = (entry, added_block_info) {
+            let mut top_stack_entries = 0;
+
+            if val.join_left_block.caused_by_history != info.history_index {
+                self.stack.push(JoinStackEntry {
+                    joined_history_offset: val.join_left_block.caused_by_history,
+                    trace_segment_offset: info.trace_stack_index,
+                    join_index: info.join_index,
+                });
+                top_stack_entries += 1;
+            }
+
+            if val.join_right_block.caused_by_history != info.history_index {
+                self.stack.push(JoinStackEntry {
+                    joined_history_offset: val.join_right_block.caused_by_history,
+                    trace_segment_offset: info.trace_stack_index,
+                    join_index: info.join_index,
+                });
+                top_stack_entries += 1;
+            }
+
+            let top_vals_offset = self.stack.len() - top_stack_entries;
+            self.stack[top_vals_offset..].sort_unstable_by_key(|v| v.joined_history_offset);
         }
     }
 
-    fn join(&mut self, segment1: usize, segment2: usize) {
-        self.uf.union(segment1, segment2);
+    /// Attempt to join top-most join on the join stack if history index matches...
+    fn check_for_join(&mut self, history_index: usize) -> BlockAction {
+        if let Some(join_entry) = self.stack.last() {
+            if join_entry.joined_history_offset == history_index {
+                let block =
+                    BlockAction::Join(join_entry.join_index, join_entry.trace_segment_offset);
+                self.stack.pop();
+                return block;
+            }
+        }
+
+        let result = BlockAction::Add(self.next_join_index);
+        self.next_join_index += 1;
+        result
     }
 
-    #[allow(dead_code)]
-    fn joined_to(&mut self, segment: usize) -> Option<(usize, usize)> {
-        let largest_link = self.uf.find(segment);
-        self.stack_position_and_join_index[largest_link]
+    /// Same as add-block, but does not return information, simply just consumes the value on the top of the stack.
+    fn try_pop(&mut self, history_index: usize) {
+        if let Some(join_entry) = self.stack.last() {
+            if join_entry.joined_history_offset == history_index {
+                self.stack.pop();
+            }
+        }
     }
 }
 
 // Return is the assigned index of the new block, and the new join index to use for the following block...
 fn history_backtrace_append_block(
     refined_segments: &mut Vec<RefinedTraceSegment>,
-    joiner: &mut Joiner,
+    joiner: &mut JoinStack,
     blocks: &[&Block],
     score: f64,
+    current_history_index: usize,
     segment: usize,
     region_idx: usize,
-) {
+) -> Option<AddedBlockInfo> {
     // Case 1: Same row index and touches start of segment in front of it, extend the segment backwards to include this...
+    let stack_size = refined_segments.len() - 1;
+
     if let Some(ref_seg) = refined_segments.last_mut() {
         let direct_extensions =
             get_possible_extensions(blocks.iter().copied(), ref_seg.annotated.iter());
 
         if !direct_extensions.is_empty() {
+            // If marked as join (happens for regular blocks), consume the value added to the join stack...
+            joiner.try_pop(current_history_index);
             ref_seg.annotated = direct_extensions;
-            return;
+            return Some(AddedBlockInfo {
+                history_index: current_history_index,
+                trace_stack_index: stack_size,
+                join_index: ref_seg.join_index,
+            });
         }
     }
 
@@ -1221,59 +1277,62 @@ fn history_backtrace_append_block(
         .iter()
         .any(|&b| matches!(b.block_type, BlockType::Alignment | BlockType::TandemRepeat))
     {
-        // Add block to the joiner...
-        let (stack_pos, join_index) = joiner.add_block(segment, refined_segments.len());
-        // Case 2: Is part of a join, use shared join index...
-        if stack_pos < refined_segments.len() {
-            let joins = get_joinable_extensions(
-                blocks.iter().copied(),
-                refined_segments[stack_pos].annotated.iter(),
-            );
+        match joiner.check_for_join(current_history_index) {
+            // Case 2: Involved in a join, add new block, but don't
+            BlockAction::Join(join_index, stack_pos) => {
+                let joins = get_joinable_extensions(
+                    blocks.iter().copied(),
+                    refined_segments[stack_pos].annotated.iter(),
+                );
 
-            // Should not be possible assuming a join was allowed in the first place...
-            if joins.is_empty() {
-                panic!("Annotation from join made with 0 elements! This should not be possible! (Region: {}, Segment: {})", region_idx, segment);
-            }
+                // Should not be possible assuming a join was allowed in the first place...
+                if joins.is_empty() {
+                    panic!("Annotation from join made with 0 elements! This should not be possible! (Region: {}, Segment: {})", region_idx, segment);
+                }
 
-            refined_segments.push(RefinedTraceSegment {
-                annotated: joins,
-                join_index,
-                score,
-                segment,
-            });
+                refined_segments.push(RefinedTraceSegment {
+                    annotated: joins,
+                    join_index,
+                    score,
+                    segment,
+                });
 
-            return;
-        }
-
-        // Case 3: New segment not part of a join...
-        refined_segments.push(RefinedTraceSegment {
-            annotated: blocks
-                .iter()
-                .map(|&b| AnnotatedRange {
-                    query_id: b.query_id,
-                    row_idx: b.row_idx,
-                    col_start: b.col_start,
-                    col_end: b.col_end,
-                    query_start: b.query_start,
-                    query_end: b.query_end,
-                    avg_confidence: b.avg_confidence,
+                Some(AddedBlockInfo {
+                    history_index: current_history_index,
+                    trace_stack_index: refined_segments.len() - 1,
+                    join_index,
                 })
-                .collect_vec(),
-            join_index,
-            score,
-            segment,
-        });
+            }
+            BlockAction::Add(join_index) => {
+                // Case 3: New segment not part of a join...
+                refined_segments.push(RefinedTraceSegment {
+                    annotated: blocks
+                        .iter()
+                        .map(|&b| AnnotatedRange {
+                            query_id: b.query_id,
+                            row_idx: b.row_idx,
+                            col_start: b.col_start,
+                            col_end: b.col_end,
+                            query_start: b.query_start,
+                            query_end: b.query_end,
+                            avg_confidence: b.avg_confidence,
+                        })
+                        .collect_vec(),
+                    join_index,
+                    score,
+                    segment,
+                });
 
-        return;
-    }
-
-    // Case 4: Skip state, don't add anything...
-}
-
-fn get_history_segment(entry: &HistoryEntry) -> Option<usize> {
-    match entry {
-        HistoryEntry::Append(val) | HistoryEntry::Join(val) => Some(val.segment),
-        HistoryEntry::Root => None,
+                Some(AddedBlockInfo {
+                    history_index: current_history_index,
+                    trace_stack_index: refined_segments.len() - 1,
+                    join_index,
+                })
+            }
+        }
+    } else {
+        // Case 4: Skip state, don't add anything...=
+        None
     }
 }
 
@@ -1286,7 +1345,7 @@ pub fn backtrace_histories(
 
     let mut refined_segments: Vec<RefinedTraceSegment> = Vec::new();
     // Both structures below used for tracking joins...
-    let mut joiner: Joiner = Joiner::new(segments.len());
+    let mut joiner: JoinStack = JoinStack::new();
 
     let last_segment = history.segment_offsets.len() - 1;
     // Find the max in the first row....
@@ -1306,37 +1365,18 @@ pub fn backtrace_histories(
             .collect_vec();
 
         // Append block for this entry (or extend prior trace block if this is the same alignment)...
-        history_backtrace_append_block(
+        let added_block = history_backtrace_append_block(
             &mut refined_segments,
             &mut joiner,
             &blocks,
             entry_info.score,
+            current_idx,
             entry_info.segment,
             region_idx,
         );
 
         // If this is a join, link segments it joins to so they can be constructed correctly later...
-        if let HistoryEntry::Join(_) = current_entry {
-            if entry_info.join_left_block.caused_by_history != current_idx {
-                joiner.join(
-                    entry_info.segment,
-                    get_history_segment(
-                        &history.entries[entry_info.join_left_block.caused_by_history],
-                    )
-                    .unwrap_or(entry_info.segment),
-                );
-            }
-
-            if entry_info.join_right_block.caused_by_history != current_idx {
-                joiner.join(
-                    entry_info.segment,
-                    get_history_segment(
-                        &history.entries[entry_info.join_right_block.caused_by_history],
-                    )
-                    .unwrap_or(entry_info.segment),
-                );
-            }
-        }
+        joiner.try_push(current_entry, added_block.as_ref());
 
         // Go to the next entry in the history...
         current_idx = entry_info.prior_block_history;

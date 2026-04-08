@@ -13,7 +13,11 @@ mod segment_groups;
 mod segments;
 mod substitution_matrix;
 mod support;
+
+// Note: This will be used for components/archetectures additions soon...
+#[allow(dead_code)]
 mod union_find;
+
 mod util;
 mod viterbi;
 mod viz;
