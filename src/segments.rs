@@ -220,6 +220,10 @@ impl InitialSegments {
             blocks: &v.blocks,
         })
     }
+
+    pub fn len(&self) -> usize {
+        self.segments.len()
+    }
 }
 
 impl<I: Iterator, J: Iterator<Item = I::Item>, F: Fn(&I::Item, &I::Item) -> Ordering> Iterator

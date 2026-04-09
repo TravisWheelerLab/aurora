@@ -18,6 +18,7 @@ mod support;
 #[allow(dead_code)]
 mod union_find;
 
+mod trace_statistics;
 mod util;
 mod viterbi;
 mod viz;
@@ -43,6 +44,7 @@ use crate::{
     annotation::AmbiguousAnnotation,
     chunks::validate_groups,
     pipeline::{run_history_trace, run_naive_trace, NaiveTraceResults},
+    trace_statistics::{trace_statistics, OccuranceCountingMode},
     viz::{
         stats::{write_family_statistics, write_inversion_statistics},
         write_index_file, ICON_SVG,
@@ -448,22 +450,29 @@ fn main() -> Result<()> {
         .par_iter()
         .panic_fuse()
         .enumerate()
-        .map(|(region_idx, group)| {
-            (
-                region_idx,
-                run_naive_trace(group, &alignment_data, region_idx, &args),
-            )
-        })
-        .collect::<Vec<(usize, NaiveTraceResults)>>();
-    naive_results.sort_by_key(|v| v.0);
+        .map(|(region_idx, group)| run_naive_trace(group, &alignment_data, region_idx, &args))
+        .collect::<Vec<NaiveTraceResults>>();
+    naive_results.sort_by_key(|v| v.region_index);
+
+    let trace_stats = trace_statistics(
+        &naive_results,
+        &alignment_data,
+        OccuranceCountingMode::Segments,
+    );
 
     let mut results: Vec<(usize, Vec<AmbiguousAnnotation>)> = proximity_groups
         .par_iter()
         .zip(naive_results)
-        .map(|(group, (region_idx, mut naive_trace))| {
+        .map(|(group, mut naive_trace)| {
             (
-                region_idx,
-                run_history_trace(group, &alignment_data, &mut naive_trace, &args),
+                naive_trace.region_index,
+                run_history_trace(
+                    group,
+                    &alignment_data,
+                    &trace_stats,
+                    &mut naive_trace,
+                    &args,
+                ),
             )
         })
         .collect();
