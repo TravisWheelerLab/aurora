@@ -11,6 +11,7 @@ mod pipeline;
 mod score_params;
 mod segment_groups;
 mod segments;
+mod statistics;
 mod substitution_matrix;
 mod support;
 

@@ -1,4 +1,9 @@
-use crate::{alignment::AlignmentData, pipeline::NaiveTraceResults, segments::SegmentView};
+use crate::{
+    alignment::AlignmentData,
+    pipeline::NaiveTraceResults,
+    segments::SegmentView,
+    statistics::{Distribution, Exponential},
+};
 
 pub struct RegionStatistics {
     pub total_bases: usize,
@@ -6,14 +11,16 @@ pub struct RegionStatistics {
 }
 
 #[derive(Debug, Clone)]
-pub struct QueryStatistics {
+pub struct QueryStatistics<T: Distribution> {
     pub occurances: usize,
     pub coverage: usize,
+    pub target_span: usize,
+    pub distribution: T,
 }
 
-pub struct TraceStatistics {
+pub struct TraceStatistics<T: Distribution> {
     pub total_bases: usize,
-    pub query_statistics: Vec<QueryStatistics>,
+    pub query_statistics: Vec<QueryStatistics<T>>,
     pub region_statistics: Vec<RegionStatistics>,
 }
 
@@ -26,7 +33,7 @@ pub fn trace_statistics(
     naive_traces: &[NaiveTraceResults],
     alignment_data: &AlignmentData,
     count_mode: OccuranceCountingMode,
-) -> TraceStatistics {
+) -> TraceStatistics<Exponential> {
     // Asumption... All regions are sorted, no gaps. At least 1 region expected...
     debug_assert!(naive_traces.first().map(|v| v.region_index) == Some(0));
     debug_assert!(naive_traces
@@ -37,10 +44,15 @@ pub fn trace_statistics(
     let mut query_stats = vec![
         QueryStatistics {
             occurances: 0,
-            coverage: 0
+            coverage: 0,
+            target_span: 0,
+            distribution: Exponential::unit(),
         };
         alignment_data.query_name_map.size()
     ];
+
+    let mut query_span: Vec<Option<(usize, usize)>> =
+        vec![None; alignment_data.query_name_map.size()];
 
     let mut all_region_stats: Vec<RegionStatistics> = Vec::with_capacity(naive_traces.len());
 
@@ -52,6 +64,12 @@ pub fn trace_statistics(
                         if let Some(query_id) = blk.query_id {
                             query_stats[query_id].occurances += 1;
                             query_stats[query_id].coverage += blk.col_end - blk.col_start + 1;
+                            query_span[query_id] = match query_span[query_id] {
+                                None => Some((blk.col_start, blk.col_end)),
+                                Some((start, end)) => {
+                                    Some((start.min(blk.col_start), end.min(blk.col_end)))
+                                }
+                            }
                         }
                     }
                 }
@@ -61,6 +79,13 @@ pub fn trace_statistics(
                     query_stats[trace_blk.query_id].occurances += 1;
                     query_stats[trace_blk.query_id].coverage +=
                         trace_blk.col_end - trace_blk.col_start + 1;
+
+                    query_span[trace_blk.query_id] = match query_span[trace_blk.query_id] {
+                        None => Some((trace_blk.col_start, trace_blk.col_end)),
+                        Some((start, end)) => {
+                            Some((start.min(trace_blk.col_start), end.min(trace_blk.col_end)))
+                        }
+                    }
                 }
             }
         }
@@ -89,6 +114,15 @@ pub fn trace_statistics(
         }
 
         all_region_stats.push(region_stat);
+    }
+
+    for (query_info, query_span) in query_stats.iter_mut().zip(query_span.iter()) {
+        if let Some((start, end)) = query_span {
+            query_info.target_span = end - start + 1;
+            query_info.distribution = Exponential::from_scale(
+                query_info.occurances as f64 / query_info.target_span as f64,
+            );
+        }
     }
 
     TraceStatistics {

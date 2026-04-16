@@ -6,6 +6,8 @@ use crate::{
     alignment::{Alignment, Strand},
     score_params::ScoreParams,
     segments::SegmentedMatrix,
+    statistics::Distribution,
+    trace_statistics::{self, TraceStatistics},
     AnnotationArgs,
 };
 
@@ -164,10 +166,10 @@ fn link_assemblies(
             //    return;
             //}
 
-            let target_distance = b_block.col_start as isize - a_block.col_end as isize;
+            let target_distance = b_block.col_start as isize - a_block.col_end as isize - 1;
 
-            let a_length = a_block.query_end.abs_diff(a_block.query_start);
-            let b_length = b_block.query_end.abs_diff(b_block.query_start);
+            let a_length = a_block.query_end.abs_diff(a_block.query_start) + 1;
+            let b_length = b_block.query_end.abs_diff(b_block.query_start) + 1;
             let min_length = a_length.min(b_length);
 
             let select_closest = |prop1: (isize, LinkType), prop2: (isize, LinkType)| {
@@ -266,11 +268,13 @@ pub struct SegmentAssemblyGraph {
 }
 
 impl SegmentAssemblyGraph {
-    pub fn new(
+    pub fn new<T: Distribution>(
         alignments: &[Alignment],
         segments: &SegmentedMatrix,
+        trace_statistics: &TraceStatistics<T>,
         score_params: &ScoreParams,
         annotation_args: &AnnotationArgs,
+        region_idx: usize,
     ) -> Self {
         let mut alignment_block_map = vec![Vec::<SegmentAndDenseRow>::new(); alignments.len()];
 
@@ -291,19 +295,24 @@ impl SegmentAssemblyGraph {
         query_ids
             .iter()
             // grab the alignments for this ID
-            .map(|id| {
-                alignments
-                    .iter()
-                    .enumerate()
-                    .filter(|&(_, a)| a.query_id == *id)
-                    .flat_map(|(a_idx, _)| alignment_block_map[a_idx].iter().copied())
+            .map(|&id| {
+                (
+                    id,
+                    alignments
+                        .iter()
+                        .enumerate()
+                        .filter(|&(_, a)| a.query_id == id)
+                        .flat_map(|(a_idx, _)| alignment_block_map[a_idx].iter().copied()),
+                )
             })
-            .for_each(|compat_blocks| {
+            .for_each(|(id, compat_blocks)| {
                 link_assemblies(
                     &mut link_graph,
                     compat_blocks,
                     alignments,
                     segments,
+                    trace_statistics.query_statistics[id],
+                    trace_statistics.region_statistics[region_idx],
                     score_params,
                     annotation_args,
                 );

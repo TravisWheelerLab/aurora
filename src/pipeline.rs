@@ -13,6 +13,7 @@ use crate::{
     matrix::{Matrix, MatrixDef},
     score_params::{approximate_ideal_skip_state_score, ScoreParams},
     segments::{assemble_and_link_segments, segments_from_matrix_trace, InitialSegments},
+    statistics::Distribution,
     support::windowed_confidence,
     trace_statistics::TraceStatistics,
     viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment},
@@ -258,10 +259,10 @@ pub fn run_naive_trace(
     }
 }
 
-pub fn run_history_trace(
+pub fn run_history_trace<T: Distribution>(
     proximity_group: &ProximityGroup,
     alignment_data: &AlignmentData,
-    trace_statistics: &TraceStatistics,
+    trace_statistics: &TraceStatistics<T>,
     naive_trace: &mut NaiveTraceResults,
     args: &AuroraArgs,
 ) -> Vec<AmbiguousAnnotation> {
