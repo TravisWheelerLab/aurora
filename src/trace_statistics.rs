@@ -65,10 +65,14 @@ pub fn trace_statistics(
                             query_stats[query_id].occurances += 1;
                             query_stats[query_id].coverage += blk.col_end - blk.col_start + 1;
                             query_span[query_id] = match query_span[query_id] {
-                                None => Some((blk.col_start, blk.col_end)),
-                                Some((start, end)) => {
-                                    Some((start.min(blk.col_start), end.min(blk.col_end)))
-                                }
+                                None => Some((
+                                    trace_results.target_start + blk.col_start,
+                                    trace_results.target_start + blk.col_end,
+                                )),
+                                Some((start, end)) => Some((
+                                    start.min(trace_results.target_start + blk.col_start),
+                                    end.max(trace_results.target_start + blk.col_end),
+                                )),
                             }
                         }
                     }
@@ -81,10 +85,14 @@ pub fn trace_statistics(
                         trace_blk.col_end - trace_blk.col_start + 1;
 
                     query_span[trace_blk.query_id] = match query_span[trace_blk.query_id] {
-                        None => Some((trace_blk.col_start, trace_blk.col_end)),
-                        Some((start, end)) => {
-                            Some((start.min(trace_blk.col_start), end.min(trace_blk.col_end)))
-                        }
+                        None => Some((
+                            trace_results.target_start + trace_blk.col_start,
+                            trace_results.target_start + trace_blk.col_end,
+                        )),
+                        Some((start, end)) => Some((
+                            start.min(trace_results.target_start + trace_blk.col_start),
+                            end.max(trace_results.target_start + trace_blk.col_end),
+                        )),
                     }
                 }
             }

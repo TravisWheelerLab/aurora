@@ -7,7 +7,7 @@ use crate::{
     score_params::ScoreParams,
     segments::SegmentedMatrix,
     statistics::Distribution,
-    trace_statistics::{self, TraceStatistics},
+    trace_statistics::{QueryStatistics, RegionStatistics, TraceStatistics},
     AnnotationArgs,
 };
 
@@ -138,11 +138,13 @@ fn get_link_cost(
         + lambda * target_gap
 }
 
-fn link_assemblies(
+fn link_assemblies<T: Distribution>(
     graph: &mut HashMap<(SegmentAndDenseRow, SegmentAndDenseRow), Edge>,
     compatable_blocks: impl Iterator<Item = (usize, usize)>,
     alignments: &[Alignment],
     segments: &SegmentedMatrix,
+    query_statistics: &QueryStatistics<T>,
+    region_statistics: &RegionStatistics,
     score_params: &ScoreParams,
     args: &AnnotationArgs,
 ) {
@@ -187,30 +189,30 @@ fn link_assemblies(
                 alignments[b_block.row_idx - 1].strand,
             ) {
                 (Strand::Forward, Strand::Forward) => (
-                    b_block.query_start as isize - a_block.query_end as isize,
+                    b_block.query_start as isize - a_block.query_end as isize - 1,
                     LinkType::Forward,
                 ),
                 (Strand::Reverse, Strand::Reverse) => (
-                    a_block.query_end as isize - b_block.query_start as isize,
+                    a_block.query_end as isize - b_block.query_start as isize - 1,
                     LinkType::Reverse,
                 ),
                 (Strand::Forward, Strand::Reverse) => select_closest(
                     (
-                        a_block.query_start as isize - b_block.query_start as isize,
+                        a_block.query_start as isize - b_block.query_start as isize - 1,
                         LinkType::FRInversion1,
                     ),
                     (
-                        b_block.query_end as isize - a_block.query_end as isize,
+                        b_block.query_end as isize - a_block.query_end as isize - 1,
                         LinkType::FRInversion2,
                     ),
                 ),
                 (Strand::Reverse, Strand::Forward) => select_closest(
                     (
-                        b_block.query_start as isize - a_block.query_start as isize,
+                        b_block.query_start as isize - a_block.query_start as isize - 1,
                         LinkType::RFInversion1,
                     ),
                     (
-                        a_block.query_end as isize - b_block.query_end as isize,
+                        a_block.query_end as isize - b_block.query_end as isize - 1,
                         LinkType::RFInversion2,
                     ),
                 ),
@@ -271,10 +273,10 @@ impl SegmentAssemblyGraph {
     pub fn new<T: Distribution>(
         alignments: &[Alignment],
         segments: &SegmentedMatrix,
-        trace_statistics: &TraceStatistics<T>,
+        region_statistics: &RegionStatistics,
+        query_statistics: &[QueryStatistics<T>],
         score_params: &ScoreParams,
         annotation_args: &AnnotationArgs,
-        region_idx: usize,
     ) -> Self {
         let mut alignment_block_map = vec![Vec::<SegmentAndDenseRow>::new(); alignments.len()];
 
@@ -295,13 +297,13 @@ impl SegmentAssemblyGraph {
         query_ids
             .iter()
             // grab the alignments for this ID
-            .map(|&id| {
+            .map(|id| {
                 (
-                    id,
+                    *id,
                     alignments
                         .iter()
                         .enumerate()
-                        .filter(|&(_, a)| a.query_id == id)
+                        .filter(|&(_, a)| a.query_id == *id)
                         .flat_map(|(a_idx, _)| alignment_block_map[a_idx].iter().copied()),
                 )
             })
@@ -311,8 +313,8 @@ impl SegmentAssemblyGraph {
                     compat_blocks,
                     alignments,
                     segments,
-                    trace_statistics.query_statistics[id],
-                    trace_statistics.region_statistics[region_idx],
+                    &query_statistics[id],
+                    region_statistics,
                     score_params,
                     annotation_args,
                 );

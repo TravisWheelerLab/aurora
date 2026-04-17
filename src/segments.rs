@@ -2,8 +2,14 @@ use core::f64;
 use std::{cmp::Ordering, fmt::Debug, iter::Fuse};
 
 use crate::{
-    assembly::SegmentAssemblyGraph, chunks::ProximityGroup, matrix::Matrix,
-    score_params::ScoreParams, viterbi::TraceSegment, AnnotationArgs,
+    assembly::SegmentAssemblyGraph,
+    chunks::ProximityGroup,
+    matrix::Matrix,
+    score_params::ScoreParams,
+    statistics::Distribution,
+    trace_statistics::{QueryStatistics, RegionStatistics, TraceStatistics},
+    viterbi::TraceSegment,
+    AnnotationArgs,
 };
 use itertools::Itertools;
 
@@ -556,16 +562,20 @@ pub fn segments_from_matrix_trace(
     }
 }
 
-pub fn assemble_and_link_segments<'a>(
+pub fn assemble_and_link_segments<'a, T: Distribution>(
     proximity_group: &ProximityGroup,
     initial_segments: &'a mut InitialSegments,
     trace_segments: &[TraceSegment],
+    region_statistics: &RegionStatistics,
+    query_statistics: &[QueryStatistics<T>],
     score_params: &ScoreParams,
     annotation_args: &AnnotationArgs,
 ) -> (&'a SegmentedMatrix, SegmentAssemblyGraph) {
     let assembly_graph = SegmentAssemblyGraph::new(
         proximity_group.alignments,
         &initial_segments.segments,
+        region_statistics,
+        query_statistics,
         score_params,
         annotation_args,
     );

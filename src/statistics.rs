@@ -1,5 +1,7 @@
+use std::fmt::Debug;
+
 #[allow(dead_code)]
-pub trait Distribution: Clone {
+pub trait Distribution: Clone + Debug {
     fn unit() -> Self;
     fn pdf(&self, x: f64) -> f64;
     fn cdf(&self, x: f64) -> f64;
@@ -21,7 +23,7 @@ pub trait Distribution: Clone {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Exponential {
     lambda: f64,
 }

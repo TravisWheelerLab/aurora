@@ -142,6 +142,8 @@ fn get_active_columns<T: Copy + Default + Display>(matrix: &Matrix<T>) -> Vec<(u
 }
 
 pub struct NaiveTraceResults {
+    pub target_start: usize,
+    pub target_end: usize,
     pub trace_segments: Vec<TraceSegment>,
     pub segments: InitialSegments,
     pub score_params: ScoreParams,
@@ -249,6 +251,8 @@ pub fn run_naive_trace(
     }
 
     NaiveTraceResults {
+        target_start: proximity_group.target_start,
+        target_end: proximity_group.target_end,
         trace_segments: simple_trace,
         segments,
         score_params,
@@ -272,6 +276,8 @@ pub fn run_history_trace<T: Distribution>(
         proximity_group,
         &mut naive_trace.segments,
         &naive_trace.trace_segments,
+        &trace_statistics.region_statistics[naive_trace.region_index],
+        &trace_statistics.query_statistics,
         &naive_trace.score_params,
         &args.annotation_args,
     );
