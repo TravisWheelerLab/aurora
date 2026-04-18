@@ -7,7 +7,7 @@ use crate::{
     score_params::ScoreParams,
     segments::SegmentedMatrix,
     statistics::Distribution,
-    trace_statistics::{QueryStatistics, RegionStatistics, TraceStatistics},
+    trace_statistics::{QueryStatistics, RegionStatistics},
     AnnotationArgs,
 };
 

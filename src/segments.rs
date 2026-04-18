@@ -7,7 +7,7 @@ use crate::{
     matrix::Matrix,
     score_params::ScoreParams,
     statistics::Distribution,
-    trace_statistics::{QueryStatistics, RegionStatistics, TraceStatistics},
+    trace_statistics::{QueryStatistics, RegionStatistics},
     viterbi::TraceSegment,
     AnnotationArgs,
 };
