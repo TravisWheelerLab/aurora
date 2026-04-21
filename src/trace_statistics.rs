@@ -2,9 +2,10 @@ use crate::{
     alignment::AlignmentData,
     pipeline::NaiveTraceResults,
     segments::SegmentView,
-    statistics::{Distribution, Exponential},
+    statistics::{Distribution, ExponentialEstimator},
 };
 
+#[derive(Debug)]
 pub struct RegionStatistics {
     pub total_bases: usize,
     pub unexplained_bases: Vec<usize>,
@@ -18,7 +19,9 @@ pub struct QueryStatistics<T: Distribution> {
     pub distribution: T,
 }
 
+#[derive(Debug)]
 pub struct TraceStatistics<T: Distribution> {
+    #[allow(dead_code)]
     pub total_bases: usize,
     pub query_statistics: Vec<QueryStatistics<T>>,
     pub region_statistics: Vec<RegionStatistics>,
@@ -26,6 +29,7 @@ pub struct TraceStatistics<T: Distribution> {
 
 pub enum OccuranceCountingMode {
     Segments,
+    #[allow(dead_code)]
     Trace,
 }
 
@@ -33,7 +37,7 @@ pub fn trace_statistics(
     naive_traces: &[NaiveTraceResults],
     alignment_data: &AlignmentData,
     count_mode: OccuranceCountingMode,
-) -> TraceStatistics<Exponential> {
+) -> TraceStatistics<ExponentialEstimator> {
     // Asumption... All regions are sorted, no gaps. At least 1 region expected...
     debug_assert!(naive_traces.first().map(|v| v.region_index) == Some(0));
     debug_assert!(naive_traces
@@ -41,12 +45,17 @@ pub fn trace_statistics(
         .zip(naive_traces.iter().skip(1))
         .all(|(v1, v2)| v1.region_index + 1 == v2.region_index));
 
+    assert!(naive_traces
+        .iter()
+        .zip(naive_traces.iter().skip(1))
+        .all(|(v1, v2)| v1.region_index + 1 == v2.region_index && v1.target_end < v2.target_start));
+
     let mut query_stats = vec![
         QueryStatistics {
             occurances: 0,
             coverage: 0,
             target_span: 0,
-            distribution: Exponential::unit(),
+            distribution: ExponentialEstimator::unit(),
         };
         alignment_data.query_name_map.size()
     ];
@@ -112,8 +121,8 @@ pub fn trace_statistics(
                 if prior_segment.blocks.len() == 1 && prior_segment.blocks[0].row_idx == 0 {
                     unexplained_bases_up_to += seg.end_col - seg.start_col + 1;
                 }
-                unexplained_bases_up_to += prior_segment.end_col - seg.start_col - 1;
-                region_stat.total_bases += prior_segment.end_col - seg.start_col - 1;
+                unexplained_bases_up_to += seg.start_col - prior_segment.end_col - 1;
+                region_stat.total_bases += seg.start_col - prior_segment.end_col - 1;
             }
             region_stat.total_bases += seg.end_col - seg.start_col + 1;
             region_stat.unexplained_bases.push(unexplained_bases_up_to);
@@ -127,8 +136,10 @@ pub fn trace_statistics(
     for (query_info, query_span) in query_stats.iter_mut().zip(query_span.iter()) {
         if let Some((start, end)) = query_span {
             query_info.target_span = end - start + 1;
-            query_info.distribution = Exponential::from_scale(
-                query_info.occurances as f64 / query_info.target_span as f64,
+            // We subtract 1 because were looking at distances between each occurance as a sample value.
+            query_info.distribution = ExponentialEstimator::new(
+                query_info.target_span as f64 / query_info.occurances.saturating_sub(1) as f64,
+                query_info.occurances.saturating_sub(1),
             );
         }
     }

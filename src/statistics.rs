@@ -11,7 +11,6 @@ pub trait Distribution: Clone + Debug {
     fn ccdf(&self, x: f64) -> f64 {
         1.0 - self.cdf(x)
     }
-
     fn logpdf(&self, x: f64) -> f64 {
         self.pdf(x).ln()
     }
@@ -19,7 +18,7 @@ pub trait Distribution: Clone + Debug {
         self.cdf(x).ln()
     }
     fn logccdf(&self, x: f64) -> f64 {
-        (1.0 - self.ccdf(x)).ln()
+        self.ccdf(x).ln()
     }
 }
 
@@ -69,6 +68,74 @@ impl Distribution for Exponential {
 
     fn logccdf(&self, x: f64) -> f64 {
         -self.lambda * x
+    }
+
+    fn support(&self) -> (f64, f64) {
+        (0.0, f64::INFINITY)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ExponentialEstimator {
+    sample_mean: f64,
+    degrees_of_freedom: usize,
+}
+
+impl ExponentialEstimator {
+    pub fn new(sample_mean: f64, sample_size: usize) -> Self {
+        Self {
+            sample_mean: sample_mean,
+            degrees_of_freedom: sample_size,
+        }
+    }
+}
+
+impl From<ExponentialEstimator> for Exponential {
+    fn from(value: ExponentialEstimator) -> Self {
+        Self::from_scale(value.sample_mean)
+    }
+}
+
+impl Distribution for ExponentialEstimator {
+    fn unit() -> Self {
+        Self {
+            sample_mean: 1.0,
+            degrees_of_freedom: 1,
+        }
+    }
+
+    fn logpdf(&self, x: f64) -> f64 {
+        let n = self.degrees_of_freedom as f64;
+        let sm = self.sample_mean;
+        ((n + 1.0) * n.ln() + n * sm.ln()) - ((n + 1.0) * (n * sm + x).ln())
+    }
+
+    fn pdf(&self, x: f64) -> f64 {
+        self.logpdf(x).exp()
+    }
+
+    fn logccdf(&self, x: f64) -> f64 {
+        let n = self.degrees_of_freedom as f64;
+        let sm = self.sample_mean;
+        n * ((n * sm).ln() - (n * sm + x).ln())
+    }
+
+    fn logcdf(&self, x: f64) -> f64 {
+        self.cdf(x).ln()
+    }
+
+    fn cdf(&self, x: f64) -> f64 {
+        -(self.logccdf(x).exp_m1())
+    }
+
+    fn ccdf(&self, x: f64) -> f64 {
+        self.logccdf(x).exp()
+    }
+
+    fn ppf(&self, p: f64) -> f64 {
+        let n = self.degrees_of_freedom as f64;
+        let sm = self.sample_mean;
+        (n * sm) * ((1.0 - p).powf(-1.0 / n) - 1.0)
     }
 
     fn support(&self) -> (f64, f64) {

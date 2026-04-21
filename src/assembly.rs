@@ -100,6 +100,7 @@ fn piecewise_linear_cost(
 fn get_link_cost(
     annotation_args: &AnnotationArgs,
     score_params: &ScoreParams,
+    target_gap_distribution: &impl Distribution,
     consensus_gap: f64,
     target_gap: f64,
 ) -> f64 {
@@ -118,13 +119,15 @@ fn get_link_cost(
         .max(1.0);
 
     // Compute slopes....
-    let lambda = -value_range
-        * (annotation_args.join_target_gap_penalty
-            / annotation_args.target_join_distance.max(1) as f64)
-            .abs();
     let alpha =
         -value_range * (annotation_args.join_consensus_overlap_penalty / overlap_range).abs();
     let beta = -value_range * (annotation_args.join_consensus_gap_penalty / gap_range).abs();
+
+    // Compute target gap penalty.
+    // Doing this as the expected value over the transition scores...
+    let target_random_prob = target_gap_distribution.cdf(target_gap);
+    let target_expected_score = target_random_prob * score_params.query_jump_score
+        + (1.0 - target_random_prob) * score_params.query_loop_score;
 
     // Cost = linear consensus cost + linear target gap cost...
     min_value
@@ -135,7 +138,7 @@ fn get_link_cost(
             beta,
             consensus_gap,
         )
-        + lambda * target_gap
+        + target_expected_score
 }
 
 fn link_assemblies<T: Distribution>(
@@ -149,7 +152,6 @@ fn link_assemblies<T: Distribution>(
     args: &AnnotationArgs,
 ) {
     // this relies on the alignments being sorted by target start
-    // note: this assertion iter will only run in debug mode
     let compatable_blocks = compatable_blocks.sorted().collect_vec();
 
     compatable_blocks.iter().enumerate().for_each(|(idx, a)| {
@@ -161,12 +163,6 @@ fn link_assemblies<T: Distribution>(
 
             let a_block = &segments[a.0].blocks[a.1];
             let b_block = &segments[b.0].blocks[b.1];
-
-            // We allow this now, otherwise inversions might not properly join...
-            // If same alignment, and neighboring segments, don't join...
-            //if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
-            //    return;
-            //}
 
             let target_distance = b_block.col_start as isize - a_block.col_end as isize - 1;
 
@@ -219,14 +215,23 @@ fn link_assemblies<T: Distribution>(
                 _ => panic!("Invalid strand types!"),
             };
 
-            let within_target_distance_threshold =
-                target_distance < args.target_join_distance as isize;
+            // Incorperate unexplained bases into query distance...
+            let unexplained_bases =
+                region_statistics.unexplained_bases[b.0] - region_statistics.unexplained_bases[a.0];
+            let corrected_consensus_distance =
+                (consensus_distance - unexplained_bases as isize).max(consensus_distance.min(0));
+
+            // Within target distance???
+            let within_target_distance_threshold = (target_distance
+                < args.target_join_distance as isize)
+                && (query_statistics.distribution.ccdf(target_distance as f64)
+                    >= args.target_distance_likelihood_threshold);
 
             let consensus_is_colinear = if link_type.is_inversion() {
-                consensus_distance.abs() < args.inversion_distance
+                corrected_consensus_distance.abs() < args.inversion_distance
             } else {
-                consensus_distance > -args.consensus_join_overlap
-                    && consensus_distance < args.consensus_join_distance
+                corrected_consensus_distance > -args.consensus_join_overlap
+                    && corrected_consensus_distance < args.consensus_join_distance
             };
 
             // TODO: Hardcoded, change later...
@@ -239,12 +244,25 @@ fn link_assemblies<T: Distribution>(
                 get_link_cost(
                     args,
                     score_params,
+                    &query_statistics.distribution,
                     consensus_distance as f64,
                     target_distance as f64,
                 )
             };
 
             if within_target_distance_threshold && consensus_is_colinear && is_significant {
+                println!("{:?}->{:?}", a, b);
+                println!(
+                    "CD: {}, UEB: {} => Corrected: {}",
+                    consensus_distance, unexplained_bases, corrected_consensus_distance
+                );
+
+                println!(
+                    "Target distance = {} => Prob not seeing at random = {}",
+                    target_distance,
+                    query_statistics.distribution.ccdf(target_distance as f64)
+                );
+
                 graph.insert(
                     ((a.0, a_block.row_idx), (b.0, b_block.row_idx)),
                     Edge {
