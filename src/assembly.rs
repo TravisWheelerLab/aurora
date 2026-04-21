@@ -215,12 +215,6 @@ fn link_assemblies<T: Distribution>(
                 _ => panic!("Invalid strand types!"),
             };
 
-            // Incorperate unexplained bases into query distance...
-            let unexplained_bases =
-                region_statistics.unexplained_bases[b.0] - region_statistics.unexplained_bases[a.0];
-            let corrected_consensus_distance =
-                (consensus_distance - unexplained_bases as isize).max(consensus_distance.min(0));
-
             // Within target distance???
             let within_target_distance_threshold = (target_distance
                 < args.target_join_distance as isize)
@@ -228,10 +222,10 @@ fn link_assemblies<T: Distribution>(
                     >= args.target_distance_likelihood_threshold);
 
             let consensus_is_colinear = if link_type.is_inversion() {
-                corrected_consensus_distance.abs() < args.inversion_distance
+                consensus_distance.abs() < args.inversion_distance
             } else {
-                corrected_consensus_distance > -args.consensus_join_overlap
-                    && corrected_consensus_distance < args.consensus_join_distance
+                consensus_distance > -args.consensus_join_overlap
+                    && consensus_distance < args.consensus_join_distance
             };
 
             // TODO: Hardcoded, change later...
@@ -251,18 +245,6 @@ fn link_assemblies<T: Distribution>(
             };
 
             if within_target_distance_threshold && consensus_is_colinear && is_significant {
-                println!("{:?}->{:?}", a, b);
-                println!(
-                    "CD: {}, UEB: {} => Corrected: {}",
-                    consensus_distance, unexplained_bases, corrected_consensus_distance
-                );
-
-                println!(
-                    "Target distance = {} => Prob not seeing at random = {}",
-                    target_distance,
-                    query_statistics.distribution.ccdf(target_distance as f64)
-                );
-
                 graph.insert(
                     ((a.0, a_block.row_idx), (b.0, b_block.row_idx)),
                     Edge {
