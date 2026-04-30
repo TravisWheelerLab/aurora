@@ -66,6 +66,7 @@ pub struct Block {
     pub query_end: usize,
     pub avg_confidence: f64,
     pub alignment_score: f64,
+    pub kimura80: f64,
     pub can_join_up_to: usize,
 }
 
@@ -534,17 +535,28 @@ pub fn segments_from_matrix_trace(
                         _ => None,
                     };
 
+                    let query_start = confidence_matrix.consensus_position(row_idx, start);
+                    let query_end = confidence_matrix.consensus_position(row_idx, end);
+
+                    let kimura80 = match block_type {
+                        BlockType::Alignment => {
+                            group.alignments[row_idx - 1].kimura80(query_start, query_end)
+                        }
+                        _ => 0.0,
+                    };
+
                     Block {
                         row_idx,
                         block_type,
                         query_id,
                         col_start: start,
                         col_end: end,
-                        query_start: confidence_matrix.consensus_position(row_idx, start),
-                        query_end: confidence_matrix.consensus_position(row_idx, end),
+                        query_start,
+                        query_end,
                         avg_confidence: row_conf_sum[row_idx]
                             / (row_valid_cell_count[row_idx].max(1) as f64),
                         alignment_score: row_scores[row_idx],
+                        kimura80,
                         can_join_up_to: s_idx,
                     }
                 })

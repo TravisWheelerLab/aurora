@@ -162,7 +162,7 @@ pub struct AnnotationArgs {
     #[arg(
         short = 'C',
         long = "consensus-join-distance",
-        default_value = "2000",
+        default_value = "3750",
         value_name = "n"
     )]
     pub consensus_join_distance: isize,
