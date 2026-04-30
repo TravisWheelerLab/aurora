@@ -189,7 +189,7 @@ impl BlockGroup {
                     None
                 } else {
                     match elems[8] {
-                        "C" => Some(bed.strand),
+                        "C" => Some(Strand::Reverse),
                         _ => Some(Strand::from_str(elems[8])),
                     }
                 }
