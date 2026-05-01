@@ -2,6 +2,7 @@ use core::f64;
 use std::{cmp::Ordering, fmt::Debug, iter::Fuse};
 
 use crate::{
+    alignment::Strand,
     assembly::SegmentAssemblyGraph,
     chunks::ProximityGroup,
     matrix::Matrix,
@@ -59,6 +60,7 @@ pub enum BlockType {
 pub struct Block {
     pub row_idx: usize,
     pub block_type: BlockType,
+    pub strand: Strand,
     pub query_id: Option<usize>,
     pub col_start: usize,
     pub col_end: usize,
@@ -545,9 +547,15 @@ pub fn segments_from_matrix_trace(
                         _ => 0.0,
                     };
 
+                    let strand = match block_type {
+                        BlockType::Alignment => group.alignments[row_idx - 1].strand,
+                        _ => Strand::Forward,
+                    };
+
                     Block {
                         row_idx,
                         block_type,
+                        strand,
                         query_id,
                         col_start: start,
                         col_end: end,

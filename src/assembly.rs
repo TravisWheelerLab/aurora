@@ -5,7 +5,7 @@ use itertools::Itertools;
 use crate::{
     alignment::{Alignment, Strand},
     score_params::ScoreParams,
-    segments::SegmentedMatrix,
+    segments::{Block, SegmentedMatrix},
     statistics::Distribution,
     trace_statistics::{QueryStatistics, RegionStatistics},
     AnnotationArgs,
@@ -141,10 +141,55 @@ fn get_link_cost(
         + target_expected_score
 }
 
+pub fn block_target_distance(first_block: &Block, second_block: &Block) -> isize {
+    second_block.col_start as isize - first_block.col_end as isize - 1
+}
+
+pub fn block_consensus_distance(first_block: &Block, second_block: &Block) -> (isize, LinkType) {
+    let select_closest = |prop1: (isize, LinkType), prop2: (isize, LinkType)| {
+        if prop1.0.abs() < prop2.0.abs() {
+            prop1
+        } else {
+            prop2
+        }
+    };
+
+    match (first_block.strand, second_block.strand) {
+        (Strand::Forward, Strand::Forward) => (
+            second_block.query_start as isize - first_block.query_end as isize - 1,
+            LinkType::Forward,
+        ),
+        (Strand::Reverse, Strand::Reverse) => (
+            first_block.query_end as isize - second_block.query_start as isize - 1,
+            LinkType::Reverse,
+        ),
+        (Strand::Forward, Strand::Reverse) => select_closest(
+            (
+                first_block.query_start as isize - second_block.query_start as isize - 1,
+                LinkType::FRInversion1,
+            ),
+            (
+                second_block.query_end as isize - first_block.query_end as isize - 1,
+                LinkType::FRInversion2,
+            ),
+        ),
+        (Strand::Reverse, Strand::Forward) => select_closest(
+            (
+                second_block.query_start as isize - first_block.query_start as isize - 1,
+                LinkType::RFInversion1,
+            ),
+            (
+                first_block.query_end as isize - second_block.query_end as isize - 1,
+                LinkType::RFInversion2,
+            ),
+        ),
+        _ => panic!("Invalid strand types!"),
+    }
+}
+
 fn link_assemblies<T: Distribution>(
     graph: &mut HashMap<(SegmentAndDenseRow, SegmentAndDenseRow), Edge>,
     compatable_blocks: impl Iterator<Item = (usize, usize)>,
-    alignments: &[Alignment],
     segments: &SegmentedMatrix,
     query_statistics: &QueryStatistics<T>,
     region_statistics: &RegionStatistics,
@@ -164,56 +209,15 @@ fn link_assemblies<T: Distribution>(
             let a_block = &segments[a.0].blocks[a.1];
             let b_block = &segments[b.0].blocks[b.1];
 
-            let target_distance = b_block.col_start as isize - a_block.col_end as isize - 1;
+            let target_distance = block_target_distance(a_block, b_block);
 
             let a_length = a_block.query_end.abs_diff(a_block.query_start) + 1;
             let b_length = b_block.query_end.abs_diff(b_block.query_start) + 1;
             let min_length = a_length.min(b_length);
 
-            let select_closest = |prop1: (isize, LinkType), prop2: (isize, LinkType)| {
-                if prop1.0.abs() < prop2.0.abs() {
-                    prop1
-                } else {
-                    prop2
-                }
-            };
-
             // Query bounds are reversed for reverse sequences, so the start is actually greater than the end (Ex. start: 1510 -> end: 105)
 
-            let (consensus_distance, link_type) = match (
-                alignments[a_block.row_idx - 1].strand,
-                alignments[b_block.row_idx - 1].strand,
-            ) {
-                (Strand::Forward, Strand::Forward) => (
-                    b_block.query_start as isize - a_block.query_end as isize - 1,
-                    LinkType::Forward,
-                ),
-                (Strand::Reverse, Strand::Reverse) => (
-                    a_block.query_end as isize - b_block.query_start as isize - 1,
-                    LinkType::Reverse,
-                ),
-                (Strand::Forward, Strand::Reverse) => select_closest(
-                    (
-                        a_block.query_start as isize - b_block.query_start as isize - 1,
-                        LinkType::FRInversion1,
-                    ),
-                    (
-                        b_block.query_end as isize - a_block.query_end as isize - 1,
-                        LinkType::FRInversion2,
-                    ),
-                ),
-                (Strand::Reverse, Strand::Forward) => select_closest(
-                    (
-                        b_block.query_start as isize - a_block.query_start as isize - 1,
-                        LinkType::RFInversion1,
-                    ),
-                    (
-                        a_block.query_end as isize - b_block.query_end as isize - 1,
-                        LinkType::RFInversion2,
-                    ),
-                ),
-                _ => panic!("Invalid strand types!"),
-            };
+            let (consensus_distance, link_type) = block_consensus_distance(a_block, b_block);
 
             // Within target distance???
             let within_target_distance_threshold = (target_distance
@@ -311,7 +315,6 @@ impl SegmentAssemblyGraph {
                 link_assemblies(
                     &mut link_graph,
                     compat_blocks,
-                    alignments,
                     segments,
                     &query_statistics[id],
                     region_statistics,
