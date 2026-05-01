@@ -13,7 +13,7 @@ prior = {}
 
 with open(caf_file, "r") as f:
     for line in f:
-        shared_name = line.strip().split("\t")[3].split("#")[-1]
+        shared_name = line.strip().split("\t")[3]  # .split("#")[-1]
         seqs = line.strip().split("\t")[-1].split(",")
 
         if len(seqs) <= 1:

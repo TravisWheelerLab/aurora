@@ -61,7 +61,7 @@ pub fn to_annotations(
                                         a.row_idx - proximity_group.alignments.len() - 1;
                                     let repeat = &proximity_group.tandem_repeats[tandem_repeat_idx];
                                     format!(
-                                        "({}:{})#tandem repeat",
+                                        "({}:{})#tandem-repeat",
                                         repeat.period, repeat.consensus_pattern,
                                     )
                                 }
