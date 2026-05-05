@@ -62,6 +62,25 @@ class AuroraEntry:
 
         return cls(*parsed)
 
+    def get_key(self) -> tuple[int, int]:
+        return (self.region, self.join_id)
+
+    def select(self, idx: int) -> typing.Self:
+        return type(self)(
+            self.annotation_count,
+            self.target,
+            [self.target_start[idx]],
+            [self.target_end[idx]],
+            [self.query[idx]],
+            [self.query_start[idx]],
+            [self.query_end[idx]],
+            [self.strand[idx]],
+            self.score,
+            [self.kimera80[idx]],
+            self.join_id,
+            self.region,
+        )
+
 
 aurora_file = sys.argv[1]
 
@@ -70,7 +89,7 @@ joined_annots: dict[tuple[int, int], list[AuroraEntry]] = {}
 with open(aurora_file, "r") as f:
     for line in f:
         entry = AuroraEntry.from_line(line)
-        key = (entry.region, entry.join_id)
+        key = entry.get_key()
         if key not in joined_annots:
             joined_annots[key] = []
         joined_annots[key].append(entry)
@@ -95,11 +114,13 @@ def consensus_dist(a: AuroraEntry, b: AuroraEntry, a_idx: int, b_idx: int):
         case ("-", "-"):
             return a.query_end[a_idx] - b.query_start[b_idx] - 1
         case ("-", "+"):
+            return None
             return best(
                 a.query_start[a_idx] - b.query_start[b_idx] - 1,
                 b.query_end[b_idx] - a.query_end[a_idx] - 1,
             )
         case ("+", "-"):
+            return None
             return best(
                 b.query_start[b_idx] - a.query_start[a_idx] - 1,
                 a.query_end[a_idx] - b.query_end[b_idx] - 1,
@@ -113,10 +134,34 @@ def _target_distance(a: AuroraEntry, b: AuroraEntry, ai: int, bi: int):
     return b.target_start[bi] - a.target_end[ai] - 1
 
 
+def _kimura_dist(a, b, ai, bi):
+    return b.kimera80[bi] - a.kimera80[ai]
+
+
+def _relative_consensus_dist(a, b, ai, bi):
+    d = consensus_dist(a, b, ai, bi)
+    min_seq_len = min(
+        [
+            abs(v)
+            for v in (
+                a.query_end[ai] - a.query_start[ai],
+                b.query_end[bi] - b.query_start[bi],
+            )
+        ]
+    )
+    if d is None:
+        return None
+    try:
+        return d / min_seq_len
+    except ZeroDivisionError:
+        return None
+
+
 stats_to_compute = {
     "Consensus Distance": consensus_dist,
     "Target Distance": _target_distance,
-    "Divergence Change": lambda a, b, ai, bi: b.kimera80[bi] - a.kimera80[ai],
+    "Divergence Change": _kimura_dist,
+    "Relative Consensus Distance": _relative_consensus_dist,
 }
 
 
@@ -151,10 +196,11 @@ class Distribution:
 
 
 estimator = {
+    "Relative Consensus Distance": Distribution(invweibull, (1.0, 0.0, 1.0), False),
     "Consensus Distance": Distribution(invweibull, (1.0, 0.0, 1.0), False),
     "Target Distance": Distribution(
-        weibull_min, (1.0, 10000.0)
-    ),  # Distribution(genpareto, (0.0, 1.0)),
+        genpareto, (0.0, 1.0)
+    ),  # Distribution(expon, (1.0,)),  # Distribution(genpareto, (0.0, 1.0)),
     "Divergence Change": Distribution(norm, (0.0, 1.0), False),
 }
 
@@ -171,51 +217,85 @@ def fit_dist(data, dist):
     )[0]
 
 
+random_idx_reference = {}
+random_is_join = {}
+
 for name in stats_to_compute:
     join_stats[name] = {}
     random_stats[name] = {}
 
-for k, annots in sorted(
-    joined_annots.items(), key=lambda k: min(min(v.target_start) for v in k[1])
-):
-    for ann in annots[:1]:
-        for i in range(len(ann.query)):
-            name = ann.query[i]
-            (pann, j) = prior_vals.get(name, (None, None))
-            if pann is not None:
-                for stat_name, values_per_query in random_stats.items():
-                    (ann1, idx1), (ann2, idx2) = sorted(
-                        [(pann, j), (ann, i)], key=lambda v: v[0].target_start[v[1]]
-                    )
+all_anots_flat = [ann for annots in joined_annots.values() for ann in annots]
+all_anots_flat.sort(key=lambda v: min(v.target_start))
+
+
+for ann_i, ann in enumerate(all_anots_flat):
+    for i in range(len(ann.query)):
+        name = ann.query[i]
+        (pann, j, pann_i) = prior_vals.get(name, (None, None, None))
+        if pann is not None:
+            # if pann.region == ann.region and pann.join_id == ann.join_id:
+            #    continue
+
+            (ann1, idx1), (ann2, idx2) = sorted(
+                [(pann, j), (ann, i)], key=lambda v: v[0].target_start[v[1]]
+            )
+
+            stats = {
+                stat_name: stats_to_compute[stat_name](ann1, ann2, idx1, idx2)
+                for stat_name in stats_to_compute
+            }
+
+            if all([v is not None for v in stats.values()]):
+                for stat_name, value in stats.items():
+                    values_per_query = random_stats[stat_name]
 
                     if name not in values_per_query:
                         values_per_query[name] = []
-                    values_per_query[name].append(
-                        stats_to_compute[stat_name](ann1, ann2, idx1, idx2)
-                    )
+                    values_per_query[name].append(value)
 
-            seq_size[name] = max(
-                seq_size.get(name, 1),
-                ann.query_start[i],
-                ann.query_end[i],
-            )
-            prior_vals[name] = (ann, i)
+                if name not in random_idx_reference:
+                    random_idx_reference[name] = []
+                    random_is_join[name] = []
 
+                random_idx_reference[name].append((ann_i, i, pann_i, j))
+                random_is_join[name].append(
+                    ann in joined_annots.get(pann.get_key(), [])
+                )
+
+        seq_size[name] = max(
+            seq_size.get(name, 1),
+            ann.query_start[i],
+            ann.query_end[i],
+        )
+        prior_vals[name] = (ann, i, ann_i)
+
+for k, annots in joined_annots.items():
     if len(annots) <= 1:
         continue
 
     for a, b in zip(annots[:-1], annots[1:]):
         for i in range(len(a.query)):
             name = a.query[i]
-            for stat_name, values_per_query in join_stats.items():
-                if name not in values_per_query:
-                    values_per_query[name] = []
-                values_per_query[name].append(stats_to_compute[stat_name](a, b, i, i))
+
+            stats = {
+                stat_name: stats_to_compute[stat_name](a, b, i, i)
+                for stat_name in stats_to_compute
+            }
+
+            if all([v is not None for v in stats.values()]):
+                for stat_name, value in stats.items():
+                    values_per_query = join_stats[stat_name]
+
+                    if name not in values_per_query:
+                        values_per_query[name] = []
+                    values_per_query[name].append(value)
 
 
 for query_name, _ in sorted(
     join_stats["Consensus Distance"].items(), key=lambda k: -len(k[1])
 ):
+    # if not query_name.startswith("alu"):
+    #     continue
     fig, axs = plt.subplots(3, len(stats_to_compute))
     axs = axs.T
 
@@ -229,7 +309,7 @@ for query_name, _ in sorted(
         ax1.set_title(f"Join {name}")
         ax1.hist(
             join_stats[name][query_name],
-            50,
+            100,
             density=True,
             label=f"Mean: {np.mean(join_stats[name][query_name]):.02f}\nSTD: {np.std(join_stats[name][query_name]):.02f}",
         )
@@ -243,7 +323,7 @@ for query_name, _ in sorted(
         ax2.set_title(f"All {name}")
         ax2.hist(
             random_stats[name][query_name],
-            50,
+            100,
             density=True,
             label=f"Mean: {np.mean(random_stats[name][query_name]):.02f}\nSTD: {np.std(random_stats[name][query_name]):.02f}",
         )
@@ -261,6 +341,50 @@ for query_name, _ in sorted(
         ax3.plot(sx2, est.cdf(sx2, *fit2), label="Est. All CDF")
         ax3.legend()
 
-    fig.set_size_inches(12, 8)
+    fig.set_size_inches(16, 8)
     fig.tight_layout()
+    plt.show()
+
+    plt.title(f"{query_name} (Size: {seq_size.get(query_name, 0)})")
+
+    join_indexes = np.flatnonzero(random_is_join[query_name])
+    not_join_indexes = np.flatnonzero(~np.array(random_is_join[query_name]))
+
+    join_art = plt.plot(
+        np.array(random_stats["Target Distance"][query_name])[join_indexes],
+        np.array(random_stats["Consensus Distance"][query_name])[join_indexes],
+        "ro",
+        picker=5,
+        label="Joins",
+    )
+    no_join_art = plt.plot(
+        np.array(random_stats["Target Distance"][query_name])[not_join_indexes],
+        np.array(random_stats["Consensus Distance"][query_name])[not_join_indexes],
+        "bo",
+        picker=5,
+        label="Not Joins",
+    )
+    plt.xlabel("Target Distance")
+    plt.ylabel("Consensus Distance")
+    plt.legend()
+    fig = plt.gcf()
+
+    def on_pick(evt):
+        mask = join_indexes if evt.artist == join_art else not_join_indexes
+
+        for idx in evt.ind:
+            idx = mask[idx]
+            annot_idx, sub_i, pann_idx, p_sub_i = random_idx_reference[query_name][idx]
+            print(f"Index: {annot_idx}, Sub-Index: {sub_i}")
+            print(
+                f"\tTarget Distance: {random_stats['Target Distance'][query_name][idx]}"
+            )
+            print(
+                f"\tConsensus Distance: {random_stats['Consensus Distance'][query_name][idx]}"
+            )
+            print(f"\tPrior: {all_anots_flat[pann_idx].select(p_sub_i)}")
+            print(f"\tCurrent: {all_anots_flat[annot_idx].select(sub_i)}")
+            print(f"\tIs Joined: {random_is_join[query_name][idx]}")
+
+    fig.canvas.mpl_connect("pick_event", on_pick)
     plt.show()
