@@ -12,27 +12,6 @@
 # For now, an exponential distribution seems to provide a good enough approximation for use in aurora. It also is easy to fit well.
 # Here's an interesting paper on the topic that seems to have landed in the same space I've been in: https://www.columbia.edu/~ww2040/FittingMixturesPerfEval98.pdf
 
-import sys
-from inspect import signature
-
-import matplotlib.pyplot as plt
-import numpy as np
-from scipy.optimize import curve_fit
-from scipy.stats import (
-    betaprime,
-    burr12,
-    ecdf,
-    expon,
-    fisk,
-    genextreme,
-    genpareto,
-    invweibull,
-    linregress,
-    lognorm,
-    lomax,
-    weibull_min,
-)
-
 bed_file = sys.argv[1]
 
 seq_info = {}
@@ -126,18 +105,6 @@ for name, info in sorted(seq_info.items(), key=lambda k: -len(k[1])):
     beta = np.mean(dists)  # np.median(dists) / np.log(2)
 
     # Get fit for weibull dist... (and CDF)...
-    cdf = ecdf(dists).cdf
-
-    y_transform = lambda y: np.log(-np.log(1 - y))
-
-    with np.errstate(divide="ignore"):
-        wcdfx = np.log(cdf.quantiles)
-        wcdfy = y_transform(cdf.probabilities)
-        # Estimate the error that the transform adds to the line. This makes linear fit better fit a CDF...
-        wcdfy_p1 = y_transform(
-            cdf.probabilities - np.sign(cdf.probabilities - 0.5) * 0.01
-        )
-        wcdfy_err = np.maximum(np.abs((wcdfy_p1 - wcdfy) / 0.01), 1e-8)
 
     valid_values = np.isfinite(wcdfx) & np.isfinite(wcdfy)
     fit_line = curve_fit(

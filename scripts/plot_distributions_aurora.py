@@ -1,6 +1,7 @@
 import sys
 import typing
 from dataclasses import dataclass, fields
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -82,7 +83,22 @@ class AuroraEntry:
         )
 
 
+if len(sys.argv) not in [2, 3]:
+    print("Usage:")
+    print(f"\t{Path(sys.argv[0]).name} AURORA_OUTPUT_FILE [dist|scatter]")
+    sys.exit(1)
+
 aurora_file = sys.argv[1]
+mode = sys.argv[2] if len(sys.argv) > 2 else "dist"
+
+if mode not in ["scatter", "dist"]:
+    print("Second argument (the mode) must be 'scatter' or 'dist'!")
+    sys.exit(1)
+
+if mode == "dist":
+    print("Generating distributions plots...")
+else:
+    print("Generating scatter plots...")
 
 joined_annots: dict[tuple[int, int], list[AuroraEntry]] = {}
 
@@ -140,7 +156,7 @@ def _kimura_dist(a, b, ai, bi):
 
 def _relative_consensus_dist(a, b, ai, bi):
     d = consensus_dist(a, b, ai, bi)
-    min_seq_len = min(
+    sum_seq_len = sum(
         [
             abs(v)
             for v in (
@@ -152,7 +168,7 @@ def _relative_consensus_dist(a, b, ai, bi):
     if d is None:
         return None
     try:
-        return d / min_seq_len
+        return d / sum_seq_len
     except ZeroDivisionError:
         return None
 
@@ -296,95 +312,110 @@ for query_name, _ in sorted(
 ):
     # if not query_name.startswith("alu"):
     #     continue
-    fig, axs = plt.subplots(3, len(stats_to_compute))
-    axs = axs.T
-
-    fig.suptitle(f"{query_name} (Size: {seq_size.get(query_name, 0)})")
-
-    for name, (ax1, ax2, ax3) in zip(stats_to_compute, axs):
-        est = estimator[name]
-
-        sx = np.sort(join_stats[name][query_name])
-        fit = fit_dist(sx, est)
-        ax1.set_title(f"Join {name}")
-        ax1.hist(
-            join_stats[name][query_name],
-            100,
-            density=True,
-            label=f"Mean: {np.mean(join_stats[name][query_name]):.02f}\nSTD: {np.std(join_stats[name][query_name]):.02f}",
-        )
-        ax1.plot(
-            sx, est.pdf(sx, *fit), label=f"Fit: {', '.join(f'{v:.02f}' for v in fit)}"
-        )
-        ax1.legend()
-
-        sx2 = np.sort(random_stats[name][query_name])
-        fit2 = fit_dist(sx2, est)
-        ax2.set_title(f"All {name}")
-        ax2.hist(
-            random_stats[name][query_name],
-            100,
-            density=True,
-            label=f"Mean: {np.mean(random_stats[name][query_name]):.02f}\nSTD: {np.std(random_stats[name][query_name]):.02f}",
-        )
-        ax2.plot(
-            sx2,
-            est.pdf(sx2, *fit2),
-            label=f"Fit: {', '.join(f'{v:.02f}' for v in fit2)}",
-        )
-        ax2.legend()
-
-        ax3.set_title("CDFs")
-        ax3.ecdf(join_stats[name][query_name], label="Joins CDF")
-        ax3.ecdf(random_stats[name][query_name], label="All CDF")
-        ax3.plot(sx, est.cdf(sx, *fit), label="Est. Join CDF")
-        ax3.plot(sx2, est.cdf(sx2, *fit2), label="Est. All CDF")
-        ax3.legend()
-
-    fig.set_size_inches(16, 8)
-    fig.tight_layout()
-    plt.show()
-
-    plt.title(f"{query_name} (Size: {seq_size.get(query_name, 0)})")
-
     join_indexes = np.flatnonzero(random_is_join[query_name])
     not_join_indexes = np.flatnonzero(~np.array(random_is_join[query_name]))
 
-    join_art = plt.plot(
-        np.array(random_stats["Target Distance"][query_name])[join_indexes],
-        np.array(random_stats["Consensus Distance"][query_name])[join_indexes],
-        "ro",
-        picker=5,
-        label="Joins",
-    )
-    no_join_art = plt.plot(
-        np.array(random_stats["Target Distance"][query_name])[not_join_indexes],
-        np.array(random_stats["Consensus Distance"][query_name])[not_join_indexes],
-        "bo",
-        picker=5,
-        label="Not Joins",
-    )
-    plt.xlabel("Target Distance")
-    plt.ylabel("Consensus Distance")
-    plt.legend()
-    fig = plt.gcf()
+    if mode == "dist":
+        fig, axs = plt.subplots(3, len(stats_to_compute))
+        axs = axs.T
 
-    def on_pick(evt):
-        mask = join_indexes if evt.artist == join_art else not_join_indexes
+        fig.suptitle(f"{query_name} (Size: {seq_size.get(query_name, 0)})")
 
-        for idx in evt.ind:
-            idx = mask[idx]
-            annot_idx, sub_i, pann_idx, p_sub_i = random_idx_reference[query_name][idx]
-            print(f"Index: {annot_idx}, Sub-Index: {sub_i}")
-            print(
-                f"\tTarget Distance: {random_stats['Target Distance'][query_name][idx]}"
+        for name, (ax1, ax2, ax3) in zip(stats_to_compute, axs):
+            est = estimator[name]
+
+            join_samples = np.array(join_stats[name][query_name])
+            sx = np.linspace(join_samples.min(), join_samples.max(), 1000)
+            fit = fit_dist(join_samples, est)
+            ax1.set_title(f"Join {name}")
+            ax1.hist(
+                join_samples,
+                100,
+                density=True,
+                label=f"Mean: {np.mean(join_samples):.02f}\nSTD: {np.std(join_samples):.02f}",
             )
-            print(
-                f"\tConsensus Distance: {random_stats['Consensus Distance'][query_name][idx]}"
+            ax1.plot(
+                sx,
+                est.pdf(sx, *fit),
+                label=f"Fit: {', '.join(f'{v:.02f}' for v in fit)}",
             )
-            print(f"\tPrior: {all_anots_flat[pann_idx].select(p_sub_i)}")
-            print(f"\tCurrent: {all_anots_flat[annot_idx].select(sub_i)}")
-            print(f"\tIs Joined: {random_is_join[query_name][idx]}")
+            ax1.legend()
 
-    fig.canvas.mpl_connect("pick_event", on_pick)
-    plt.show()
+            random_samples = np.array(random_stats[name][query_name])
+            sx2 = np.linspace(random_samples.min(), random_samples.max(), 1000)
+            fit2 = fit_dist(random_samples, est)
+            ax2.set_title(f"All {name}")
+            ax2.plot(
+                [0],
+                [0],
+                color="black",
+                visible=False,
+                label=f"Mean: {np.mean(random_samples):.02f}\nSTD: {np.std(random_samples):.02f}",
+            )
+            ax2.hist(
+                [random_samples[not_join_indexes], random_samples[join_indexes]],
+                100,
+                label=["Not Joined", "Joined"],
+                density=True,
+                stacked=True,
+            )
+            ax2.plot(
+                sx2,
+                est.pdf(sx2, *fit2),
+                label=f"Fit: {', '.join(f'{v:.02f}' for v in fit2)}",
+            )
+            ax2.legend()
+
+            ax3.set_title("CDFs")
+            ax3.ecdf(join_stats[name][query_name], label="Joins CDF")
+            ax3.ecdf(random_stats[name][query_name], label="All CDF")
+            ax3.plot(sx, est.cdf(sx, *fit), label="Est. Join CDF")
+            ax3.plot(sx2, est.cdf(sx2, *fit2), label="Est. All CDF")
+            ax3.legend()
+
+        fig.set_size_inches(16, 8)
+        fig.tight_layout()
+        plt.show()
+    else:
+        plt.title(f"{query_name} (Size: {seq_size.get(query_name, 0)})")
+
+        join_art = plt.plot(
+            np.array(random_stats["Target Distance"][query_name])[join_indexes],
+            np.array(random_stats["Consensus Distance"][query_name])[join_indexes],
+            "ro",
+            picker=5,
+            label="Joins",
+        )
+        no_join_art = plt.plot(
+            np.array(random_stats["Target Distance"][query_name])[not_join_indexes],
+            np.array(random_stats["Consensus Distance"][query_name])[not_join_indexes],
+            "bo",
+            picker=5,
+            label="Not Joins",
+        )
+        plt.xlabel("Target Distance")
+        plt.ylabel("Consensus Distance")
+        plt.legend()
+        fig = plt.gcf()
+
+        def on_pick(evt):
+            mask = join_indexes if evt.artist == join_art else not_join_indexes
+
+            for idx in evt.ind:
+                idx = mask[idx]
+                annot_idx, sub_i, pann_idx, p_sub_i = random_idx_reference[query_name][
+                    idx
+                ]
+                print(f"Index: {annot_idx}, Sub-Index: {sub_i}")
+                print(
+                    f"\tTarget Distance: {random_stats['Target Distance'][query_name][idx]}"
+                )
+                print(
+                    f"\tConsensus Distance: {random_stats['Consensus Distance'][query_name][idx]}"
+                )
+                print(f"\tPrior: {all_anots_flat[pann_idx].select(p_sub_i)}")
+                print(f"\tCurrent: {all_anots_flat[annot_idx].select(sub_i)}")
+                print(f"\tIs Joined: {random_is_join[query_name][idx]}")
+
+        fig.canvas.mpl_connect("pick_event", on_pick)
+        plt.show()

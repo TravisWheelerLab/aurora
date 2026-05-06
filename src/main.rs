@@ -6,6 +6,7 @@ mod balanced_tree;
 mod chunks;
 mod confidence;
 mod history_tracing;
+mod join_estimation;
 mod matrix;
 mod pipeline;
 mod score_params;

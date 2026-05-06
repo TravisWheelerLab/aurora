@@ -1,3 +1,4 @@
+use puruspe::{beta, betai};
 use std::fmt::Debug;
 
 #[allow(dead_code)]
@@ -140,5 +141,38 @@ impl Distribution for ExponentialEstimator {
 
     fn support(&self) -> (f64, f64) {
         (0.0, f64::INFINITY)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StudentsT {
+    mean: f64,
+    standard_deviation: f64,
+    degrees_of_freedom: usize,
+}
+
+impl Distribution for StudentsT {
+    fn unit() -> Self {
+        Self {
+            mean: 0.0,
+            standard_deviation: 1.0,
+            degrees_of_freedom: 1,
+        }
+    }
+
+    fn pdf(&self, x: f64) -> f64 {
+        let v = self.degrees_of_freedom as f64;
+        let z = (x - self.mean) / self.standard_deviation;
+        1.0 / (v.sqrt() * beta(0.5, 0.5 * v)) * (1.0 + (z * z) / v).powf(-0.5 * (v + 1.0))
+    }
+
+    fn cdf(&self, x: f64) -> f64 {
+        let v = self.degrees_of_freedom as f64;
+        let z = (x - self.mean) / self.standard_deviation;
+        if z >= 0.0 {
+            1.0 - 0.5 * betai(0.5 * v, 0.5, v / (z * z + v))
+        } else {
+            0.5 * betai(0.5 * v, 0.5, v / (z * z + v))
+        }
     }
 }
