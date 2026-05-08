@@ -6,7 +6,17 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import curve_fit
-from scipy.stats import ecdf, expon, genpareto, gumbel_r, invweibull, norm, weibull_min
+from scipy.stats import (
+    ecdf,
+    expon,
+    genpareto,
+    gumbel_r,
+    halfnorm,
+    invweibull,
+    laplace_asymmetric,
+    norm,
+    weibull_min,
+)
 
 
 @dataclass
@@ -151,12 +161,12 @@ def _target_distance(a: AuroraEntry, b: AuroraEntry, ai: int, bi: int):
 
 
 def _kimura_dist(a, b, ai, bi):
-    return b.kimera80[bi] - a.kimera80[ai]
+    return abs(b.kimera80[bi] - a.kimera80[ai])
 
 
 def _relative_consensus_dist(a, b, ai, bi):
     d = consensus_dist(a, b, ai, bi)
-    sum_seq_len = sum(
+    sum_seq_len = max(
         [
             abs(v)
             for v in (
@@ -212,12 +222,16 @@ class Distribution:
 
 
 estimator = {
-    "Relative Consensus Distance": Distribution(invweibull, (1.0, 0.0, 1.0), False),
-    "Consensus Distance": Distribution(invweibull, (1.0, 0.0, 1.0), False),
+    "Relative Consensus Distance": Distribution(
+        laplace_asymmetric, (1.0, 0.0, 1.0), False
+    ),  # Distribution(invweibull, (1.0, 0.0, 1.0), False),
+    "Consensus Distance": Distribution(
+        laplace_asymmetric, (1.0, 0.0, 1.0), False
+    ),  # Distribution(invweibull, (1.0, 0.0, 1.0), False),
     "Target Distance": Distribution(
-        genpareto, (0.0, 1.0)
+        weibull_min, (1.0, 10000)
     ),  # Distribution(expon, (1.0,)),  # Distribution(genpareto, (0.0, 1.0)),
-    "Divergence Change": Distribution(norm, (0.0, 1.0), False),
+    "Divergence Change": Distribution(halfnorm, (1.0,)),
 }
 
 
@@ -310,8 +324,8 @@ for k, annots in joined_annots.items():
 for query_name, _ in sorted(
     join_stats["Consensus Distance"].items(), key=lambda k: -len(k[1])
 ):
-    # if not query_name.startswith("alu"):
-    #     continue
+    # if not query_name.startswith("sin"):
+    #    continue
     join_indexes = np.flatnonzero(random_is_join[query_name])
     not_join_indexes = np.flatnonzero(~np.array(random_is_join[query_name]))
 
@@ -330,7 +344,7 @@ for query_name, _ in sorted(
             ax1.set_title(f"Join {name}")
             ax1.hist(
                 join_samples,
-                100,
+                200,
                 density=True,
                 label=f"Mean: {np.mean(join_samples):.02f}\nSTD: {np.std(join_samples):.02f}",
             )
@@ -339,7 +353,7 @@ for query_name, _ in sorted(
                 est.pdf(sx, *fit),
                 label=f"Fit: {', '.join(f'{v:.02f}' for v in fit)}",
             )
-            ax1.legend()
+            ax1.legend(fontsize="xx-small")
 
             random_samples = np.array(random_stats[name][query_name])
             sx2 = np.linspace(random_samples.min(), random_samples.max(), 1000)
@@ -354,7 +368,7 @@ for query_name, _ in sorted(
             )
             ax2.hist(
                 [random_samples[not_join_indexes], random_samples[join_indexes]],
-                100,
+                200,
                 label=["Not Joined", "Joined"],
                 density=True,
                 stacked=True,
@@ -364,14 +378,14 @@ for query_name, _ in sorted(
                 est.pdf(sx2, *fit2),
                 label=f"Fit: {', '.join(f'{v:.02f}' for v in fit2)}",
             )
-            ax2.legend()
+            ax2.legend(fontsize="xx-small")
 
             ax3.set_title("CDFs")
             ax3.ecdf(join_stats[name][query_name], label="Joins CDF")
             ax3.ecdf(random_stats[name][query_name], label="All CDF")
             ax3.plot(sx, est.cdf(sx, *fit), label="Est. Join CDF")
             ax3.plot(sx2, est.cdf(sx2, *fit2), label="Est. All CDF")
-            ax3.legend()
+            ax3.legend(fontsize="xx-small")
 
         fig.set_size_inches(16, 8)
         fig.tight_layout()
