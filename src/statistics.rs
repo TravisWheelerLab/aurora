@@ -1,5 +1,5 @@
 use core::f64;
-use puruspe::{beta, betai, erf, invbetai};
+use puruspe::{beta, betai, invbetai};
 use std::fmt::Debug;
 
 #[allow(dead_code)]
@@ -137,13 +137,6 @@ impl Distribution for ExponentialEstimator {
 }
 
 #[derive(Debug, Clone)]
-pub struct StudentsT {
-    mean: f64,
-    standard_deviation: f64,
-    degrees_of_freedom: usize,
-}
-
-#[derive(Debug, Clone)]
 pub struct HalfT {
     standard_deviation: f64,
     degrees_of_freedom: usize,
@@ -223,3 +216,101 @@ impl Distribution for HalfT {
     }
 }
 
+#[cfg(test)]
+mod test {
+    use crate::statistics::{ExponentialEstimator, HalfT};
+    use std::fmt::Debug;
+
+    pub trait TestDistribution: Debug {
+        fn tpdf(&self, x: f64) -> f64;
+        fn tcdf(&self, x: f64) -> f64;
+        fn tppf(&self, p: f64) -> f64;
+        fn tsupport(&self) -> (f64, f64);
+        fn tccdf(&self, x: f64) -> f64;
+        fn tlogpdf(&self, x: f64) -> f64;
+        fn tlogcdf(&self, x: f64) -> f64;
+        fn tlogccdf(&self, x: f64) -> f64;
+    }
+
+    impl<T: Distribution> TestDistribution for T {
+        fn tpdf(&self, x: f64) -> f64 {
+            self.pdf(x)
+        }
+        fn tcdf(&self, x: f64) -> f64 {
+            self.cdf(x)
+        }
+        fn tppf(&self, p: f64) -> f64 {
+            self.ppf(p)
+        }
+        fn tsupport(&self) -> (f64, f64) {
+            self.support()
+        }
+        fn tccdf(&self, x: f64) -> f64 {
+            self.ccdf(x)
+        }
+        fn tlogpdf(&self, x: f64) -> f64 {
+            self.logpdf(x)
+        }
+        fn tlogcdf(&self, x: f64) -> f64 {
+            self.logcdf(x)
+        }
+        fn tlogccdf(&self, x: f64) -> f64 {
+            self.logccdf(x)
+        }
+    }
+
+    fn as_box<T: Distribution + 'static>(d: T) -> Box<dyn TestDistribution> {
+        Box::new(d)
+    }
+
+    use super::{Distribution, Exponential};
+
+    fn get_dists() -> [Box<dyn TestDistribution>; 3] {
+        [
+            as_box(Exponential::unit()),
+            as_box(ExponentialEstimator::unit()),
+            as_box(HalfT::unit()),
+        ]
+    }
+
+    fn is_close(a: f64, b: f64) -> bool {
+        let rel_tol = 1e-9;
+        let abs_tol = 0.0;
+        (a - b).abs() <= (rel_tol * (a.abs()).max(b.abs())).max(abs_tol)
+    }
+
+    fn linspace(start: f64, stop: f64, steps: usize) -> impl Iterator<Item = f64> {
+        (0..steps)
+            .map(move |n| n as f64 / (steps as f64 - 1.0))
+            .map(move |n| start * (1.0 - n) + stop * n)
+    }
+
+    #[test]
+    fn basic_distribution_propery_checks() {
+        for dist in get_dists() {
+            println!("Testing distribution: {:?}", dist);
+            let (mut low, mut high) = dist.tsupport();
+
+            if high == f64::INFINITY {
+                high = 5.0;
+            }
+            if low == f64::INFINITY {
+                low = -5.0;
+            }
+
+            for x in linspace(low, high, 100) {
+                // Basic properties...
+                assert!(is_close(dist.tpdf(x), dist.tlogpdf(x).exp()));
+                assert!(is_close(dist.tcdf(x), dist.tlogcdf(x).exp()));
+                assert!(is_close(dist.tccdf(x), dist.tlogccdf(x).exp()));
+                assert!(is_close(dist.tccdf(x), 1.0 - dist.tcdf(x)));
+                assert!(is_close(dist.tppf(dist.tcdf(x)), x));
+            }
+        }
+    }
+
+    #[test]
+    fn test_exponential_distribution() {
+        let dist = Exponential::unit();
+    }
+}

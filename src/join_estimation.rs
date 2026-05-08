@@ -1,7 +1,7 @@
 use crate::{
     assembly::block_target_distance,
     segments::Block,
-    statistics::{Distribution, ExponentialEstimator, StudentsT},
+    statistics::{Distribution, ExponentialEstimator, HalfT},
 };
 
 pub trait JoinEstimator<T: JoinStatistics> {
@@ -18,8 +18,8 @@ pub trait JoinStatistics {
 pub struct BayesianJoinEstimator {
     target_distance_join: ExponentialEstimator,
     target_distance_background: ExponentialEstimator,
-    divergence_join: StudentsT,
-    divergence_background: StudentsT,
+    divergence_join: HalfT,
+    divergence_background: HalfT,
 }
 
 impl JoinEstimator<BayesianJoinStatistics> for BayesianJoinEstimator {
@@ -41,8 +41,8 @@ impl JoinEstimator<BayesianJoinStatistics> for BayesianJoinEstimator {
                 all_td_mean,
                 statistics.all_count,
             ),
-            divergence_join: StudentsT::new(0.0, join_div_std, statistics.joinable_count),
-            divergence_background: StudentsT::new(0.0, all_div_std, statistics.all_count),
+            divergence_join: HalfT::new(join_div_std, statistics.joinable_count),
+            divergence_background: HalfT::new(all_div_std, statistics.all_count),
         }
     }
 
