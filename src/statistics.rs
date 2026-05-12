@@ -2,6 +2,7 @@ use core::f64;
 use puruspe::{beta, betai, invbetai};
 use std::fmt::Debug;
 
+// TODO: Support for generic floating types...
 #[allow(dead_code)]
 pub trait Distribution: Clone + Debug {
     fn unit() -> Self;

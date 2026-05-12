@@ -5,7 +5,8 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.optimize import curve_fit
+from matplotlib.colors import to_rgba
+from scipy.optimize import curve_fit, minimize
 from scipy.stats import (
     ecdf,
     expon,
@@ -184,7 +185,6 @@ def _relative_consensus_dist(a, b, ai, bi):
 
 
 stats_to_compute = {
-    "Consensus Distance": consensus_dist,
     "Target Distance": _target_distance,
     "Divergence Change": _kimura_dist,
     "Relative Consensus Distance": _relative_consensus_dist,
@@ -225,12 +225,9 @@ estimator = {
     "Relative Consensus Distance": Distribution(
         laplace_asymmetric, (1.0, 0.0, 1.0), False
     ),  # Distribution(invweibull, (1.0, 0.0, 1.0), False),
-    "Consensus Distance": Distribution(
-        laplace_asymmetric, (1.0, 0.0, 1.0), False
-    ),  # Distribution(invweibull, (1.0, 0.0, 1.0), False),
     "Target Distance": Distribution(
-        weibull_min, (1.0, 10000)
-    ),  # Distribution(expon, (1.0,)),  # Distribution(genpareto, (0.0, 1.0)),
+        genpareto, (0.0, 1.0)
+    ),  # Distribution(expon, (1.0,)),  # Distribution(genpareto, (0.0, 1.0)), Distribution(weibull_min, (1.0, 10000)
     "Divergence Change": Distribution(halfnorm, (1.0,)),
 }
 
@@ -322,7 +319,7 @@ for k, annots in joined_annots.items():
 
 
 for query_name, _ in sorted(
-    join_stats["Consensus Distance"].items(), key=lambda k: -len(k[1])
+    next(iter(join_stats.values())).items(), key=lambda k: -len(k[1])
 ):
     # if not query_name.startswith("sin"):
     #    continue
@@ -357,7 +354,7 @@ for query_name, _ in sorted(
 
             random_samples = np.array(random_stats[name][query_name])
             sx2 = np.linspace(random_samples.min(), random_samples.max(), 1000)
-            fit2 = fit_dist(random_samples, est)
+            fit2 = fit_dist(random_samples[not_join_indexes], est)
             ax2.set_title(f"All {name}")
             ax2.plot(
                 [0],
@@ -372,19 +369,21 @@ for query_name, _ in sorted(
                 label=["Not Joined", "Joined"],
                 density=True,
                 stacked=True,
+                color=[to_rgba(c) for c in ["tab:orange", "tab:blue"]],
             )
             ax2.plot(
                 sx2,
                 est.pdf(sx2, *fit2),
+                "black",
                 label=f"Fit: {', '.join(f'{v:.02f}' for v in fit2)}",
             )
             ax2.legend(fontsize="xx-small")
 
             ax3.set_title("CDFs")
-            ax3.ecdf(join_stats[name][query_name], label="Joins CDF")
-            ax3.ecdf(random_stats[name][query_name], label="All CDF")
+            ax3.ecdf(join_samples, label="Joins CDF")
+            ax3.ecdf(random_samples[not_join_indexes], label="No Joins CDF")
             ax3.plot(sx, est.cdf(sx, *fit), label="Est. Join CDF")
-            ax3.plot(sx2, est.cdf(sx2, *fit2), label="Est. All CDF")
+            ax3.plot(sx2, est.cdf(sx2, *fit2), label="Est. No Join CDF")
             ax3.legend(fontsize="xx-small")
 
         fig.set_size_inches(16, 8)

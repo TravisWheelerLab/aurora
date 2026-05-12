@@ -8,6 +8,7 @@ mod confidence;
 mod history_tracing;
 mod join_estimation;
 mod matrix;
+mod p2estimator;
 mod pipeline;
 mod score_params;
 mod segment_groups;
