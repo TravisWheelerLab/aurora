@@ -2,12 +2,12 @@ use core::f64;
 use std::{cmp::Ordering, fmt::Debug, iter::Fuse};
 
 use crate::{
-    alignment::Strand,
+    alignment::{Alignment, Strand},
     assembly::SegmentAssemblyGraph,
     chunks::ProximityGroup,
+    join_estimation::JoinEstimator,
     matrix::Matrix,
     score_params::ScoreParams,
-    statistics::Distribution,
     trace_statistics::{QueryStatistics, RegionStatistics},
     viterbi::TraceSegment,
     AnnotationArgs,
@@ -99,6 +99,23 @@ impl Block {
     pub fn to_comparable(&self) -> (Option<usize>, usize) {
         (self.query_id, self.row_idx)
     }
+
+    pub fn from_alignment(alignment: &Alignment, row: usize, confidence: f64, score: f64) -> Self {
+        Self {
+            row_idx: row,
+            block_type: BlockType::Alignment,
+            strand: alignment.strand,
+            query_id: Some(alignment.query_id),
+            col_start: alignment.target_start,
+            col_end: alignment.target_end,
+            query_start: alignment.query_start,
+            query_end: alignment.query_end,
+            avg_confidence: confidence,
+            alignment_score: score,
+            kimura80: alignment.kimura80(alignment.query_start, alignment.query_end),
+            can_join_up_to: 0,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -111,6 +128,7 @@ pub struct Segment {
 }
 
 pub type SegmentedMatrix = Vec<Segment>;
+pub type SegmentedMatrixView<'a> = &'a [Segment];
 
 #[derive(Copy, Clone, Debug)]
 enum MergeEntry<T> {
@@ -214,20 +232,9 @@ pub struct InitialSegments {
 }
 
 #[allow(dead_code)]
-pub struct SegmentView<'a> {
-    pub start_col: usize,
-    pub end_col: usize,
-    pub blocks: &'a [Block],
-}
-
-#[allow(dead_code)]
 impl InitialSegments {
-    pub fn iter_segments(&self) -> impl Iterator<Item = SegmentView<'_>> {
-        self.segments.iter().map(|v| SegmentView {
-            start_col: v.start_col,
-            end_col: v.end_col,
-            blocks: &v.blocks,
-        })
+    pub fn view_segments(&self) -> SegmentedMatrixView<'_> {
+        return &self.segments;
     }
 
     pub fn len(&self) -> usize {
@@ -582,7 +589,7 @@ pub fn segments_from_matrix_trace(
     }
 }
 
-pub fn assemble_and_link_segments<'a, T: Distribution>(
+pub fn assemble_and_link_segments<'a, T: JoinEstimator>(
     proximity_group: &ProximityGroup,
     initial_segments: &'a mut InitialSegments,
     trace_segments: &[TraceSegment],

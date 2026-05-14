@@ -154,7 +154,7 @@ impl<'a, F: Float + TotalOrder, I: Unsigned + Copy + Ord + Into<F> + From<usize>
         obs >= self.points.len()
     }
 
-    fn combine(&mut self, other: &P2HistogramData<F, I>) {
+    fn combine(&mut self, _other: &P2HistogramData<F, I>) {
         // TODO: Need to think about how to do this efficiently while maintaining accuracy...
         panic!("Not implemented!")
     }

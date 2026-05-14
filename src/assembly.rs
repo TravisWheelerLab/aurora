@@ -4,9 +4,9 @@ use itertools::Itertools;
 
 use crate::{
     alignment::{Alignment, Strand},
+    join_estimation::{JoinEstimator, JoinStatisticsCollector},
     score_params::ScoreParams,
-    segments::{Block, SegmentedMatrix},
-    statistics::Distribution,
+    segments::{Block, SegmentedMatrix, SegmentedMatrixView},
     trace_statistics::{QueryStatistics, RegionStatistics},
     AnnotationArgs,
 };
@@ -100,9 +100,8 @@ fn piecewise_linear_cost(
 fn get_link_cost(
     annotation_args: &AnnotationArgs,
     score_params: &ScoreParams,
-    target_gap_distribution: &impl Distribution,
-    consensus_gap: f64,
-    target_gap: f64,
+    consensus_gap: isize,
+    join_prob: f64,
 ) -> f64 {
     // Minimum cost (a query loop)
     let min_value = score_params.query_loop_score;
@@ -123,11 +122,9 @@ fn get_link_cost(
         -value_range * (annotation_args.join_consensus_overlap_penalty / overlap_range).abs();
     let beta = -value_range * (annotation_args.join_consensus_gap_penalty / gap_range).abs();
 
-    // Compute target gap penalty.
     // Doing this as the expected value over the transition scores...
-    let target_random_prob = target_gap_distribution.cdf(target_gap);
-    let target_expected_score = target_random_prob * score_params.query_jump_score
-        + (1.0 - target_random_prob) * score_params.query_loop_score;
+    let expected_score = join_prob * score_params.query_loop_score
+        + (1.0 - join_prob) * score_params.query_jump_score;
 
     // Cost = linear consensus cost + linear target gap cost...
     min_value
@@ -136,9 +133,9 @@ fn get_link_cost(
             (annotation_args.free_join_consensus_gap as f64).abs(),
             alpha,
             beta,
-            consensus_gap,
+            consensus_gap as f64,
         )
-        + target_expected_score
+        + expected_score
 }
 
 pub fn block_target_distance(first_block: &Block, second_block: &Block) -> isize {
@@ -187,12 +184,126 @@ pub fn block_consensus_distance(first_block: &Block, second_block: &Block) -> (i
     }
 }
 
-fn link_assemblies<T: Distribution>(
+pub fn block_length_on_query(b: &Block) -> usize {
+    b.query_end.abs_diff(b.query_start) + 1
+}
+
+fn is_joinable(
+    target_distance: isize,
+    consensus_distance: isize,
+    link_type: LinkType,
+    min_block_length: usize,
+    args: &AnnotationArgs,
+) -> bool {
+    let within_target_distance_threshold =
+        target_distance < args.target_join_distance as isize && target_distance >= 0;
+
+    let consensus_is_colinear = if link_type.is_inversion() {
+        consensus_distance.abs() < args.inversion_distance
+    } else {
+        consensus_distance > -args.consensus_join_overlap
+            && consensus_distance < args.consensus_join_distance
+    };
+
+    // TODO: Hardcoded, change later...
+    let is_significant =
+        min_block_length >= 10 && -consensus_distance <= ((min_block_length / 2) as isize);
+
+    within_target_distance_threshold && consensus_is_colinear && is_significant
+}
+
+fn new_alignment_to_blocks_map(
+    segments: SegmentedMatrixView,
+    alignments: &[Alignment],
+) -> Vec<Vec<SegmentAndDenseRow>> {
+    let mut alignment_block_map = vec![Vec::<SegmentAndDenseRow>::new(); alignments.len()];
+
+    for (s_idx, segment) in segments.iter().enumerate() {
+        for (b_idx, block) in segment.blocks.iter().enumerate() {
+            if block.row_idx > 0 && block.row_idx <= alignments.len() {
+                alignment_block_map[block.row_idx - 1].push((s_idx, b_idx));
+            }
+        }
+    }
+
+    alignment_block_map
+}
+
+pub fn gather_join_statistics<T: JoinStatisticsCollector>(
+    alignments: &[Alignment],
+    annotation_args: &AnnotationArgs,
+) -> Vec<(usize, T)> {
+    let mut query_ids: Vec<usize> = alignments.iter().map(|a| a.query_id).unique().collect();
+    query_ids.sort();
+
+    let mut query_stats: Vec<(usize, T)> = Vec::with_capacity(query_ids.len());
+
+    query_ids
+        .iter()
+        // grab the alignments for this ID
+        .map(|id| {
+            (
+                *id,
+                alignments
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, a)| a.query_id == *id)
+                    .map(|(i, a)| Block::from_alignment(a, i, 0.0, 0.0)),
+            )
+        })
+        .for_each(|(id, compat_alignments)| {
+            let mut new_stats = T::new();
+
+            gather_join_statistics_single_family(
+                compat_alignments,
+                annotation_args,
+                &mut new_stats,
+            );
+
+            query_stats.push((id, new_stats));
+        });
+
+    query_stats
+}
+
+fn gather_join_statistics_single_family<'a>(
+    compatable_alignments: impl Iterator<Item = Block>,
+    args: &AnnotationArgs,
+    join_stats: &mut impl JoinStatisticsCollector,
+) {
+    let compatable_blocks = compatable_alignments
+        .sorted_by_key(|a| a.col_start)
+        .collect_vec();
+
+    compatable_blocks
+        .iter()
+        .enumerate()
+        .for_each(|(idx, a_block)| {
+            compatable_blocks[idx + 1..]
+                .iter()
+                .enumerate()
+                .for_each(|(idx2, b_block)| {
+                    let (consensus_distance, link_type) =
+                        block_consensus_distance(a_block, b_block);
+                    let joinable = is_joinable(
+                        block_target_distance(a_block, b_block),
+                        consensus_distance,
+                        link_type,
+                        block_length_on_query(a_block).min(block_length_on_query(b_block)),
+                        args,
+                    );
+
+                    join_stats.add(a_block, b_block, idx + 1 == idx2, joinable);
+                })
+        })
+}
+
+fn link_assemblies<T: JoinEstimator>(
     graph: &mut HashMap<(SegmentAndDenseRow, SegmentAndDenseRow), Edge>,
     compatable_blocks: impl Iterator<Item = (usize, usize)>,
     segments: &SegmentedMatrix,
     query_statistics: &QueryStatistics<T>,
-    region_statistics: &RegionStatistics,
+    _region_statistics: &RegionStatistics,
     score_params: &ScoreParams,
     args: &AnnotationArgs,
 ) {
@@ -210,54 +321,39 @@ fn link_assemblies<T: Distribution>(
             let b_block = &segments[b.0].blocks[b.1];
 
             let target_distance = block_target_distance(a_block, b_block);
-
-            let a_length = a_block.query_end.abs_diff(a_block.query_start) + 1;
-            let b_length = b_block.query_end.abs_diff(b_block.query_start) + 1;
-            let min_length = a_length.min(b_length);
-
-            // Query bounds are reversed for reverse sequences, so the start is actually greater than the end (Ex. start: 1510 -> end: 105)
+            let min_block_length =
+                block_length_on_query(a_block).min(block_length_on_query(b_block));
 
             let (consensus_distance, link_type) = block_consensus_distance(a_block, b_block);
 
-            // Within target distance???
-            let within_target_distance_threshold = (target_distance
-                < args.target_join_distance as isize)
-                && (query_statistics.distribution.ccdf(target_distance as f64)
-                    >= args.target_distance_likelihood_threshold);
+            if is_joinable(
+                target_distance,
+                consensus_distance,
+                link_type,
+                min_block_length,
+                args,
+            ) {
+                if let Some(estimator) = &query_statistics.estimator {
+                    let join_prob = estimator.predict(a_block, b_block, false);
 
-            let consensus_is_colinear = if link_type.is_inversion() {
-                consensus_distance.abs() < args.inversion_distance
-            } else {
-                consensus_distance > -args.consensus_join_overlap
-                    && consensus_distance < args.consensus_join_distance
-            };
+                    if join_prob >= args.join_likelihood_threshold {
+                        let weight = if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
+                            score_params.query_loop_score
+                        } else {
+                            get_link_cost(args, score_params, consensus_distance, join_prob)
+                        };
 
-            // TODO: Hardcoded, change later...
-            let is_significant =
-                min_length >= 10 && -consensus_distance <= ((min_length / 2) as isize);
-
-            let weight = if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
-                score_params.query_loop_score
-            } else {
-                get_link_cost(
-                    args,
-                    score_params,
-                    &query_statistics.distribution,
-                    consensus_distance as f64,
-                    target_distance as f64,
-                )
-            };
-
-            if within_target_distance_threshold && consensus_is_colinear && is_significant {
-                graph.insert(
-                    ((a.0, a_block.row_idx), (b.0, b_block.row_idx)),
-                    Edge {
-                        weight,
-                        first_sparse_row: a.1,
-                        second_sparse_row: b.1,
-                        link_type,
-                    },
-                );
+                        graph.insert(
+                            ((a.0, a_block.row_idx), (b.0, b_block.row_idx)),
+                            Edge {
+                                weight,
+                                first_sparse_row: a.1,
+                                second_sparse_row: b.1,
+                                link_type,
+                            },
+                        );
+                    }
+                }
             }
         });
     });
@@ -274,7 +370,7 @@ pub struct SegmentAssemblyGraph {
 }
 
 impl SegmentAssemblyGraph {
-    pub fn new<T: Distribution>(
+    pub fn new<T: JoinEstimator>(
         alignments: &[Alignment],
         segments: &SegmentedMatrix,
         region_statistics: &RegionStatistics,
@@ -282,16 +378,7 @@ impl SegmentAssemblyGraph {
         score_params: &ScoreParams,
         annotation_args: &AnnotationArgs,
     ) -> Self {
-        let mut alignment_block_map = vec![Vec::<SegmentAndDenseRow>::new(); alignments.len()];
-
-        for (s_idx, segment) in segments.iter().enumerate() {
-            for (b_idx, block) in segment.blocks.iter().enumerate() {
-                if block.row_idx > 0 && block.row_idx <= alignments.len() {
-                    alignment_block_map[block.row_idx - 1].push((s_idx, b_idx));
-                }
-            }
-        }
-
+        let alignment_block_map = new_alignment_to_blocks_map(segments, alignments);
         let mut query_ids: Vec<usize> = alignments.iter().map(|a| a.query_id).unique().collect();
 
         query_ids.sort();

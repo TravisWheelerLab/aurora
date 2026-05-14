@@ -1,8 +1,12 @@
+use std::fmt::Debug;
+
+use itertools::izip;
+
 use crate::{
     alignment::AlignmentData,
+    join_estimation::{JoinEstimator, JoinStatisticsCollector},
     pipeline::NaiveTraceResults,
-    segments::SegmentView,
-    statistics::{Distribution, ExponentialEstimator},
+    segments::Segment,
 };
 
 #[derive(Debug)]
@@ -12,15 +16,15 @@ pub struct RegionStatistics {
 }
 
 #[derive(Debug, Clone)]
-pub struct QueryStatistics<T: Distribution> {
+pub struct QueryStatistics<T: JoinEstimator> {
     pub occurances: usize,
     pub coverage: usize,
     pub target_span: usize,
-    pub distribution: T,
+    pub estimator: Option<T>,
 }
 
 #[derive(Debug)]
-pub struct TraceStatistics<T: Distribution> {
+pub struct TraceStatistics<T: JoinEstimator> {
     #[allow(dead_code)]
     pub total_bases: usize,
     pub query_statistics: Vec<QueryStatistics<T>>,
@@ -33,11 +37,11 @@ pub enum OccuranceCountingMode {
     Trace,
 }
 
-pub fn trace_statistics(
-    naive_traces: &[NaiveTraceResults],
+pub fn trace_statistics<S: JoinStatisticsCollector + Debug + Into<E>, E: JoinEstimator>(
+    naive_traces: &[NaiveTraceResults<S>],
     alignment_data: &AlignmentData,
     count_mode: OccuranceCountingMode,
-) -> TraceStatistics<ExponentialEstimator> {
+) -> TraceStatistics<E> {
     // Asumption... All regions are sorted, no gaps. At least 1 region expected...
     debug_assert!(naive_traces.first().map(|v| v.region_index) == Some(0));
     debug_assert!(naive_traces
@@ -50,12 +54,12 @@ pub fn trace_statistics(
         .zip(naive_traces.iter().skip(1))
         .all(|(v1, v2)| v1.region_index + 1 == v2.region_index && v1.target_end < v2.target_start));
 
-    let mut query_stats = vec![
+    let mut query_stats: Vec<QueryStatistics<E>> = vec![
         QueryStatistics {
             occurances: 0,
             coverage: 0,
             target_span: 0,
-            distribution: ExponentialEstimator::unit(),
+            estimator: None,
         };
         alignment_data.query_name_map.size()
     ];
@@ -64,11 +68,19 @@ pub fn trace_statistics(
         vec![None; alignment_data.query_name_map.size()];
 
     let mut all_region_stats: Vec<RegionStatistics> = Vec::with_capacity(naive_traces.len());
+    let mut all_join_stats: Vec<Option<S>> = vec![None; alignment_data.query_name_map.size()];
 
     for trace_results in naive_traces.iter() {
+        for (query_id, stats) in trace_results.query_join_statistics.iter() {
+            all_join_stats[*query_id] = match &all_join_stats[*query_id] {
+                None => Some(stats.clone()),
+                Some(other_stats) => Some(other_stats.combine(stats)),
+            };
+        }
+
         match count_mode {
             OccuranceCountingMode::Segments => {
-                for seg in trace_results.segments.iter_segments() {
+                for seg in trace_results.segments.view_segments().iter() {
                     for blk in seg.blocks.iter() {
                         if let Some(query_id) = blk.query_id {
                             query_stats[query_id].occurances += 1;
@@ -113,9 +125,9 @@ pub fn trace_statistics(
         };
 
         let mut unexplained_bases_up_to: usize = 0;
-        let mut prior_segment: Option<SegmentView> = None;
+        let mut prior_segment: Option<&Segment> = None;
 
-        for seg in trace_results.segments.iter_segments() {
+        for seg in trace_results.segments.view_segments() {
             if let Some(prior_segment) = prior_segment {
                 // If a skip block was the prior block, add it's bases as unexplained.
                 if prior_segment.blocks.len() == 1 && prior_segment.blocks[0].row_idx == 0 {
@@ -133,15 +145,13 @@ pub fn trace_statistics(
         all_region_stats.push(region_stat);
     }
 
-    for (query_info, query_span) in query_stats.iter_mut().zip(query_span.iter()) {
+    for (query_info, query_span, join_stat) in
+        izip!(query_stats.iter_mut(), query_span.iter(), all_join_stats)
+    {
         if let Some((start, end)) = query_span {
             query_info.target_span = end - start + 1;
-            // We subtract 1 because were looking at distances between each occurance as a sample value.
-            query_info.distribution = ExponentialEstimator::new(
-                query_info.target_span as f64 / query_info.occurances.saturating_sub(1) as f64,
-                query_info.occurances.saturating_sub(1),
-            );
         }
+        query_info.estimator = join_stat.map(|v| v.into());
     }
 
     TraceStatistics {

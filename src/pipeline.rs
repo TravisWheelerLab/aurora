@@ -5,15 +5,16 @@ use itertools::Itertools;
 use crate::{
     alignment::{AlignmentData, Strand},
     annotation::{AmbiguousAnnotation, SimpleAnnotation},
+    assembly::gather_join_statistics,
     chunks::ProximityGroup,
     confidence::confidence,
     history_tracing::{
         backtrace_histories, history_viterbi_on_segments, History, RefinedTraceSegment,
     },
+    join_estimation::{JoinEstimator, JoinStatisticsCollector},
     matrix::{Matrix, MatrixDef},
     score_params::{approximate_ideal_skip_state_score, ScoreParams},
     segments::{assemble_and_link_segments, segments_from_matrix_trace, InitialSegments},
-    statistics::Distribution,
     support::windowed_confidence,
     trace_statistics::TraceStatistics,
     viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment},
@@ -141,7 +142,7 @@ fn get_active_columns<T: Copy + Default + Display>(matrix: &Matrix<T>) -> Vec<(u
     active_cols
 }
 
-pub struct NaiveTraceResults {
+pub struct NaiveTraceResults<T: JoinStatisticsCollector> {
     pub target_start: usize,
     pub target_end: usize,
     pub trace_segments: Vec<TraceSegment>,
@@ -149,16 +150,17 @@ pub struct NaiveTraceResults {
     pub score_params: ScoreParams,
     pub alignment_confidences: Vec<f64>,
     pub active_columns: Vec<(usize, usize)>,
+    pub query_join_statistics: Vec<(usize, T)>,
     pub viz_writer: AdjudicationSodaWriter,
     pub region_index: usize,
 }
 
-pub fn run_naive_trace(
+pub fn run_naive_trace<T: JoinStatisticsCollector>(
     proximity_group: &ProximityGroup,
     alignment_data: &AlignmentData,
     region_idx: usize,
     args: &AuroraArgs,
-) -> NaiveTraceResults {
+) -> NaiveTraceResults<T> {
     let annot_args = &args.annotation_args;
 
     let score_params = ScoreParams::new(
@@ -250,6 +252,9 @@ pub fn run_naive_trace(
             .expect("Unable to write confidences!!!");
     }
 
+    let query_join_statistics =
+        gather_join_statistics(proximity_group.alignments, &args.annotation_args);
+
     NaiveTraceResults {
         target_start: proximity_group.target_start,
         target_end: proximity_group.target_end,
@@ -258,16 +263,17 @@ pub fn run_naive_trace(
         score_params,
         alignment_confidences: confidence_by_row,
         active_columns: get_active_columns(&confidence_matrix),
+        query_join_statistics,
         viz_writer,
         region_index: region_idx,
     }
 }
 
-pub fn run_history_trace<T: Distribution>(
+pub fn run_history_trace<T: JoinEstimator, S: JoinStatisticsCollector>(
     proximity_group: &ProximityGroup,
     alignment_data: &AlignmentData,
     trace_statistics: &TraceStatistics<T>,
-    naive_trace: &mut NaiveTraceResults,
+    naive_trace: &mut NaiveTraceResults<S>,
     args: &AuroraArgs,
 ) -> Vec<AmbiguousAnnotation> {
     let vis_args = &args.visualization_args;

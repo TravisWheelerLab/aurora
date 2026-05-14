@@ -2,6 +2,13 @@ use core::f64;
 use puruspe::{beta, betai, invbetai};
 use std::fmt::Debug;
 
+pub fn ln_add_exp(a: f64, b: f64) -> f64 {
+    let max = a.max(b);
+    let min = a.min(b);
+    // TODO: Possibly use more stable ln_1p_exp at https://github.com/JuliaStats/LogExpFunctions.jl/files/8218470/log1pexp.pdf (Implemented at https://github.com/JuliaStats/LogExpFunctions.jl/blob/master/src/basicfuns.jl#L263)
+    max + (min - max).exp().ln_1p()
+}
+
 // TODO: Support for generic floating types...
 #[allow(dead_code)]
 pub trait Distribution: Clone + Debug {
@@ -144,6 +151,7 @@ pub struct HalfT {
 }
 
 impl HalfT {
+    #[allow(dead_code)]
     pub fn new(standard_deviation: f64, degrees_of_freedom: usize) -> Self {
         Self {
             standard_deviation,
@@ -312,6 +320,6 @@ mod test {
 
     #[test]
     fn test_exponential_distribution() {
-        let dist = Exponential::unit();
+        let _dist = Exponential::unit();
     }
 }

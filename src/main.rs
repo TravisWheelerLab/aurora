@@ -46,8 +46,9 @@ use viz::VizConstraint;
 use crate::{
     annotation::AmbiguousAnnotation,
     chunks::validate_groups,
+    join_estimation::{BayesianJoinEstimator, BayesianJoinStatistics},
     pipeline::{run_history_trace, run_naive_trace, NaiveTraceResults},
-    trace_statistics::{trace_statistics, OccuranceCountingMode},
+    trace_statistics::{trace_statistics, OccuranceCountingMode, TraceStatistics},
     viz::{
         stats::{write_family_statistics, write_inversion_statistics},
         write_index_file, ICON_SVG,
@@ -138,16 +139,14 @@ pub struct AnnotationArgs {
     )]
     pub target_join_distance: usize,
 
-    /// Removes joins across positions
-    /// in the target (genome) at which a join is
-    /// less than this likely to not be generated
-    /// at random.
+    /// Removes joins that fall below this threshold of occuring.
+    /// Value can be set between 0 and 1.
     #[arg(
-        long = "target-join-likelihood-threshold",
-        default_value = "0.5",
+        long = "join-likelihood-threshold",
+        default_value = "0.25",
         value_name = "f"
     )]
-    pub target_distance_likelihood_threshold: f64,
+    pub join_likelihood_threshold: f64,
 
     /// The maximum overlap in the consensus at which
     /// a join is considered between compatible alignments.
@@ -459,10 +458,10 @@ fn main() -> Result<()> {
         .panic_fuse()
         .enumerate()
         .map(|(region_idx, group)| run_naive_trace(group, &alignment_data, region_idx, &args))
-        .collect::<Vec<NaiveTraceResults>>();
+        .collect::<Vec<NaiveTraceResults<BayesianJoinStatistics>>>();
     naive_results.sort_by_key(|v| v.region_index);
 
-    let trace_stats = trace_statistics(
+    let trace_stats: TraceStatistics<BayesianJoinEstimator> = trace_statistics(
         &naive_results,
         &alignment_data,
         OccuranceCountingMode::Segments,
