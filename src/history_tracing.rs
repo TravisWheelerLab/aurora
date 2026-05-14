@@ -1357,6 +1357,7 @@ pub fn backtrace_histories(
     let mut current_entry = &history.entries[current_idx];
 
     while let HistoryEntry::Join(entry_info) | HistoryEntry::Append(entry_info) = current_entry {
+        println!("{:#?}", current_entry);
         // Append current entry to segment stack...
         let blocks = history.segment_groups[entry_info.segment]
             .get_group(entry_info.group_index)

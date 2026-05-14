@@ -11,8 +11,7 @@ pub fn ln_add_exp(a: f64, b: f64) -> f64 {
 
 // TODO: Support for generic floating types...
 #[allow(dead_code)]
-pub trait Distribution: Clone + Debug {
-    fn unit() -> Self;
+pub trait Distribution: Clone + Debug + Default {
     fn pdf(&self, x: f64) -> f64;
     fn cdf(&self, x: f64) -> f64;
     fn ppf(&self, p: f64) -> f64;
@@ -21,6 +20,10 @@ pub trait Distribution: Clone + Debug {
     fn logpdf(&self, x: f64) -> f64;
     fn logcdf(&self, x: f64) -> f64;
     fn logccdf(&self, x: f64) -> f64;
+
+    fn unit() -> Self {
+        Self::default()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -38,11 +41,13 @@ impl Exponential {
     }
 }
 
-impl Distribution for Exponential {
-    fn unit() -> Self {
+impl Default for Exponential {
+    fn default() -> Self {
         Self::new(1.0)
     }
+}
 
+impl Distribution for Exponential {
     fn pdf(&self, x: f64) -> f64 {
         self.lambda * (-self.lambda * x).exp()
     }
@@ -97,14 +102,16 @@ impl From<ExponentialEstimator> for Exponential {
     }
 }
 
-impl Distribution for ExponentialEstimator {
-    fn unit() -> Self {
+impl Default for ExponentialEstimator {
+    fn default() -> Self {
         Self {
             sample_mean: 1.0,
             degrees_of_freedom: 1,
         }
     }
+}
 
+impl Distribution for ExponentialEstimator {
     fn logpdf(&self, x: f64) -> f64 {
         let n = self.degrees_of_freedom as f64;
         let sm = self.sample_mean;
@@ -167,14 +174,16 @@ impl HalfT {
     }
 }
 
-impl Distribution for HalfT {
-    fn unit() -> Self {
+impl Default for HalfT {
+    fn default() -> Self {
         Self {
             standard_deviation: 1.0,
             degrees_of_freedom: 1,
         }
     }
+}
 
+impl Distribution for HalfT {
     fn logpdf(&self, x: f64) -> f64 {
         let v = self.degrees_of_freedom as f64;
         let s = self.standard_deviation;

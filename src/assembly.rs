@@ -326,6 +326,47 @@ fn link_assemblies<T: JoinEstimator>(
 
             let (consensus_distance, link_type) = block_consensus_distance(a_block, b_block);
 
+            if b_block.row_idx == 583 {
+                println!("Block: {}", a_block.row_idx);
+                println!(
+                    "Score: {}",
+                    query_statistics.estimator.predict(a_block, b_block, false)
+                );
+
+                println!(
+                    "Is Joinable: {}",
+                    is_joinable(
+                        target_distance,
+                        consensus_distance,
+                        link_type,
+                        min_block_length,
+                        args,
+                    )
+                );
+
+                println!(
+                    "Weight: {}",
+                    if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
+                        score_params.query_loop_score
+                    } else {
+                        get_link_cost(
+                            args,
+                            score_params,
+                            consensus_distance,
+                            query_statistics.estimator.predict(a_block, b_block, false),
+                        )
+                    }
+                );
+
+                println!("Estimator: {:#?}", query_statistics.estimator);
+                println!(
+                    "Target Dist: {}, Div: {}, Cons Dist: {}",
+                    target_distance,
+                    (a_block.kimura80 - b_block.kimura80).abs(),
+                    consensus_distance
+                )
+            }
+
             if is_joinable(
                 target_distance,
                 consensus_distance,
@@ -333,26 +374,29 @@ fn link_assemblies<T: JoinEstimator>(
                 min_block_length,
                 args,
             ) {
-                if let Some(estimator) = &query_statistics.estimator {
-                    let join_prob = estimator.predict(a_block, b_block, false);
+                let join_prob = query_statistics.estimator.predict(a_block, b_block, false);
 
-                    if join_prob >= args.join_likelihood_threshold {
-                        let weight = if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
-                            score_params.query_loop_score
-                        } else {
-                            get_link_cost(args, score_params, consensus_distance, join_prob)
-                        };
+                if join_prob >= args.join_likelihood_threshold {
+                    let mut weight = if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
+                        score_params.query_loop_score
+                    } else {
+                        get_link_cost(args, score_params, consensus_distance, join_prob)
+                    };
 
-                        graph.insert(
-                            ((a.0, a_block.row_idx), (b.0, b_block.row_idx)),
-                            Edge {
-                                weight,
-                                first_sparse_row: a.1,
-                                second_sparse_row: b.1,
-                                link_type,
-                            },
-                        );
+                    if b_block.query_id == Some(196) {
+                        println!("Setting Weight to 1 for {}", b_block.row_idx);
+                        weight = score_params.query_loop_score
                     }
+
+                    graph.insert(
+                        ((a.0, a_block.row_idx), (b.0, b_block.row_idx)),
+                        Edge {
+                            weight,
+                            first_sparse_row: a.1,
+                            second_sparse_row: b.1,
+                            link_type,
+                        },
+                    );
                 }
             }
         });

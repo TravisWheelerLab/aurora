@@ -20,7 +20,7 @@ pub struct QueryStatistics<T: JoinEstimator> {
     pub occurances: usize,
     pub coverage: usize,
     pub target_span: usize,
-    pub estimator: Option<T>,
+    pub estimator: T,
 }
 
 #[derive(Debug)]
@@ -59,7 +59,7 @@ pub fn trace_statistics<S: JoinStatisticsCollector + Debug + Into<E>, E: JoinEst
             occurances: 0,
             coverage: 0,
             target_span: 0,
-            estimator: None,
+            estimator: E::default(),
         };
         alignment_data.query_name_map.size()
     ];
@@ -68,14 +68,12 @@ pub fn trace_statistics<S: JoinStatisticsCollector + Debug + Into<E>, E: JoinEst
         vec![None; alignment_data.query_name_map.size()];
 
     let mut all_region_stats: Vec<RegionStatistics> = Vec::with_capacity(naive_traces.len());
-    let mut all_join_stats: Vec<Option<S>> = vec![None; alignment_data.query_name_map.size()];
+    // We combine stats for all families to use as a prior (psuedo-count, single sample) for all stats...
+    let mut all_family_stats: S = S::new();
 
     for trace_results in naive_traces.iter() {
-        for (query_id, stats) in trace_results.query_join_statistics.iter() {
-            all_join_stats[*query_id] = match &all_join_stats[*query_id] {
-                None => Some(stats.clone()),
-                Some(other_stats) => Some(other_stats.combine(stats)),
-            };
+        for (_query_id, stats) in trace_results.query_join_statistics.iter() {
+            all_family_stats = all_family_stats.combine(stats);
         }
 
         match count_mode {
@@ -145,13 +143,24 @@ pub fn trace_statistics<S: JoinStatisticsCollector + Debug + Into<E>, E: JoinEst
         all_region_stats.push(region_stat);
     }
 
+    // Calculate join statistics for all families using combined prior as a starting point...
+    let mut all_join_stats: Vec<S> = vec![S::new(); alignment_data.query_name_map.size()];
+
+    for trace_results in naive_traces.iter() {
+        for (query_id, stats) in trace_results.query_join_statistics.iter() {
+            all_join_stats[*query_id] = all_join_stats[*query_id].combine(stats);
+        }
+    }
+
+    println!("{:#?}", all_join_stats);
+
     for (query_info, query_span, join_stat) in
         izip!(query_stats.iter_mut(), query_span.iter(), all_join_stats)
     {
         if let Some((start, end)) = query_span {
             query_info.target_span = end - start + 1;
         }
-        query_info.estimator = join_stat.map(|v| v.into());
+        query_info.estimator = join_stat.into();
     }
 
     TraceStatistics {
