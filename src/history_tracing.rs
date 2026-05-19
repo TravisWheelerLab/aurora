@@ -659,6 +659,15 @@ fn get_join_endpoints_from_links(
     (left_side, right_side)
 }
 
+fn prior_history_index(entry: &HistoryEntry) -> usize {
+    if let HistoryEntry::Append(info) | HistoryEntry::Join(info) = entry {
+        info.prior_history
+    } else {
+        // 0 for the root of the histories...
+        0
+    }
+}
+
 fn add_single_join(
     histories: &mut Vec<HistoryEntry>,
     segments: &[Segment],
@@ -679,11 +688,13 @@ fn add_single_join(
     let new_group_index =
         segment_groups[segment_idx].add_group(&segments[segment_idx], join_blocks);
 
-    let join_prior_index = match (left_join_link, right_join_link) {
-        (Some(lv), Some(rv)) => lv.origin_history.min(rv.origin_history),
-        (Some(v), None) | (None, Some(v)) => v.origin_history,
-        _ => prior_hist_idx,
-    };
+    let join_prior_index = prior_history_index(
+        &histories[match (left_join_link, right_join_link) {
+            (Some(lv), Some(rv)) => lv.origin_history.min(rv.origin_history),
+            (Some(v), None) | (None, Some(v)) => v.origin_history,
+            _ => panic!("Unreachable branch here, something went really wrong..."),
+        }],
+    );
 
     // Clean expired history entries from the join path....
     let simplified_join_index = remove_expired_history_entries(
@@ -1158,6 +1169,7 @@ fn get_joinable_extensions<'a>(
         .collect_vec()
 }
 
+#[derive(Debug)]
 struct JoinStackEntry {
     joined_history_offset: usize,
     trace_segment_offset: usize,
@@ -1170,6 +1182,7 @@ struct AddedBlockInfo {
     join_index: usize,
 }
 
+#[derive(Debug)]
 struct JoinStack {
     pub stack: Vec<JoinStackEntry>,
     pub next_join_index: usize,
@@ -1193,7 +1206,7 @@ impl JoinStack {
     /// Try adding one or two joins to the join stack if this block is a join and has linked edges.
     fn try_push(&mut self, entry: &HistoryEntry, added_block_info: Option<&AddedBlockInfo>) {
         if let (HistoryEntry::Join(val), Some(info)) = (entry, added_block_info) {
-            let mut top_stack_entries = 0;
+            let top_offset = self.stack.len();
 
             if val.join_left_block.caused_by_history != info.history_index {
                 self.stack.push(JoinStackEntry {
@@ -1201,7 +1214,6 @@ impl JoinStack {
                     trace_segment_offset: info.trace_stack_index,
                     join_index: info.join_index,
                 });
-                top_stack_entries += 1;
             }
 
             if val.join_right_block.caused_by_history != info.history_index {
@@ -1210,11 +1222,9 @@ impl JoinStack {
                     trace_segment_offset: info.trace_stack_index,
                     join_index: info.join_index,
                 });
-                top_stack_entries += 1;
             }
 
-            let top_vals_offset = self.stack.len() - top_stack_entries;
-            self.stack[top_vals_offset..].sort_unstable_by_key(|v| v.joined_history_offset);
+            self.stack[top_offset..].sort_unstable_by_key(|v| v.joined_history_offset);
         }
     }
 
@@ -1278,7 +1288,7 @@ fn history_backtrace_append_block(
         .any(|&b| matches!(b.block_type, BlockType::Alignment | BlockType::TandemRepeat))
     {
         match joiner.check_for_join(current_history_index) {
-            // Case 2: Involved in a join, add new block, but don't
+            // Case 2: Involved in a join, add new block.
             BlockAction::Join(join_index, stack_pos) => {
                 let joins = get_joinable_extensions(
                     blocks.iter().copied(),
@@ -1357,7 +1367,6 @@ pub fn backtrace_histories(
     let mut current_entry = &history.entries[current_idx];
 
     while let HistoryEntry::Join(entry_info) | HistoryEntry::Append(entry_info) = current_entry {
-        println!("{:#?}", current_entry);
         // Append current entry to segment stack...
         let blocks = history.segment_groups[entry_info.segment]
             .get_group(entry_info.group_index)
@@ -1382,6 +1391,13 @@ pub fn backtrace_histories(
         // Go to the next entry in the history...
         current_idx = entry_info.prior_block_history;
         current_entry = &history.entries[current_idx];
+    }
+
+    if joiner.stack.len() != 0 {
+        panic!(
+            "Backtrace not done properly, there are {} leftover values on the join stack!",
+            joiner.stack.len()
+        );
     }
 
     // Reverse so trace segments go from start to end instead of end to start.
