@@ -223,8 +223,8 @@ class Distribution:
 
 estimator = {
     "Relative Consensus Distance": Distribution(
-        laplace_asymmetric, (1.0, 0.0, 1.0), False
-    ),  # Distribution(invweibull, (1.0, 0.0, 1.0), False),
+        invweibull, (1.0, 0.0, 1.0), False
+    ),  # Distribution(invweibull, (1.0, 0.0, 1.0), False), Distribution(laplace_asymmetric, (1.0, 0.0, 1.0), False)
     "Target Distance": Distribution(
         genpareto, (0.0, 1.0)
     ),  # Distribution(expon, (1.0,)),  # Distribution(genpareto, (0.0, 1.0)), Distribution(weibull_min, (1.0, 10000)

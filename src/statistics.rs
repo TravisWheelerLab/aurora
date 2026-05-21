@@ -234,9 +234,173 @@ impl Distribution for HalfT {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Frechet {
+    alpha: f64,
+    scale: f64,
+    minimum: f64,
+}
+
+impl Frechet {
+    pub fn new(alpha: f64, scale: f64, minimum: f64) -> Self {
+        Self {
+            alpha,
+            scale,
+            minimum,
+        }
+    }
+
+    pub fn from_log_moments(log_mean: f64, log_std: f64, minimum: f64) -> Self {
+        let alpha = f64::consts::PI / (6.0 * log_std);
+        let lambda = (alpha * log_mean - f64::consts::EULER_GAMMA).exp();
+        let scale = lambda.powf(1.0 / alpha);
+        Self {
+            alpha,
+            scale,
+            minimum,
+        }
+    }
+}
+
+impl Default for Frechet {
+    fn default() -> Self {
+        Self {
+            alpha: 1.0,
+            scale: 1.0,
+            minimum: 0.0,
+        }
+    }
+}
+
+impl Distribution for Frechet {
+    fn logpdf(&self, x: f64) -> f64 {
+        let a = self.alpha;
+        let s = self.scale;
+        let m = self.minimum;
+        if x > m {
+            (a / s).ln() + -(a + 1.0) * ((x - m) / s).ln() + -((x - m) / s).powf(-a)
+        } else {
+            f64::NEG_INFINITY
+        }
+    }
+
+    fn pdf(&self, x: f64) -> f64 {
+        self.logpdf(x).exp()
+    }
+
+    fn cdf(&self, x: f64) -> f64 {
+        self.logcdf(x).exp()
+    }
+
+    fn logcdf(&self, x: f64) -> f64 {
+        let a = self.alpha;
+        let s = self.scale;
+        let m = self.minimum;
+        if x > m {
+            -((x - m) / s).powf(-a)
+        } else {
+            f64::NEG_INFINITY
+        }
+    }
+
+    fn ppf(&self, p: f64) -> f64 {
+        let a = self.alpha;
+        let s = self.scale;
+        let m = self.minimum;
+        if p >= 1.0 {
+            f64::INFINITY
+        } else if p <= 0.0 {
+            m
+        } else {
+            m + s * (-p.min(1.0).ln()).powf(1.0 / -a)
+        }
+    }
+
+    fn ccdf(&self, x: f64) -> f64 {
+        1.0 - self.cdf(x)
+    }
+
+    fn logccdf(&self, x: f64) -> f64 {
+        self.ccdf(x).ln()
+    }
+
+    fn support(&self) -> (f64, f64) {
+        (self.minimum, f64::INFINITY)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Laplace {
+    mean: f64,
+    scale: f64,
+}
+
+impl Laplace {
+    pub fn new(mean: f64, scale: f64) -> Self {
+        Self { mean, scale }
+    }
+
+    pub fn from_moments(mean: f64, standard_deviation: f64) -> Self {
+        Self {
+            mean,
+            scale: standard_deviation / f64::consts::SQRT_2,
+        }
+    }
+}
+
+impl Default for Laplace {
+    fn default() -> Self {
+        Self {
+            mean: 0.0,
+            scale: 1.0,
+        }
+    }
+}
+
+impl Distribution for Laplace {
+    fn logpdf(&self, x: f64) -> f64 {
+        let mu = self.mean;
+        let b = self.scale;
+        (0.5 / b).ln() + -((x - mu).abs() / b)
+    }
+
+    fn pdf(&self, x: f64) -> f64 {
+        self.logpdf(x).exp()
+    }
+
+    fn cdf(&self, x: f64) -> f64 {
+        let mu = self.mean;
+        let b = self.scale;
+        0.5 + 0.5 * (x - mu).signum() * (1.0 - (-(x - mu).abs() / b).exp())
+    }
+
+    fn logcdf(&self, x: f64) -> f64 {
+        self.cdf(x).ln()
+    }
+
+    fn ccdf(&self, x: f64) -> f64 {
+        1.0 - self.cdf(x)
+    }
+
+    fn logccdf(&self, x: f64) -> f64 {
+        self.ccdf(x).ln()
+    }
+
+    fn ppf(&self, p: f64) -> f64 {
+        let mu = self.mean;
+        let b = self.scale;
+        let p = p.clamp(0.0, 1.0);
+        mu - b * (p - 0.5).signum() * (1.0 - 2.0 * (p - 0.5).abs()).ln()
+    }
+
+    fn support(&self) -> (f64, f64) {
+        (f64::NEG_INFINITY, f64::INFINITY)
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use crate::statistics::{ExponentialEstimator, HalfT};
+    use crate::statistics::{ExponentialEstimator, Frechet, HalfT, Laplace};
     use std::fmt::Debug;
 
     pub trait TestDistribution: Debug {
@@ -283,11 +447,13 @@ mod test {
 
     use super::{Distribution, Exponential};
 
-    fn get_dists() -> [Box<dyn TestDistribution>; 3] {
+    fn get_dists() -> [Box<dyn TestDistribution>; 5] {
         [
             as_box(Exponential::unit()),
             as_box(ExponentialEstimator::unit()),
             as_box(HalfT::unit()),
+            as_box(Frechet::unit()),
+            as_box(Laplace::unit()),
         ]
     }
 
@@ -312,16 +478,18 @@ mod test {
             if high == f64::INFINITY {
                 high = 5.0;
             }
-            if low == f64::INFINITY {
+            if low == f64::NEG_INFINITY {
                 low = -5.0;
             }
 
             for x in linspace(low, high, 100) {
                 // Basic properties...
+                // println!("{x} -> {} vs {}", dist.tpdf(x), dist.tlogpdf(x).exp());
                 assert!(is_close(dist.tpdf(x), dist.tlogpdf(x).exp()));
                 assert!(is_close(dist.tcdf(x), dist.tlogcdf(x).exp()));
                 assert!(is_close(dist.tccdf(x), dist.tlogccdf(x).exp()));
                 assert!(is_close(dist.tccdf(x), 1.0 - dist.tcdf(x)));
+                // println!("{x} -> {}", dist.tppf(dist.tcdf(x)));
                 assert!(is_close(dist.tppf(dist.tcdf(x)), x));
             }
         }

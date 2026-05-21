@@ -145,7 +145,7 @@ pub fn trace_statistics<S: JoinStatisticsCollector + Debug + Into<E>, E: JoinEst
 
     // Calculate join statistics for all families using combined prior as a starting point...
     let mut all_join_stats: Vec<S> =
-        vec![S::new_from_prior(&all_family_stats); alignment_data.query_name_map.size()];
+        vec![S::new_from_prior(&all_family_stats, 1); alignment_data.query_name_map.size()];
 
     for trace_results in naive_traces.iter() {
         for (query_id, stats) in trace_results.query_join_statistics.iter() {
