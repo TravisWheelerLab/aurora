@@ -199,6 +199,7 @@ pub struct MergeIterator<
     val1: MergeEntry<I::Item>,
     val2: MergeEntry<I::Item>,
     prior_val: MergeEntry<I::Item>,
+    only_unique: bool,
     comparator: F,
 }
 
@@ -207,13 +208,14 @@ impl<I: Iterator, J: Iterator<Item = I::Item>, F: Fn(&I::Item, &I::Item) -> Orde
 where
     I::Item: Copy,
 {
-    pub fn new(iter1: I, iter2: J, comparator: F) -> Self {
+    pub fn new(iter1: I, iter2: J, comparator: F, only_unique: bool) -> Self {
         Self {
             iter1: iter1.fuse(),
             iter2: iter2.fuse(),
             val1: MergeEntry::Start,
             val2: MergeEntry::Start,
             prior_val: MergeEntry::Start,
+            only_unique,
             comparator,
         }
     }
@@ -269,6 +271,10 @@ where
                 next_val = self.val2;
                 self.val2 = self.iter2.next().into();
             }
+
+            if !self.only_unique {
+                break;
+            }
         }
 
         self.prior_val = next_val;
@@ -295,7 +301,7 @@ pub fn unique_merging_iterator<I: Iterator, J: Iterator<Item = I::Item>>(
 where
     I::Item: Copy + Ord,
 {
-    MergeIterator::new(list1, list2, |a, b| a.cmp(b))
+    MergeIterator::new(list1, list2, |a, b| a.cmp(b), true)
 }
 
 #[derive(Debug)]

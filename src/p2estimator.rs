@@ -1,211 +1,378 @@
-use std::{cmp::Ordering, ops::Neg};
+use std::cmp::Ordering;
 
-/// Implementation of P2 estimator.
-/// See "The P2 Algorithm for Dynamic Statistical Computing Calculation of Quantiles and Histograms Without Storing Observations"
-/// at https://www.cse.wustl.edu/~jain/papers/ftp/psqr.pdf
-///
-/// We replace the P2 interpolation with PCHIP instead (See paper A Method for Constructing Local Monotone Piecewise Cubic Interpolants by F. N. Fritsch and J. Butland, or https://doi.org/10.1137/0905021)
-use num_traits::{float::TotalOrder, Float, FromPrimitive, Num, Unsigned};
+use crate::segments::MergeIterator;
+use itertools::izip;
+// Implementation of P2 estimator.
+// See "The P2 Algorithm for Dynamic Statistical Computing Calculation of Quantiles and Histograms Without Storing Observations"
+// at https://www.cse.wustl.edu/~jain/papers/ftp/psqr.pdf
+//
+// We replace the P2 interpolation with PCHIP instead (See paper A Method for Constructing Local Monotone Piecewise Cubic Interpolants by F. N. Fritsch and J. Butland, or https://doi.org/10.1137/0905021)
 
-struct P2HistogramPoint<F: Float, I: Unsigned> {
-    value: F,
-    rank: I,
-    target: F,
+struct QuantileEstimatorData<'a> {
+    ranks: &'a [usize],
+    values: &'a [f64],
+    targets: &'a [f64],
+    observations: &'a usize,
 }
 
-fn get_sign<A: Num + PartialOrd + Neg<Output = A>, B: Num + PartialOrd + Neg<Output = B>>(
-    val: A,
-) -> B {
-    if val >= A::zero() {
-        B::one()
-    } else {
-        -B::one()
-    }
+struct MutableQuantileEstimatorData<'a> {
+    ranks: &'a mut [usize],
+    values: &'a mut [f64],
+    targets: &'a [f64],
+    observations: &'a mut usize,
 }
 
-fn inc_or_dec<A: Num + PartialOrd, B: Num + PartialOrd + Neg<Output = B>>(val: A, delta: B) -> A {
-    match delta.partial_cmp(&B::zero()) {
-        Some(Ordering::Less) => val - A::one(),
-        Some(Ordering::Greater) => val + A::one(),
-        _ => val,
-    }
-}
-
-fn cubic_hermite_spline<F: Float + FromPrimitive>(
-    x0: F,
-    y0: F,
-    x1: F,
-    y1: F,
-    m0: F,
-    m1: F,
-    x: F,
-) -> F {
+fn cubic_hermite_spline(x0: f64, y0: f64, x1: f64, y1: f64, m0: f64, m1: f64, x: f64) -> f64 {
     let t = (x - x0) / (x1 - x0);
     let ms0 = (x1 - x0) * m0;
     let ms1 = (x1 - x0) * m1;
 
-    let _1 = F::one();
-    let _2 = F::from_i32(2).unwrap();
-    let _3 = F::from_i32(3).unwrap();
-
-    let h0: F = (_2 * t - _3) * t * t + _1;
-    let h1 = ((t - _1) * t + _1) * t;
-    let h2 = (_2 * t + _3) * t * t;
-    let h3 = (t - _1) * t * t;
+    let h0 = (2.0 * t - 3.0) * t * t + 1.0;
+    let h1 = ((t - 1.0) * t + 1.0) * t;
+    let h2 = (2.0 * t + 3.0) * t * t;
+    let h3 = (t - 1.0) * t * t;
 
     h0 * y0 + h1 * ms0 + h2 * y1 + h3 * ms1
 }
 
-fn pchip_point_derivative<F: Float + FromPrimitive>(dx0: F, dy0: F, dx1: F, dy1: F) -> F {
-    if dy0 * dy1 > F::zero() {
-        let _1 = F::one();
-        let one_third = _1 / F::from_i32(3).unwrap();
-        let alpha = one_third * (_1 + dx1 / (dx0 + dx1));
-        dy0 * dy1 / (alpha * dy1 + (_1 - alpha) * dy0)
+fn pchip_point_derivative(dx0: f64, dy0: f64, dx1: f64, dy1: f64) -> f64 {
+    if dy0 * dy1 > 0.0 {
+        let alpha = (1.0 / 3.0) * (1.0 + dx1 / (dx0 + dx1));
+        dy0 * dy1 / (alpha * dy1 + (1.0 - alpha) * dy0)
     } else {
-        F::zero()
+        0.0
     }
 }
 
-fn secant_diff<F: Float, I: Unsigned + Copy + Ord + Into<F>>(
-    point0: Option<&P2HistogramPoint<F, I>>,
-    point1: Option<&P2HistogramPoint<F, I>>,
-) -> (F, F) {
-    if let (Some(p0), Some(p1)) = (point0, point1) {
-        ((p1.rank - p0.rank).into(), p1.value - p0.value)
-    } else {
-        // Assume slope at endpoints of CDF is 0...
-        (F::zero(), F::zero())
+fn pchip_prediction(ranks: &[f64; 4], values: &[f64; 4], x: f64) -> f64 {
+    let m0 = pchip_point_derivative(
+        ranks[1] - ranks[0],
+        values[1] - values[0],
+        ranks[2] - ranks[1],
+        values[2] - values[1],
+    );
+    let m1 = pchip_point_derivative(
+        ranks[2] - ranks[1],
+        values[2] - values[1],
+        ranks[3] - ranks[2],
+        values[3] - values[2],
+    );
+
+    cubic_hermite_spline(ranks[1], values[1], ranks[2], values[2], m0, m1, x)
+}
+
+fn debug_check_valid_estimator(
+    ranks: &[usize],
+    values: &[f64],
+    targets: &[f64],
+    observations: usize,
+) {
+    debug_assert!(ranks.len() > 2);
+    debug_assert!(ranks.len() == values.len() && ranks.len() == targets.len());
+    debug_assert!(values.is_sorted() && ranks.is_sorted() && targets.is_sorted());
+    debug_assert!(targets.first() == Some(&0.0) && targets.last() == Some(&1.0));
+    debug_assert!(observations >= ranks.len());
+    debug_assert!(ranks.first() == Some(&0) && ranks.last() == Some(&observations));
+}
+
+fn debug_check_uninitialized_estimator(ranks: &[usize], values: &[f64], targets: &[f64]) {
+    debug_assert!(ranks.len() > 2);
+    debug_assert!(ranks.len() == values.len() && ranks.len() == targets.len());
+    debug_assert!(targets.is_sorted());
+    debug_assert!(targets.first() == Some(&0.0) && targets.last() == Some(&1.0));
+}
+
+fn _add_sample_to_estimator(data: MutableQuantileEstimatorData, sample: f64) {
+    let MutableQuantileEstimatorData {
+        ranks,
+        values,
+        targets,
+        observations,
+    } = data;
+    debug_check_valid_estimator(ranks, values, targets, *observations);
+    // Find where sample falls within distribution...
+    let p = values.partition_point(|&v| v <= sample);
+    let bound_p = p.min(values.len() - 1);
+
+    // Update extremes...
+    if bound_p == 0 {
+        values[bound_p] = values[bound_p].min(sample);
+    } else if bound_p == (values.len() - 1) {
+        values[bound_p] = values[bound_p].max(sample);
     }
-}
 
-fn pchip_prediction<F: Float + FromPrimitive, I: Unsigned + Copy + Ord + Into<F>>(
-    point0: Option<&P2HistogramPoint<F, I>>,
-    point1: &P2HistogramPoint<F, I>,
-    point2: &P2HistogramPoint<F, I>,
-    point3: Option<&P2HistogramPoint<F, I>>,
-    x: F,
-) -> F {
-    let s0 = secant_diff(point0, Some(point1));
-    let s1 = secant_diff(Some(point1), Some(point2));
-    let s2 = secant_diff(Some(point2), point3);
-    let m0 = pchip_point_derivative(s0.0, s0.1, s1.0, s1.1);
-    let m1 = pchip_point_derivative(s1.0, s1.1, s2.0, s2.1);
+    // Increment ranks of markers above newly inserted sample...
+    for i in (bound_p + 1)..ranks.len() {
+        ranks[i] = ranks[1] + 1;
+    }
 
-    cubic_hermite_spline(
-        point1.rank.into(),
-        point1.value,
-        point2.rank.into(),
-        point2.value,
-        m0,
-        m1,
-        x,
-    )
-}
-
-struct QuantileEstimator<'a, F: Float, I: Unsigned + Copy + Ord + Into<F>> {
-    observations: I,
-    points: &'a mut [P2HistogramPoint<F, I>],
-}
-
-impl<
-        'a,
-        F: Float + TotalOrder + Into<usize> + FromPrimitive,
-        I: Unsigned + Copy + Ord + Into<F> + From<usize> + Into<usize>,
-    > QuantileEstimator<'a, F, I>
-{
-    fn _standard_update(&mut self, sample: F) {
-        // Find where sample falls within distribution...
-        let p = self.points.partition_point(|v| v.value <= sample);
-        let bound_p = p.min(self.points.len() - 1);
-
-        // Update extremes...
-        if bound_p == 0 {
-            self.points[bound_p].value = self.points[bound_p].value.min(sample);
-        } else if bound_p == (self.points.len() - 1) {
-            self.points[bound_p].value = self.points[bound_p].value.max(sample);
-        }
-
-        // Increment ranks of markers above newly inserted sample...
-        for i in (bound_p + 1)..self.points.len() {
-            self.points[i].rank = self.points[i].rank + I::one();
-        }
-
-        // Adjust inner markers to within 1 of their target quantile using p2 formula...
-        for i in 1..(self.points.len() - 1) {
-            let target_rank: F = (self.points[i].target * self.observations.into()).floor();
-            let true_rank: F = self.points[i].rank.into();
-            let true_rank_int: usize = self.points[i].rank.into();
-            if (true_rank - target_rank).abs() > F::one() {
-                let target_rank_int: usize = target_rank.into();
-                let lower_rank: usize = self.points[i - 1].rank.into();
-                let upper_rank: usize = self.points[i + 1].rank.into();
-                let new_rank: usize = target_rank_int
-                    .clamp(lower_rank.saturating_add(1), upper_rank.saturating_sub(1));
-                if new_rank == true_rank_int {
-                    continue;
-                }
-
-                let shift = if new_rank > target_rank_int { 1 } else { 0 };
-
-                self.points[i].rank = new_rank.into();
-                self.points[i].value = pchip_prediction(
-                    if i + shift > 2 {
-                        Some(&self.points[i + shift - 2])
-                    } else {
-                        None
-                    },
-                    &self.points[i - shift - 1],
-                    &self.points[i + shift],
-                    if i + shift + 1 < self.points.len() {
-                        Some(&self.points[i + shift + 1])
-                    } else {
-                        None
-                    },
-                    F::from_usize(new_rank).unwrap(),
-                );
+    // Adjust inner markers to within 1 of their target quantile using p2 formula...
+    for i in 1..(values.len() - 1) {
+        let target_rank = (targets[i] * (*observations) as f64) as usize;
+        let true_rank = ranks[i];
+        if true_rank.abs_diff(target_rank) > 1 {
+            let new_rank: usize = target_rank.clamp(
+                ranks[i - 1].saturating_add(1),
+                ranks[i + 1].saturating_sub(1),
+            );
+            if new_rank == true_rank {
+                continue;
             }
+
+            let idx_shift = if new_rank > target_rank { 1 } else { 0 };
+            let indexes = [
+                (i + idx_shift).saturating_sub(2),
+                (i + idx_shift).saturating_sub(1),
+                (i + idx_shift),
+                (i + idx_shift).saturating_add(1).min(ranks.len() - 1),
+            ];
+
+            ranks[i] = new_rank;
+            values[i] = pchip_prediction(
+                &indexes.map(|i| ranks[i] as f64),
+                &indexes.map(|i| values[i]),
+                new_rank as f64,
+            );
+        }
+    }
+
+    *observations += 1;
+}
+
+fn _merge_estimators(
+    q1: QuantileEstimatorData,
+    q2: QuantileEstimatorData,
+    mut new_estimator: MutableQuantileEstimatorData,
+) {
+    debug_check_valid_estimator(q1.ranks, q1.values, q1.targets, *q1.observations);
+    debug_check_valid_estimator(q2.ranks, q2.values, q2.targets, *q2.observations);
+    debug_check_uninitialized_estimator(
+        new_estimator.ranks,
+        new_estimator.values,
+        new_estimator.targets,
+    );
+
+    assert!(new_estimator.targets.len() <= (*q1.observations + *q2.observations));
+
+    fn get_at(a: &QuantileEstimatorData, i: usize) -> (usize, f64) {
+        (a.ranks[i], a.values[i])
+    }
+
+    fn set_at(a: &mut MutableQuantileEstimatorData, i: usize, data: (usize, f64)) {
+        a.ranks[i] = data.0;
+        a.values[i] = data.1;
+    }
+
+    // Initialize the min/max quantiles...
+    if q1.values[0] <= q2.values[0] {
+        set_at(&mut new_estimator, 0, get_at(&q1, 0));
+    } else {
+        set_at(&mut new_estimator, 0, get_at(&q2, 0));
+    }
+
+    let new_est_len = new_estimator.ranks.len();
+    if q1.values[q1.values.len() - 1] >= q2.values[q2.values.len() - 1] {
+        set_at(
+            &mut new_estimator,
+            new_est_len - 1,
+            get_at(&q1, q1.ranks.len() - 1),
+        );
+    } else {
+        set_at(
+            &mut new_estimator,
+            new_est_len - 1,
+            get_at(&q2, q2.ranks.len() - 1),
+        );
+    }
+
+    // May eventually replace with algorithm that doesn't use extra memory...
+    // Calculate a "merged" quantiles by linearly iterpolating ranks based on the values we see...
+    let mut dual_est_quants: Vec<(f64, f64)> = Vec::with_capacity(q1.ranks.len() + q2.ranks.len());
+
+    let mut q1_prior: Option<(usize, f64)> = None;
+    let mut q2_prior: Option<(usize, f64)> = None;
+
+    let mut q1_idx = 0;
+    let mut q2_idx = 0;
+
+    loop {
+        let q1_past_end = q1_idx >= q1.values.len();
+        let q2_past_end = q2_idx >= q2.values.len();
+
+        if q1_past_end && q2_past_end {
+            break;
+        } else if q1_past_end {
+            let next = get_at(&q2, q2_idx);
+            dual_est_quants.push(((next.0 + q1_prior.map(|v| v.0).unwrap_or(0)) as f64, next.1));
+            q2_prior = Some(next);
+            q2_idx += 1;
+        } else if q2_past_end {
+            let next = get_at(&q1, q1_idx);
+            dual_est_quants.push(((next.0 + q2_prior.map(|v| v.0).unwrap_or(0)) as f64, next.1));
+            q1_prior = Some(next);
+            q1_idx += 1;
+        } else if q1.values[q1_idx] <= q2.values[q2_idx] {
+            let other_next = get_at(&q2, q2_idx);
+            let next = get_at(&q1, q1_idx);
+            let w = q2_prior
+                .map(|other_prior| (next.1 - other_prior.1) / (other_next.1 - other_prior.1))
+                .unwrap_or(0.0);
+            let other_rank_est = q2_prior
+                .map(|other_prior| other_prior.0 as f64 * (1.0 - w) + other_next.0 as f64 * w)
+                .unwrap_or(0.0);
+            dual_est_quants.push((next.0 as f64 + other_rank_est, next.1));
+            q1_prior = Some(next);
+            q1_idx += 1;
+        } else {
+            let other_next = get_at(&q1, q1_idx);
+            let next = get_at(&q2, q2_idx);
+            let w = q1_prior
+                .map(|other_prior| (next.1 - other_prior.1) / (other_next.1 - other_prior.1))
+                .unwrap_or(0.0);
+            let other_rank_est = q1_prior
+                .map(|other_prior| other_prior.0 as f64 * (1.0 - w) + other_next.0 as f64 * w)
+                .unwrap_or(0.0);
+            dual_est_quants.push((next.0 as f64 + other_rank_est, next.1));
+            q2_prior = Some(next);
+            q2_idx += 1;
+        }
+    }
+
+    // New number of observations is the sum of both...
+    *(new_estimator.observations) = *(q1.observations) + *(q2.observations);
+
+    // Solve all inner quantiles using traditional interpolation...
+    let mut index_between = 0;
+
+    for ti in 1..new_estimator.targets.len() - 1 {
+        // Calculate new rank...
+        let target = new_estimator.targets[ti];
+        let approx_obs_rank = ((target * *(new_estimator.observations) as f64) as usize).clamp(
+            1 + ti,
+            *(new_estimator.observations) - (new_estimator.targets.len() - (ti + 1)),
+        );
+
+        // Find where it lands in cdf...
+        while index_between < dual_est_quants.len()
+            && (approx_obs_rank as f64) < dual_est_quants[index_between].0
+        {
+            index_between += 1;
         }
 
-        self.observations = self.observations + I::one();
+        // Get pchip estimate for the value...
+        let indexes = [
+            index_between.saturating_sub(2),
+            index_between.saturating_sub(1),
+            index_between,
+            index_between
+                .saturating_add(1)
+                .min(dual_est_quants.len() - 1),
+        ];
+
+        new_estimator.ranks[ti] = approx_obs_rank;
+        new_estimator.values[ti] = pchip_prediction(
+            &indexes.map(|i| dual_est_quants[i].0),
+            &indexes.map(|i| dual_est_quants[i].1),
+            approx_obs_rank as f64,
+        )
+    }
+}
+
+pub trait QuantileEstimator {
+    fn update(&mut self, sample: f64);
+    fn update_all(&mut self, samples: &[f64]) {
+        for &s in samples.iter() {
+            self.update(s);
+        }
+    }
+    fn combine(&self, other: &Self) -> Self;
+}
+
+#[derive(Clone)]
+struct FixedSizeQuantileEstimator<const N: usize> {
+    values: [f64; N],
+    ranks: [usize; N],
+    targets: [f64; N],
+    observations: usize,
+}
+
+impl<const N: usize> FixedSizeQuantileEstimator<N> {
+    pub fn new(targets: &[f64; N]) -> Self {
+        Self {
+            values: [0.0; N],
+            ranks: [0; N],
+            targets: targets.clone(),
+            observations: 0,
+        }
     }
 
-    fn _pre_init_update(&mut self, sample: F) {
-        let nxt_idx: usize = self.observations.into();
-        self.points[nxt_idx].value = sample;
-        self.observations = self.observations + I::one();
+    fn _as_data(&self) -> QuantileEstimatorData<'_> {
+        QuantileEstimatorData {
+            ranks: &self.ranks,
+            values: &self.values,
+            targets: &self.targets,
+            observations: &self.observations,
+        }
     }
 
-    fn _initialize(&mut self) {
-        panic!("Fix!");
-        // TODO: Fix this...
-        self.points.sort_by(|a, b| a.value.total_cmp(&b.value));
-        self.points.iter_mut().enumerate().for_each(|(i, p)| {
-            p.rank = i.into();
-        });
+    fn _as_mut_data(&mut self) -> MutableQuantileEstimatorData<'_> {
+        MutableQuantileEstimatorData {
+            ranks: &mut self.ranks,
+            values: &mut self.values,
+            targets: &self.targets,
+            observations: &mut self.observations,
+        }
     }
 
-    pub fn update(&mut self, sample: F) {
-        let obs: usize = self.observations.into();
-        match (obs + 1).cmp(&self.points.len()) {
-            Ordering::Less => self._pre_init_update(sample),
+    fn _is_initialized(&self) -> bool {
+        self.observations >= N
+    }
+}
+
+impl<const N: usize> QuantileEstimator for FixedSizeQuantileEstimator<N> {
+    fn update(&mut self, sample: f64) {
+        match (self.observations + 1).cmp(&self.values.len()) {
+            Ordering::Less => {
+                self.values[self.observations] = sample;
+                self.observations += 1;
+            }
             Ordering::Equal => {
-                self._pre_init_update(sample);
-                self._initialize();
+                self.values[self.observations] = sample;
+                self.values.sort_by(|a, b| a.total_cmp(b));
+                for i in 0..self.ranks.len() {
+                    self.ranks[i] = i / (self.ranks.len() - 1);
+                }
+                self.observations += 1;
             }
             Ordering::Greater => {
-                self._standard_update(sample);
+                _add_sample_to_estimator(self._as_mut_data(), sample);
             }
         }
     }
 
-    pub fn is_initialized(&self) -> bool {
-        let obs: usize = self.observations.into();
-        obs >= self.points.len()
-    }
+    fn combine(&self, other: &Self) -> Self {
+        match (self._is_initialized(), other._is_initialized()) {
+            (true, true) => {
+                let mut new_quant_est = Self::new(&self.targets);
 
-    fn combine(&mut self, other: &P2HistogramData<F, I>) {
-        // TODO: Need to think about how to do this efficiently while maintaining accuracy...
-        panic!("Not implemented!")
+                _merge_estimators(
+                    self._as_data(),
+                    other._as_data(),
+                    new_quant_est._as_mut_data(),
+                );
+
+                new_quant_est
+            }
+            (true, false) | (false, false) => {
+                let mut new_quant_est = self.clone();
+                new_quant_est.update_all(&other.values[..other.observations]);
+                new_quant_est
+            }
+            (false, true) => {
+                let mut new_quant_est = other.clone();
+                new_quant_est.update_all(&self.values[..self.observations]);
+                new_quant_est
+            }
+        }
     }
 }

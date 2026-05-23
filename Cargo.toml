@@ -17,7 +17,6 @@ itertools = "0.11.0"
 rayon = "1.8.0"
 base64 = "0.22.1"
 puruspe = "0.4.4"
-num-traits = "0.2.19"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = "0.5"
