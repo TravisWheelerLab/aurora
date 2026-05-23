@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use crate::segments::MergeIterator;
+use crate::{segments::MergeIterator, statistics::Distribution};
 use itertools::izip;
 // Implementation of P2 estimator.
 // See "The P2 Algorithm for Dynamic Statistical Computing Calculation of Quantiles and Histograms Without Storing Observations"
@@ -36,29 +36,39 @@ fn cubic_hermite_spline(x0: f64, y0: f64, x1: f64, y1: f64, m0: f64, m1: f64, x:
 }
 
 fn pchip_point_derivative(dx0: f64, dy0: f64, dx1: f64, dy1: f64) -> f64 {
-    if dy0 * dy1 > 0.0 {
+    let s0 = if dx0 != 0.0 { dy0 / dx0 } else { 0.0 };
+    let s1 = if dx1 != 0.0 { dy1 / dx1 } else { 0.0 };
+    if s0 * s1 > 0.0 {
         let alpha = (1.0 / 3.0) * (1.0 + dx1 / (dx0 + dx1));
-        dy0 * dy1 / (alpha * dy1 + (1.0 - alpha) * dy0)
+        s0 * s1 / (alpha * s1 + (1.0 - alpha) * s0)
     } else {
         0.0
     }
 }
 
-fn pchip_prediction(ranks: &[f64; 4], values: &[f64; 4], x: f64) -> f64 {
+fn pchip_prediction(x_points: &[f64; 4], y_points: &[f64; 4], x: f64) -> f64 {
     let m0 = pchip_point_derivative(
-        ranks[1] - ranks[0],
-        values[1] - values[0],
-        ranks[2] - ranks[1],
-        values[2] - values[1],
+        x_points[1] - x_points[0],
+        y_points[1] - y_points[0],
+        x_points[2] - x_points[1],
+        y_points[2] - y_points[1],
     );
     let m1 = pchip_point_derivative(
-        ranks[2] - ranks[1],
-        values[2] - values[1],
-        ranks[3] - ranks[2],
-        values[3] - values[2],
+        x_points[2] - x_points[1],
+        y_points[2] - y_points[1],
+        x_points[3] - x_points[2],
+        y_points[3] - y_points[2],
     );
 
-    cubic_hermite_spline(ranks[1], values[1], ranks[2], values[2], m0, m1, x)
+    cubic_hermite_spline(
+        x_points[1],
+        y_points[1],
+        x_points[2],
+        x_points[2],
+        m0,
+        m1,
+        x,
+    )
 }
 
 fn debug_check_valid_estimator(
@@ -72,7 +82,7 @@ fn debug_check_valid_estimator(
     debug_assert!(values.is_sorted() && ranks.is_sorted() && targets.is_sorted());
     debug_assert!(targets.first() == Some(&0.0) && targets.last() == Some(&1.0));
     debug_assert!(observations >= ranks.len());
-    debug_assert!(ranks.first() == Some(&0) && ranks.last() == Some(&observations));
+    debug_assert!(ranks.first() == Some(&0) && ranks.last() == Some(&(observations - 1)));
 }
 
 fn debug_check_uninitialized_estimator(ranks: &[usize], values: &[f64], targets: &[f64]) {
@@ -91,7 +101,7 @@ fn _add_sample_to_estimator(data: MutableQuantileEstimatorData, sample: f64) {
     } = data;
     debug_check_valid_estimator(ranks, values, targets, *observations);
     // Find where sample falls within distribution...
-    let p = values.partition_point(|&v| v <= sample);
+    let p = values.partition_point(|&v| v < sample);
     let bound_p = p.min(values.len() - 1);
 
     // Update extremes...
@@ -102,12 +112,13 @@ fn _add_sample_to_estimator(data: MutableQuantileEstimatorData, sample: f64) {
     }
 
     // Increment ranks of markers above newly inserted sample...
-    for i in (bound_p + 1)..ranks.len() {
+    for i in bound_p.max(1)..ranks.len() {
         ranks[i] = ranks[1] + 1;
     }
 
     // Adjust inner markers to within 1 of their target quantile using p2 formula...
     for i in 1..(values.len() - 1) {
+        // Observations hasn't been incremented yet, don't need to subtract 1...
         let target_rank = (targets[i] * (*observations) as f64) as usize;
         let true_rank = ranks[i];
         if true_rank.abs_diff(target_rank) > 1 {
@@ -240,6 +251,7 @@ fn _merge_estimators(
 
     // New number of observations is the sum of both...
     *(new_estimator.observations) = *(q1.observations) + *(q2.observations);
+    let rank_range = *(new_estimator.observations) - 1;
 
     // Solve all inner quantiles using traditional interpolation...
     let mut index_between = 0;
@@ -247,10 +259,8 @@ fn _merge_estimators(
     for ti in 1..new_estimator.targets.len() - 1 {
         // Calculate new rank...
         let target = new_estimator.targets[ti];
-        let approx_obs_rank = ((target * *(new_estimator.observations) as f64) as usize).clamp(
-            1 + ti,
-            *(new_estimator.observations) - (new_estimator.targets.len() - (ti + 1)),
-        );
+        let approx_obs_rank = ((target * rank_range as f64) as usize)
+            .clamp(ti, rank_range - (new_estimator.targets.len() - (ti + 1)));
 
         // Find where it lands in cdf...
         while index_between < dual_est_quants.len()
@@ -278,7 +288,7 @@ fn _merge_estimators(
     }
 }
 
-pub trait QuantileEstimator {
+pub trait QuantileEstimator: Distribution {
     fn update(&mut self, sample: f64);
     fn update_all(&mut self, samples: &[f64]) {
         for &s in samples.iter() {
@@ -329,6 +339,90 @@ impl<const N: usize> FixedSizeQuantileEstimator<N> {
     }
 }
 
+impl<const N: usize> Distribution for FixedSizeQuantileEstimator<N> {
+    fn cdf(&self, x: f64) -> f64 {
+        let upper_p = self.values.partition_point(|&v| v < x);
+        if upper_p > self.values.len() {
+            1.0
+        } else if upper_p == 0 {
+            0.0
+        } else {
+            let indexes = [
+                upper_p.saturating_sub(2),
+                upper_p.saturating_sub(1),
+                upper_p,
+                upper_p.saturating_add(1).min(self.values.len()),
+            ];
+
+            pchip_prediction(
+                &indexes.map(|i| self.values[i]),
+                &indexes.map(|i| self.ranks[i] as f64),
+                x,
+            ) / (self.observations - 1) as f64
+        }
+    }
+
+    fn logcdf(&self, x: f64) -> f64 {
+        self.cdf(x).ln()
+    }
+
+    fn ccdf(&self, x: f64) -> f64 {
+        1.0 - self.cdf(x)
+    }
+
+    fn logccdf(&self, x: f64) -> f64 {
+        (-self.cdf(x)).ln_1p()
+    }
+
+    fn ppf(&self, p: f64) -> f64 {
+        let est_rank = p.clamp(0.0, 1.0) * (self.observations - 1) as f64;
+        let upper_p = self.ranks.partition_point(|&r| (r as f64) < est_rank);
+        if upper_p > self.values.len() {
+            self.values[self.values.len() - 1]
+        } else if upper_p == 0 {
+            self.values[0]
+        } else {
+            let indexes = [
+                upper_p.saturating_sub(2),
+                upper_p.saturating_sub(1),
+                upper_p,
+                upper_p.saturating_add(1).min(self.values.len()),
+            ];
+
+            pchip_prediction(
+                &indexes.map(|i| self.ranks[i] as f64),
+                &indexes.map(|i| self.values[i]),
+                est_rank,
+            )
+        }
+    }
+
+    fn pdf(&self, x: f64) -> f64 {
+        // Will have to calculate derivatives, cache normalization factor (such that area under curve is 1)...
+        // May be worth splitting out into different class to allow pre-processing this stuff...
+        panic!("TODO!");
+        let upper_p = self.values.partition_point(|&v| v < x);
+        if upper_p > self.values.len() {
+            0.0
+        } else if upper_p == 0 {
+            0.0
+        } else {
+            0.0
+        }
+    }
+
+    fn logpdf(&self, x: f64) -> f64 {
+        self.pdf(x).ln()
+    }
+
+    fn support(&self) -> (f64, f64) {
+        (
+            *self.values.first().unwrap_or(&f64::NEG_INFINITY),
+            *self.values.last().unwrap_or(&f64::INFINITY),
+        )
+    }
+}
+
 impl<const N: usize> QuantileEstimator for FixedSizeQuantileEstimator<N> {
     fn update(&mut self, sample: f64) {
         match (self.observations + 1).cmp(&self.values.len()) {
@@ -340,7 +434,7 @@ impl<const N: usize> QuantileEstimator for FixedSizeQuantileEstimator<N> {
                 self.values[self.observations] = sample;
                 self.values.sort_by(|a, b| a.total_cmp(b));
                 for i in 0..self.ranks.len() {
-                    self.ranks[i] = i / (self.ranks.len() - 1);
+                    self.ranks[i] = i;
                 }
                 self.observations += 1;
             }

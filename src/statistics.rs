@@ -11,7 +11,7 @@ pub fn ln_add_exp(a: f64, b: f64) -> f64 {
 
 // TODO: Support for generic floating types...
 #[allow(dead_code)]
-pub trait Distribution: Clone + Debug + Default {
+pub trait Distribution: Clone {
     fn pdf(&self, x: f64) -> f64;
     fn cdf(&self, x: f64) -> f64;
     fn ppf(&self, p: f64) -> f64;
@@ -20,7 +20,9 @@ pub trait Distribution: Clone + Debug + Default {
     fn logpdf(&self, x: f64) -> f64;
     fn logcdf(&self, x: f64) -> f64;
     fn logccdf(&self, x: f64) -> f64;
+}
 
+pub trait ParameterizedDistribution: Distribution + Debug + Default {
     fn unit() -> Self {
         Self::default()
     }
@@ -30,6 +32,8 @@ pub trait Distribution: Clone + Debug + Default {
 pub struct Exponential {
     lambda: f64,
 }
+
+impl ParameterizedDistribution for Exponential {}
 
 impl Exponential {
     pub fn new(lambda: f64) -> Self {
@@ -86,6 +90,8 @@ pub struct ExponentialEstimator {
     sample_mean: f64,
     degrees_of_freedom: usize,
 }
+
+impl ParameterizedDistribution for ExponentialEstimator {}
 
 impl ExponentialEstimator {
     pub fn new(sample_mean: f64, sample_size: usize) -> Self {
@@ -156,6 +162,8 @@ pub struct HalfT {
     standard_deviation: f64,
     degrees_of_freedom: usize,
 }
+
+impl ParameterizedDistribution for HalfT {}
 
 impl HalfT {
     #[allow(dead_code)]
@@ -240,6 +248,8 @@ pub struct Frechet {
     scale: f64,
     minimum: f64,
 }
+
+impl ParameterizedDistribution for Frechet {}
 
 impl Frechet {
     pub fn new(alpha: f64, scale: f64, minimum: f64) -> Self {
@@ -335,6 +345,8 @@ pub struct Laplace {
     scale: f64,
 }
 
+impl ParameterizedDistribution for Laplace {}
+
 impl Laplace {
     pub fn new(mean: f64, scale: f64) -> Self {
         Self { mean, scale }
@@ -414,7 +426,7 @@ mod test {
         fn tlogccdf(&self, x: f64) -> f64;
     }
 
-    impl<T: Distribution> TestDistribution for T {
+    impl<T: ParameterizedDistribution> TestDistribution for T {
         fn tpdf(&self, x: f64) -> f64 {
             self.pdf(x)
         }
@@ -441,11 +453,11 @@ mod test {
         }
     }
 
-    fn as_box<T: Distribution + 'static>(d: T) -> Box<dyn TestDistribution> {
+    fn as_box<T: ParameterizedDistribution + 'static>(d: T) -> Box<dyn TestDistribution> {
         Box::new(d)
     }
 
-    use super::{Distribution, Exponential};
+    use super::{Exponential, ParameterizedDistribution};
 
     fn get_dists() -> [Box<dyn TestDistribution>; 5] {
         [
