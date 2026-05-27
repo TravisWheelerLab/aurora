@@ -410,9 +410,15 @@ impl Distribution for Laplace {
     }
 }
 
+pub fn linspace(start: f64, stop: f64, steps: usize) -> impl Iterator<Item = f64> {
+    (0..steps)
+        .map(move |n| n as f64 / (steps as f64 - 1.0))
+        .map(move |n| start * (1.0 - n) + stop * n)
+}
+
 #[cfg(test)]
 mod test {
-    use crate::statistics::{ExponentialEstimator, Frechet, HalfT, Laplace};
+    use crate::statistics::{linspace, ExponentialEstimator, Frechet, HalfT, Laplace};
     use std::fmt::Debug;
 
     pub trait TestDistribution: Debug {
@@ -473,12 +479,6 @@ mod test {
         let rel_tol = 1e-9;
         let abs_tol = 0.0;
         (a - b).abs() <= (rel_tol * (a.abs()).max(b.abs())).max(abs_tol)
-    }
-
-    fn linspace(start: f64, stop: f64, steps: usize) -> impl Iterator<Item = f64> {
-        (0..steps)
-            .map(move |n| n as f64 / (steps as f64 - 1.0))
-            .map(move |n| start * (1.0 - n) + stop * n)
     }
 
     #[test]
