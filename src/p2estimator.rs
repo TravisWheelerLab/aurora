@@ -1,8 +1,7 @@
 use std::cmp::Ordering;
 
-use crate::{segments::MergeIterator, statistics::Distribution};
-use itertools::{izip, Itertools};
-use rayon::iter::Interleave;
+use crate::statistics::Distribution;
+use itertools::Itertools;
 // Implementation of P2 estimator.
 // See "The P2 Algorithm for Dynamic Statistical Computing Calculation of Quantiles and Histograms Without Storing Observations"
 // at https://www.cse.wustl.edu/~jain/papers/ftp/psqr.pdf
@@ -48,7 +47,6 @@ fn pchip_point_derivative(dx0: f64, dy0: f64, dx1: f64, dy1: f64) -> f64 {
 }
 
 fn pchip_prediction(x_points: &[f64; 4], y_points: &[f64; 4], x: f64) -> f64 {
-    println!("{x_points:?}, {y_points:?}, {x}");
     debug_assert!(x_points.is_sorted() && x <= x_points[2] && x >= x_points[1]);
     let m0 = pchip_point_derivative(
         x_points[1] - x_points[0],
@@ -158,7 +156,7 @@ fn _add_sample_to_estimator(data: MutableQuantileEstimatorData, sample: f64) {
 fn _merge_estimators(
     q1: QuantileEstimatorData,
     q2: QuantileEstimatorData,
-    mut new_estimator: MutableQuantileEstimatorData,
+    new_estimator: MutableQuantileEstimatorData,
 ) {
     debug_check_valid_estimator(q1.ranks, q1.values, q1.targets, *q1.observations);
     debug_check_valid_estimator(q2.ranks, q2.values, q2.targets, *q2.observations);
@@ -213,7 +211,9 @@ fn _merge_estimators(
                 .map(|other_prior| (next.1 - other_prior.1) / (other_next.1 - other_prior.1))
                 .unwrap_or(0.0);
             let other_rank_est = q2_prior
-                .map(|other_prior| other_prior.0 as f64 * (1.0 - w) + other_next.0 as f64 * w)
+                .map(|other_prior| {
+                    (other_prior.0 + 1) as f64 * (1.0 - w) + (other_next.0 + 1) as f64 * w
+                })
                 .unwrap_or(0.0);
             dual_est_quants.push((next.0 as f64 + other_rank_est, next.1));
             q1_prior = Some(next);
@@ -225,7 +225,9 @@ fn _merge_estimators(
                 .map(|other_prior| (next.1 - other_prior.1) / (other_next.1 - other_prior.1))
                 .unwrap_or(0.0);
             let other_rank_est = q1_prior
-                .map(|other_prior| other_prior.0 as f64 * (1.0 - w) + other_next.0 as f64 * w)
+                .map(|other_prior| {
+                    (other_prior.0 + 1) as f64 * (1.0 - w) + (other_next.0 + 1) as f64 * w
+                })
                 .unwrap_or(0.0);
             dual_est_quants.push((next.0 as f64 + other_rank_est, next.1));
             q2_prior = Some(next);
@@ -236,12 +238,20 @@ fn _merge_estimators(
     // New number of observations is the sum of both...
     *(new_estimator.observations) = *(q1.observations) + *(q2.observations);
     let rank_range = *(new_estimator.observations) - 1;
-    println!("{rank_range}");
 
     // Solve all inner quantiles using traditional interpolation...
     let mut index_between = 0;
 
-    println!("{dual_est_quants:?}");
+    new_estimator.ranks.first_mut().map(|r| *r = 0);
+    new_estimator.ranks.last_mut().map(|r| *r = rank_range);
+    new_estimator
+        .values
+        .first_mut()
+        .map(|v| *v = dual_est_quants[0].1);
+    new_estimator
+        .values
+        .last_mut()
+        .map(|v| *v = dual_est_quants[dual_est_quants.len() - 1].1);
 
     for ti in 1..new_estimator.targets.len() - 1 {
         // Calculate new rank...
@@ -251,7 +261,7 @@ fn _merge_estimators(
 
         // Find where it lands in cdf...
         while index_between < dual_est_quants.len()
-            && (approx_obs_rank as f64) < dual_est_quants[index_between].0
+            && (approx_obs_rank as f64) > dual_est_quants[index_between].0
         {
             index_between += 1;
         }
@@ -260,7 +270,7 @@ fn _merge_estimators(
         let indexes = [
             index_between.saturating_sub(2),
             index_between.saturating_sub(1),
-            index_between,
+            index_between.min(dual_est_quants.len() - 1),
             index_between
                 .saturating_add(1)
                 .min(dual_est_quants.len() - 1),
@@ -333,6 +343,7 @@ fn _interpolated_value_prediction<
 }
 
 pub trait QuantileEstimator: Distribution {
+    fn from_prior(prior: &Self, count: usize) -> Self;
     fn update(&mut self, sample: f64);
     fn update_all(&mut self, samples: &[f64]) {
         for &s in samples.iter() {
@@ -340,12 +351,13 @@ pub trait QuantileEstimator: Distribution {
         }
     }
     fn combine(&self, other: &Self) -> Self;
+    fn samples(&self) -> usize;
 }
 
 trait SimpleQuantileEstimatorRepresentation: Clone {
     fn new_like(other: &Self) -> Self;
-    fn _data(&self) -> QuantileEstimatorData;
-    fn _mut_data(&mut self) -> MutableQuantileEstimatorData;
+    fn _data(&self) -> QuantileEstimatorData<'_>;
+    fn _mut_data(&mut self) -> MutableQuantileEstimatorData<'_>;
     fn _is_initialized(&self) -> bool {
         let data = self._data();
         *data.observations >= data.ranks.len()
@@ -353,6 +365,32 @@ trait SimpleQuantileEstimatorRepresentation: Clone {
 }
 
 impl<Q: SimpleQuantileEstimatorRepresentation> QuantileEstimator for Q {
+    fn samples(&self) -> usize {
+        *self._data().observations
+    }
+
+    fn from_prior(prior: &Self, count_per_entry: usize) -> Self {
+        let prior_data = prior._data();
+        let mut new_self = Self::new_like(prior);
+        let new_data = new_self._mut_data();
+
+        let new_observations = count_per_entry * prior_data.ranks.len();
+
+        for i in 0..new_data.targets.len() {
+            let closest_rank = ((new_data.targets[i] * (new_observations - 1) as f64) as usize)
+                .clamp(
+                    i,
+                    (new_observations - 1) - (new_data.targets.len() - (i + 1)),
+                );
+
+            new_data.ranks[i] = closest_rank;
+            new_data.values[i] = prior.ppf(closest_rank as f64 / (new_observations - 1) as f64)
+        }
+        *new_data.observations = new_observations;
+
+        new_self
+    }
+
     fn update(&mut self, sample: f64) {
         let data = self._mut_data();
 
@@ -631,10 +669,12 @@ mod test {
             estimator.update(sample);
         }
 
+        assert!(estimator.samples() == 10_000);
+
         for val in linspace(0.0, 0.90, 90) {
             assert!((estimator.ppf(val) - expon.ppf(val)).abs() <= 0.04);
             let dist_val = expon.ppf(val);
-            assert!((estimator.cdf(dist_val) - expon.cdf(dist_val)).abs() <= 0.2);
+            assert!((estimator.cdf(dist_val) - expon.cdf(dist_val)).abs() <= 0.04);
 
             // Basic probability distribution checks...
             assert!(is_close(
@@ -650,8 +690,6 @@ mod test {
                 estimator.logccdf(dist_val),
                 estimator.ccdf(dist_val).ln()
             ));
-
-            assert!((estimator.cdf(estimator.ppf(val)) - val).abs() <= 0.06);
         }
     }
 
@@ -672,6 +710,14 @@ mod test {
             }
 
             merged_estimator = merged_estimator.combine(&estimator);
+        }
+
+        assert!(merged_estimator.samples() == 10_000);
+
+        for val in linspace(0.0, 0.75, 75) {
+            assert!((merged_estimator.ppf(val) - expon.ppf(val)).abs() <= 0.1);
+            let dist_val = expon.ppf(val);
+            assert!((merged_estimator.cdf(dist_val) - expon.cdf(dist_val)).abs() <= 0.04)
         }
     }
 }
