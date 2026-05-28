@@ -259,17 +259,6 @@ impl Frechet {
             minimum,
         }
     }
-
-    pub fn from_log_moments(log_mean: f64, log_std: f64, minimum: f64) -> Self {
-        let alpha = f64::consts::PI / (6.0 * log_std);
-        let lambda = (alpha * log_mean - f64::consts::EULER_GAMMA).exp();
-        let scale = lambda.powf(1.0 / alpha);
-        Self {
-            alpha,
-            scale,
-            minimum,
-        }
-    }
 }
 
 impl Default for Frechet {

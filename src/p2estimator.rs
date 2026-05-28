@@ -351,6 +351,7 @@ pub trait QuantileEstimator: Distribution {
         }
     }
     fn combine(&self, other: &Self) -> Self;
+    #[allow(dead_code)]
     fn samples(&self) -> usize;
 }
 
@@ -374,7 +375,7 @@ impl<Q: SimpleQuantileEstimatorRepresentation> QuantileEstimator for Q {
         let mut new_self = Self::new_like(prior);
         let new_data = new_self._mut_data();
 
-        let new_observations = count_per_entry * prior_data.ranks.len();
+        let new_observations = count_per_entry.max(1) * prior_data.ranks.len();
 
         for i in 0..new_data.targets.len() {
             let closest_rank = ((new_data.targets[i] * (new_observations - 1) as f64) as usize)
@@ -545,7 +546,7 @@ impl<Q: SimpleQuantileEstimatorRepresentation> Distribution for Q {
 }
 
 #[derive(Clone, Debug)]
-struct FixedSizeQuantileEstimator<const N: usize> {
+pub struct FixedSizeQuantileEstimator<const N: usize> {
     values: [f64; N],
     ranks: [usize; N],
     targets: [f64; N],
@@ -591,7 +592,7 @@ impl<const N: usize> SimpleQuantileEstimatorRepresentation for FixedSizeQuantile
 }
 
 #[derive(Clone, Debug)]
-struct VectorQuantileEstimator {
+pub struct VectorQuantileEstimator {
     values: Vec<f64>,
     ranks: Vec<usize>,
     targets: Vec<f64>,
@@ -599,7 +600,7 @@ struct VectorQuantileEstimator {
 }
 
 impl VectorQuantileEstimator {
-    fn new(targets: &[f64]) -> Self {
+    pub fn new(targets: &[f64]) -> Self {
         assert!(
             targets.is_sorted() && targets.first() == Some(&0.0) && targets.last() == Some(&1.0)
         );
@@ -634,6 +635,75 @@ impl SimpleQuantileEstimatorRepresentation for VectorQuantileEstimator {
             observations: &mut self.observations,
         }
     }
+}
+
+pub mod custom_quantile_estimator {
+    use super::*;
+    use std::f64::consts::E;
+
+    macro_rules! replace_expr {
+        ($_t:tt,$sub:expr) => {
+            $sub
+        };
+    }
+
+    macro_rules! count_exprs {
+        ($($val:expr),+) => {<[()]>::len(&[$(replace_expr!($val,())),+])};
+    }
+
+    macro_rules! implement_fixed_quantile_estimator {
+        ($name:ident[$($val:expr),+]) => {
+            #[derive(Clone, Debug)]
+            pub struct $name {
+                values: [f64; Self::COUNT],
+                ranks: [usize; Self::COUNT],
+                observations: usize,
+            }
+
+            impl $name {
+                const TARGETS: [f64; count_exprs!($($val),+) + 2] = [0.0, $($val),+, 1.0];
+                const COUNT: usize = Self::TARGETS.len();
+
+                pub fn new() -> Self {
+                    Self {
+                        values: [0.0; _],
+                        ranks: [0; _],
+                        observations: 0
+                    }
+                }
+            }
+
+            impl Default for $name {
+                fn default() -> Self {
+                    Self::new()
+                }
+            }
+
+            impl SimpleQuantileEstimatorRepresentation for $name {
+                fn new_like(_other: &Self) -> Self {
+                    Self::default()
+                }
+                fn _data(&self) -> QuantileEstimatorData<'_> {
+                    QuantileEstimatorData {
+                        ranks: &self.ranks,
+                        values: &self.values,
+                        targets: &Self::TARGETS,
+                        observations: &self.observations,
+                    }
+                }
+                fn _mut_data(&mut self) -> MutableQuantileEstimatorData<'_> {
+                    MutableQuantileEstimatorData {
+                        ranks: &mut self.ranks,
+                        values: &mut self.values,
+                        targets: &Self::TARGETS,
+                        observations: &mut self.observations,
+                    }
+                }
+            }
+        };
+    }
+
+    implement_fixed_quantile_estimator!(FrechetQuant[0.5 / E, 0.25, 1.0 / E, 0.5, 0.5 + 1.0 / 2.0 * E, 0.75]);
 }
 
 #[cfg(test)]
