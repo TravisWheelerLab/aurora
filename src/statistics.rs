@@ -329,6 +329,68 @@ impl Distribution for Frechet {
 }
 
 #[derive(Debug, Clone)]
+pub struct Gumbel {
+    location: f64,
+    scale: f64,
+}
+
+impl Gumbel {
+    pub fn new(location: f64, scale: f64) -> Self {
+        Self { location, scale }
+    }
+}
+
+impl Default for Gumbel {
+    fn default() -> Self {
+        Self::new(0.0, 1.0)
+    }
+}
+
+impl ParameterizedDistribution for Gumbel {}
+
+impl Distribution for Gumbel {
+    fn logpdf(&self, x: f64) -> f64 {
+        let mu = self.location;
+        let beta = self.scale;
+        let z = (x - mu) / beta;
+        (1.0 / beta).ln() - (z + (-z).exp())
+    }
+
+    fn pdf(&self, x: f64) -> f64 {
+        self.logpdf(x).exp()
+    }
+
+    fn cdf(&self, x: f64) -> f64 {
+        self.logcdf(x).exp()
+    }
+
+    fn logcdf(&self, x: f64) -> f64 {
+        let mu = self.location;
+        let beta = self.scale;
+        let z = (x - mu) / beta;
+        -((-z).exp())
+    }
+
+    fn ppf(&self, p: f64) -> f64 {
+        let mu = self.location;
+        let beta = self.scale;
+        mu - beta * (-p.ln()).ln()
+    }
+
+    fn ccdf(&self, x: f64) -> f64 {
+        1.0 - self.cdf(x)
+    }
+
+    fn logccdf(&self, x: f64) -> f64 {
+        self.ccdf(x).ln()
+    }
+
+    fn support(&self) -> (f64, f64) {
+        (f64::NEG_INFINITY, f64::INFINITY)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Laplace {
     mean: f64,
     scale: f64,
@@ -407,7 +469,7 @@ pub fn linspace(start: f64, stop: f64, steps: usize) -> impl Iterator<Item = f64
 
 #[cfg(test)]
 mod test {
-    use crate::statistics::{linspace, ExponentialEstimator, Frechet, HalfT, Laplace};
+    use super::*;
     use std::fmt::Debug;
 
     pub trait TestDistribution: Debug {
@@ -454,13 +516,14 @@ mod test {
 
     use super::{Exponential, ParameterizedDistribution};
 
-    fn get_dists() -> [Box<dyn TestDistribution>; 5] {
+    fn get_dists() -> [Box<dyn TestDistribution>; 6] {
         [
             as_box(Exponential::unit()),
             as_box(ExponentialEstimator::unit()),
             as_box(HalfT::unit()),
             as_box(Frechet::unit()),
             as_box(Laplace::unit()),
+            as_box(Gumbel::unit()),
         ]
     }
 

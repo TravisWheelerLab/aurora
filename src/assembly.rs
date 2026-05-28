@@ -128,13 +128,13 @@ fn get_link_cost(
 
     // Cost = linear consensus cost + linear target gap cost...
     min_value
-        + piecewise_linear_cost(
+        /*+ piecewise_linear_cost(
             -(annotation_args.free_join_consensus_overlap as f64).abs(),
             (annotation_args.free_join_consensus_gap as f64).abs(),
             alpha,
             beta,
             consensus_gap as f64,
-        )
+        )*/
         + expected_score
 }
 

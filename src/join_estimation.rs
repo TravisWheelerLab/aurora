@@ -8,7 +8,7 @@ use crate::{
     assembly::{block_consensus_distance, block_length_on_query, block_target_distance, LinkType},
     p2estimator::{custom_quantile_estimator::FrechetQuant, QuantileEstimator},
     segments::Block,
-    statistics::{ln_add_exp, Distribution, ExponentialEstimator, Frechet, HalfT, Laplace},
+    statistics::{ln_add_exp, Distribution, ExponentialEstimator, Frechet, Gumbel, HalfT, Laplace},
 };
 
 pub trait JoinEstimator: Clone + Default + Debug {
@@ -28,7 +28,7 @@ pub struct BayesianJoinEstimator {
     target_distance_nojoin: ExponentialEstimator,
     divergence_join: HalfT,
     divergence_nojoin: HalfT,
-    consensus_distance_join: Frechet,
+    consensus_distance_join: Gumbel,
     consensus_distance_nojoin: Laplace,
     join_prior: f64,
 }
@@ -64,12 +64,12 @@ impl JoinEstimator for BayesianJoinEstimator {
 
         let join_score = self.join_prior.ln()
             + self.target_distance_join.logpdf(target_dist)
-            + self.divergence_join.logpdf(divergence_diff)
-            + self.consensus_distance_join.logpdf(rel_con_dist);
+            + self.divergence_join.logpdf(divergence_diff);
+        //+ self.consensus_distance_join.logpdf(rel_con_dist);
         let nojoin_score = (-self.join_prior).ln_1p()
             + self.target_distance_nojoin.logpdf(target_dist)
-            + self.divergence_nojoin.logpdf(divergence_diff)
-            + self.consensus_distance_nojoin.logpdf(rel_con_dist);
+            + self.divergence_nojoin.logpdf(divergence_diff);
+        //+ self.consensus_distance_nojoin.logpdf(rel_con_dist);
 
         let score_norm = ln_add_exp(join_score, nojoin_score);
         let score = join_score - score_norm;
@@ -191,7 +191,7 @@ impl From<&FrechetQuant> for Frechet {
         }
 
         // Chosen so p2 (middle quantile) is close to median...
-        let power_scale = 1.5;
+        let power_scale = 2.0;
 
         let p1 = 1.0 / E; // -ln(1/e)...
         let p2 = (1.0 / E).powf(1.0 / power_scale);
@@ -207,7 +207,7 @@ impl From<&FrechetQuant> for Frechet {
         let a = power_scale.ln() / (1.0 / relative_q + 1.0).ln();
         let s = (q2 - q1) / (unscaled_fretchet_ppf(p2, a) - unscaled_fretchet_ppf(p1, a));
         // Rather than directly estimating m, we assume the mode of the distribution is at 0...
-        let m = -(a / (1.0 + a)).powf(1.0 / a);
+        let m = -s * (a / (1.0 + a)).powf(1.0 / a);
 
         Frechet::new(a, s, m)
     }
@@ -220,7 +220,11 @@ impl From<&BayesianJoinStatistics> for BayesianJoinEstimator {
             target_distance_nojoin: statistics.unjoinable_target_distance.into(),
             divergence_join: statistics.joinable_divergence.into(),
             divergence_nojoin: statistics.unjoinable_divergence.into(),
-            consensus_distance_join: (&statistics.joinable_consensus).into(),
+            consensus_distance_join: Gumbel::new(
+                0.0,
+                6.0_f64.sqrt() * statistics.joinable_consensus.standard_deviation()
+                    / f64::consts::PI,
+            ),
             consensus_distance_nojoin: statistics.unjoinable_consensus.into(),
             // We take sqrt since we count all pairs, not just neighbors.
             join_prior: (statistics.joinable_target_distance.samples() as f64
@@ -238,7 +242,7 @@ pub struct BayesianJoinStatistics {
     unjoinable_target_distance: MomentEstimator,
     joinable_divergence: MomentEstimator,
     unjoinable_divergence: MomentEstimator,
-    joinable_consensus: FrechetQuant,
+    joinable_consensus: MomentEstimator,
     unjoinable_consensus: MomentEstimator,
 }
 
@@ -261,7 +265,9 @@ impl JoinStatisticsCollector for BayesianJoinStatistics {
             unjoinable_divergence: bayesian_prior
                 .unjoinable_divergence
                 .to_psuedo_count(pseudo_count),
-            joinable_consensus: FrechetQuant::from_prior(&bayesian_prior.joinable_consensus, 1),
+            joinable_consensus: bayesian_prior
+                .joinable_consensus
+                .to_psuedo_count(pseudo_count),
             unjoinable_consensus: bayesian_prior
                 .unjoinable_consensus
                 .to_psuedo_count(pseudo_count),
@@ -280,7 +286,7 @@ impl JoinStatisticsCollector for BayesianJoinStatistics {
             self.joinable_divergence += divergence_diff;
             if matches!(join_type, LinkType::Forward | LinkType::Reverse) {
                 //println!("CDist: {}", rel_con_dist);
-                self.joinable_consensus.update(rel_con_dist);
+                self.joinable_consensus += rel_con_dist;
             }
         } else {
             self.unjoinable_target_distance += target_dist as f64;
@@ -299,7 +305,7 @@ impl JoinStatisticsCollector for BayesianJoinStatistics {
                 + other.unjoinable_target_distance,
             joinable_divergence: self.joinable_divergence + other.joinable_divergence,
             unjoinable_divergence: self.unjoinable_divergence + other.unjoinable_divergence,
-            joinable_consensus: self.joinable_consensus.combine(&other.joinable_consensus),
+            joinable_consensus: self.joinable_consensus + other.joinable_consensus,
             unjoinable_consensus: self.unjoinable_consensus + other.unjoinable_consensus,
         }
     }
