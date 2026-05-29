@@ -322,7 +322,7 @@ fn _interpolated_value_prediction<
     }
 
     let idx = xs.partition_point(|&v| v.as_() < x);
-    if idx > xs.len() {
+    if idx >= xs.len() {
         upper_val
     } else if idx == 0 {
         lower_val
@@ -639,7 +639,6 @@ impl SimpleQuantileEstimatorRepresentation for VectorQuantileEstimator {
 
 pub mod custom_quantile_estimator {
     use super::*;
-    use std::f64::consts::E;
 
     macro_rules! replace_expr {
         ($_t:tt,$sub:expr) => {
@@ -666,8 +665,8 @@ pub mod custom_quantile_estimator {
 
                 pub fn new() -> Self {
                     Self {
-                        values: [0.0; _],
-                        ranks: [0; _],
+                        values: [0.0; Self::COUNT],
+                        ranks: [0; Self::COUNT],
                         observations: 0
                     }
                 }
@@ -703,7 +702,12 @@ pub mod custom_quantile_estimator {
         };
     }
 
-    implement_fixed_quantile_estimator!(FrechetQuant[0.5 / E, 0.25, 1.0 / E, 0.5, 0.5 + 1.0 / 2.0 * E, 0.75]);
+    implement_fixed_quantile_estimator!(LomaxQuant[0.18, 0.36, 0.4752, 0.5904, 0.7952]);
+    impl LomaxQuant {
+        pub const PROB1: f64 = 0.36;
+        pub const PROB2: f64 = 0.59;
+    }
+    implement_fixed_quantile_estimator!(MedianEstimator[0.25, 0.5, 0.75]);
 }
 
 #[cfg(test)]

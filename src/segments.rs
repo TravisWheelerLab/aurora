@@ -1,5 +1,5 @@
 use core::f64;
-use std::{cmp::Ordering, fmt::Debug, iter::Fuse};
+use std::{cmp::Ordering, collections::HashMap, fmt::Debug, iter::Fuse};
 
 use crate::{
     alignment::{Alignment, Strand},
@@ -603,9 +603,11 @@ pub fn assemble_and_link_segments<'a, T: JoinEstimator>(
     query_statistics: &[QueryStatistics<T>],
     score_params: &ScoreParams,
     annotation_args: &AnnotationArgs,
+    query_lengths: &HashMap<usize, usize>,
 ) -> (&'a SegmentedMatrix, SegmentAssemblyGraph) {
     let assembly_graph = SegmentAssemblyGraph::new(
         proximity_group.alignments,
+        query_lengths,
         &initial_segments.segments,
         region_statistics,
         query_statistics,

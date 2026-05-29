@@ -252,8 +252,11 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
             .expect("Unable to write confidences!!!");
     }
 
-    let query_join_statistics =
-        gather_join_statistics(proximity_group.alignments, &args.annotation_args);
+    let query_join_statistics = gather_join_statistics(
+        proximity_group.alignments,
+        &alignment_data.query_lengths,
+        &args.annotation_args,
+    );
 
     NaiveTraceResults {
         target_start: proximity_group.target_start,
@@ -286,6 +289,7 @@ pub fn run_history_trace<T: JoinEstimator, S: JoinStatisticsCollector>(
         &trace_statistics.query_statistics,
         &naive_trace.score_params,
         &args.annotation_args,
+        &alignment_data.query_lengths,
     );
 
     let history = history_viterbi_on_segments(

@@ -188,6 +188,34 @@ pub fn block_length_on_query(b: &Block) -> usize {
     b.query_end.abs_diff(b.query_start) + 1
 }
 
+pub enum ConsensusDistanceNormalization {
+    Max,
+    Min,
+    Sum,
+    WithLength(usize),
+}
+
+pub fn relative_consensus_distance(
+    first_block: &Block,
+    second_block: &Block,
+    mode: ConsensusDistanceNormalization,
+) -> (f64, LinkType) {
+    let (dist, link_type) = block_consensus_distance(first_block, second_block);
+    let div = match mode {
+        ConsensusDistanceNormalization::Sum => {
+            block_length_on_query(first_block) + block_length_on_query(second_block)
+        }
+        ConsensusDistanceNormalization::Max => {
+            block_length_on_query(first_block).max(block_length_on_query(second_block))
+        }
+        ConsensusDistanceNormalization::Min => {
+            block_length_on_query(first_block).min(block_length_on_query(second_block))
+        }
+        ConsensusDistanceNormalization::WithLength(length) => length,
+    };
+    (dist as f64 / div as f64, link_type)
+}
+
 fn is_joinable(
     target_distance: isize,
     consensus_distance: isize,
@@ -231,6 +259,7 @@ fn new_alignment_to_blocks_map(
 
 pub fn gather_join_statistics<T: JoinStatisticsCollector>(
     alignments: &[Alignment],
+    query_lengths: &HashMap<usize, usize>,
     annotation_args: &AnnotationArgs,
 ) -> Vec<(usize, T)> {
     let mut query_ids: Vec<usize> = alignments.iter().map(|a| a.query_id).unique().collect();
@@ -256,6 +285,9 @@ pub fn gather_join_statistics<T: JoinStatisticsCollector>(
 
             gather_join_statistics_single_family(
                 compat_alignments,
+                *query_lengths
+                    .get(&id)
+                    .expect("Query length missing for alignment!"),
                 annotation_args,
                 &mut new_stats,
             );
@@ -268,6 +300,7 @@ pub fn gather_join_statistics<T: JoinStatisticsCollector>(
 
 fn gather_join_statistics_single_family<'a>(
     compatable_alignments: impl Iterator<Item = Block>,
+    consensus_length: usize,
     args: &AnnotationArgs,
     join_stats: &mut impl JoinStatisticsCollector,
 ) {
@@ -293,7 +326,13 @@ fn gather_join_statistics_single_family<'a>(
                         args,
                     );
 
-                    join_stats.add(a_block, b_block, idx + 1 == idx2, joinable);
+                    join_stats.add(
+                        a_block,
+                        b_block,
+                        consensus_length,
+                        idx + 1 == idx2,
+                        joinable,
+                    );
                 })
         })
 }
@@ -301,6 +340,7 @@ fn gather_join_statistics_single_family<'a>(
 fn link_assemblies<T: JoinEstimator>(
     graph: &mut HashMap<(SegmentAndDenseRow, SegmentAndDenseRow), Edge>,
     compatable_blocks: impl Iterator<Item = (usize, usize)>,
+    consensus_length: usize,
     segments: &SegmentedMatrix,
     query_statistics: &QueryStatistics<T>,
     _region_statistics: &RegionStatistics,
@@ -333,7 +373,10 @@ fn link_assemblies<T: JoinEstimator>(
                 min_block_length,
                 args,
             ) {
-                let join_prob = query_statistics.estimator.predict(a_block, b_block, false);
+                let join_prob =
+                    query_statistics
+                        .estimator
+                        .predict(a_block, b_block, consensus_length, false);
 
                 if join_prob >= args.join_likelihood_threshold {
                     let weight = if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
@@ -370,6 +413,7 @@ pub struct SegmentAssemblyGraph {
 impl SegmentAssemblyGraph {
     pub fn new<T: JoinEstimator>(
         alignments: &[Alignment],
+        query_lengths: &HashMap<usize, usize>,
         segments: &SegmentedMatrix,
         region_statistics: &RegionStatistics,
         query_statistics: &[QueryStatistics<T>],
@@ -400,6 +444,9 @@ impl SegmentAssemblyGraph {
                 link_assemblies(
                     &mut link_graph,
                     compat_blocks,
+                    *query_lengths
+                        .get(&id)
+                        .expect("Unable to find query length for alignment!"),
                     segments,
                     &query_statistics[id],
                     region_statistics,

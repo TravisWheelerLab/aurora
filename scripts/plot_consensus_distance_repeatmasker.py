@@ -12,16 +12,28 @@ length_estimate = {}
 sequences = []
 
 
-def get_gap(pstart, pend, qstart, qend, ppos, is_pos, check_valid: bool = True):
+def get_gap(
+    pstart,
+    pend,
+    qstart,
+    qend,
+    qremaining,
+    ppos,
+    is_pos,
+    check_valid: bool = True,
+):
+    c_len = max(qremaining + qend, qremaining + qstart)
     try:
         if is_pos and ppos:
             if check_valid:
                 assert pstart <= qstart <= qend and pstart <= pend <= qend
             gap = qstart - pend
+            gap /= c_len
         elif not is_pos and not ppos:
             if check_valid:
                 assert qstart <= qend <= pend and qstart <= pstart <= pend
             gap = pstart - qend
+            gap /= c_len
         else:
             gap = None
     except AssertionError:
@@ -61,9 +73,11 @@ with open(caf_file, "r") as f:
             if is_pos:
                 qstart = int(tokens[11])
                 qend = int(tokens[12])
+                qremaining = int(tokens[13].strip("()"))
             else:
                 qstart = int(tokens[13])
                 qend = int(tokens[12])
+                qremaining = int(tokens[11].strip("()"))
 
             assert qend >= qstart
             length += qend - qstart
@@ -73,12 +87,16 @@ with open(caf_file, "r") as f:
                 if pname != name:
                     gap = None
                 else:
-                    gap = get_gap(pstart, pend, qstart, qend, ppos, is_pos)
+                    gap = get_gap(pstart, pend, qstart, qend, qremaining, ppos, is_pos)
 
                 if gap is not None:
                     if shared_name not in gap_info:
                         gap_info[shared_name] = []
 
+                    if gap > 2:
+                        print(
+                            f"Gap > 2, Gap Value {gap}: {seq}\n\t {'\n\t'.join(seqs)}"
+                        )
                     gap_info[shared_name].append(gap)
 
             prior = (name, is_pos, qstart, qend)
@@ -106,9 +124,11 @@ for seq in sequences:
     if is_pos:
         qstart = int(tokens[11])
         qend = int(tokens[12])
+        qremaining = int(tokens[13].strip("()"))
     else:
         qstart = int(tokens[13])
         qend = int(tokens[12])
+        qremaining = int(tokens[11].strip("()"))
 
     random_prior = other_priors.get(name, None)
     if random_prior is not None:
@@ -116,7 +136,7 @@ for seq in sequences:
         if pjoin_id == join_id:
             gap = None
         else:
-            gap = get_gap(pstart, pend, qstart, qend, ppos, is_pos, False)
+            gap = get_gap(pstart, pend, qstart, qend, qremaining, ppos, is_pos, False)
 
         target_gap = tstart - p_tstart
 

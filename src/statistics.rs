@@ -135,7 +135,7 @@ impl Distribution for ExponentialEstimator {
     }
 
     fn logcdf(&self, x: f64) -> f64 {
-        self.cdf(x).ln()
+        (-self.logccdf(x).exp()).ln_1p()
     }
 
     fn cdf(&self, x: f64) -> f64 {
@@ -391,6 +391,66 @@ impl Distribution for Gumbel {
 }
 
 #[derive(Debug, Clone)]
+pub struct Lomax {
+    alpha: f64,
+    lambda: f64,
+}
+
+impl Lomax {
+    pub fn new(alpha: f64, lambda: f64) -> Self {
+        Self { alpha, lambda }
+    }
+}
+
+impl ParameterizedDistribution for Lomax {}
+
+impl Default for Lomax {
+    fn default() -> Self {
+        Self::new(1.0, 1.0)
+    }
+}
+
+impl Distribution for Lomax {
+    fn logpdf(&self, x: f64) -> f64 {
+        let a = self.alpha;
+        let y = self.lambda;
+        (a / y).ln() - (a + 1.0) * (1.0 + x / y).ln()
+    }
+
+    fn pdf(&self, x: f64) -> f64 {
+        self.logpdf(x).exp()
+    }
+
+    fn logccdf(&self, x: f64) -> f64 {
+        let a = self.alpha;
+        let y = self.lambda;
+        -a * (1.0 + x / y).ln()
+    }
+
+    fn ccdf(&self, x: f64) -> f64 {
+        self.logccdf(x).exp()
+    }
+
+    fn cdf(&self, x: f64) -> f64 {
+        -(self.logccdf(x).exp_m1())
+    }
+
+    fn logcdf(&self, x: f64) -> f64 {
+        (-self.ccdf(x)).ln_1p()
+    }
+
+    fn ppf(&self, p: f64) -> f64 {
+        let a = self.alpha;
+        let y = self.lambda;
+        y * ((1.0 - p).powf(-1.0 / a) - 1.0)
+    }
+
+    fn support(&self) -> (f64, f64) {
+        (0.0, f64::INFINITY)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Laplace {
     mean: f64,
     scale: f64,
@@ -516,7 +576,7 @@ mod test {
 
     use super::{Exponential, ParameterizedDistribution};
 
-    fn get_dists() -> [Box<dyn TestDistribution>; 6] {
+    fn get_dists() -> [Box<dyn TestDistribution>; 7] {
         [
             as_box(Exponential::unit()),
             as_box(ExponentialEstimator::unit()),
@@ -524,6 +584,7 @@ mod test {
             as_box(Frechet::unit()),
             as_box(Laplace::unit()),
             as_box(Gumbel::unit()),
+            as_box(Lomax::unit()),
         ]
     }
 
@@ -538,6 +599,9 @@ mod test {
         for dist in get_dists() {
             println!("Testing distribution: {:?}", dist);
             let (mut low, mut high) = dist.tsupport();
+
+            assert!(dist.tcdf(low) == 0.0);
+            assert!(dist.tcdf(high) == 1.0);
 
             if high == f64::INFINITY {
                 high = 5.0;
@@ -557,10 +621,5 @@ mod test {
                 assert!(is_close(dist.tppf(dist.tcdf(x)), x));
             }
         }
-    }
-
-    #[test]
-    fn test_exponential_distribution() {
-        let _dist = Exponential::unit();
     }
 }
