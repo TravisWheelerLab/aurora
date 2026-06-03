@@ -4,10 +4,11 @@ use itertools::Itertools;
 
 use crate::{
     alignment::{Alignment, Strand},
-    join_estimation::{JoinEstimator, JoinStatisticsCollector},
+    chunks::ProximityGroup,
+    join_estimation::{JoinEstimator, JoinStatisticsCollector, LinkInfo},
     score_params::ScoreParams,
-    segments::{Block, SegmentedMatrix, SegmentedMatrixView},
-    trace_statistics::{QueryStatistics, RegionStatistics},
+    segments::{Block, InitialSegments, SegmentedMatrix, SegmentedMatrixView},
+    trace_statistics::{calculate_region_statistics, QueryStatistics, RegionStatistics},
     AnnotationArgs,
 };
 
@@ -81,61 +82,13 @@ pub struct Edge {
     pub link_type: LinkType,
 }
 
-fn piecewise_linear_cost(
-    neg_start: f64,
-    pos_start: f64,
-    neg_slope: f64,
-    pos_slope: f64,
-    value: f64,
-) -> f64 {
-    if value < neg_start {
-        (value - neg_start).abs() * neg_slope
-    } else if value > pos_slope {
-        (value - pos_start).abs() * pos_slope
-    } else {
-        0.0
-    }
-}
-
-fn get_link_cost(
-    annotation_args: &AnnotationArgs,
-    score_params: &ScoreParams,
-    consensus_gap: isize,
-    join_prob: f64,
-) -> f64 {
-    // Minimum cost (a query loop)
-    let min_value = score_params.query_loop_score;
-    let value_range = (score_params.query_loop_score - score_params.query_jump_score).abs();
-
-    // Get overlap and gap ranges with free areas incorperated in, otherwise math is not quite right.
-    let overlap_range = ((annotation_args.consensus_join_overlap as f64)
-        - (annotation_args.free_join_consensus_overlap as f64))
-        .abs()
-        .max(1.0);
-    let gap_range = ((annotation_args.consensus_join_distance as f64)
-        - (annotation_args.free_join_consensus_gap as f64))
-        .abs()
-        .max(1.0);
-
-    // Compute slopes....
-    let alpha =
-        -value_range * (annotation_args.join_consensus_overlap_penalty / overlap_range).abs();
-    let beta = -value_range * (annotation_args.join_consensus_gap_penalty / gap_range).abs();
-
+fn get_link_cost(score_params: &ScoreParams, join_prob: f64) -> f64 {
     // Doing this as the expected value over the transition scores...
     let expected_score = join_prob * score_params.query_loop_score
         + (1.0 - join_prob) * score_params.query_jump_score;
 
     // Cost = linear consensus cost + linear target gap cost...
-    min_value
-        /*+ piecewise_linear_cost(
-            -(annotation_args.free_join_consensus_overlap as f64).abs(),
-            (annotation_args.free_join_consensus_gap as f64).abs(),
-            alpha,
-            beta,
-            consensus_gap as f64,
-        )*/
-        + expected_score
+    expected_score
 }
 
 pub fn block_target_distance(first_block: &Block, second_block: &Block) -> isize {
@@ -188,6 +141,7 @@ pub fn block_length_on_query(b: &Block) -> usize {
     b.query_end.abs_diff(b.query_start) + 1
 }
 
+#[allow(dead_code)]
 pub enum ConsensusDistanceNormalization {
     Max,
     Min,
@@ -257,14 +211,31 @@ fn new_alignment_to_blocks_map(
     alignment_block_map
 }
 
+fn calculate_unexplained_bases(
+    segments: SegmentedMatrixView,
+    region_statistics: &RegionStatistics,
+    first_block_segment: usize,
+    second_block_segment: usize,
+    second_block_target_start: usize,
+) -> usize {
+    let ub = region_statistics.unexplained_bases[second_block_segment]
+        .abs_diff(region_statistics.unexplained_bases[first_block_segment])
+        + (second_block_target_start - segments[second_block_segment].start_col);
+    ub
+}
+
 pub fn gather_join_statistics<T: JoinStatisticsCollector>(
-    alignments: &[Alignment],
+    group: &ProximityGroup,
+    initial_segments: &InitialSegments,
     query_lengths: &HashMap<usize, usize>,
     annotation_args: &AnnotationArgs,
 ) -> Vec<(usize, T)> {
+    let alignments = group.alignments;
+
     let mut query_ids: Vec<usize> = alignments.iter().map(|a| a.query_id).unique().collect();
     query_ids.sort();
 
+    let region_stats = calculate_region_statistics(initial_segments);
     let mut query_stats: Vec<(usize, T)> = Vec::with_capacity(query_ids.len());
 
     query_ids
@@ -277,7 +248,14 @@ pub fn gather_join_statistics<T: JoinStatisticsCollector>(
                     .iter()
                     .enumerate()
                     .filter(|&(_, a)| a.query_id == *id)
-                    .map(|(i, a)| Block::from_alignment(a, i, 0.0, 0.0)),
+                    .map(|(i, a)| {
+                        let b = Block::from_alignment(a, group.target_start, i, 0.0, 0.0);
+                        let seg_i = initial_segments
+                            .view_segments()
+                            .partition_point(|v| v.start_col <= b.col_start)
+                            .saturating_sub(1);
+                        (seg_i, b)
+                    }),
             )
         })
         .for_each(|(id, compat_alignments)| {
@@ -288,6 +266,8 @@ pub fn gather_join_statistics<T: JoinStatisticsCollector>(
                 *query_lengths
                     .get(&id)
                     .expect("Query length missing for alignment!"),
+                initial_segments.view_segments(),
+                &region_stats,
                 annotation_args,
                 &mut new_stats,
             );
@@ -298,42 +278,72 @@ pub fn gather_join_statistics<T: JoinStatisticsCollector>(
     query_stats
 }
 
-fn gather_join_statistics_single_family<'a>(
-    compatable_alignments: impl Iterator<Item = Block>,
+fn link_info(
+    first_block: &Block,
+    second_block: &Block,
+    annotation_args: &AnnotationArgs,
+    unexplained_bases: usize,
     consensus_length: usize,
+    neighbors: bool,
+) -> LinkInfo {
+    let (consensus_distance, link_type) = block_consensus_distance(first_block, second_block);
+    let joinable = is_joinable(
+        block_target_distance(first_block, second_block),
+        consensus_distance,
+        link_type,
+        block_length_on_query(first_block).min(block_length_on_query(second_block)),
+        annotation_args,
+    );
+
+    LinkInfo {
+        target_distance: block_target_distance(first_block, second_block),
+        consensus_distance,
+        link_type,
+        consensus_length,
+        unexplained_bases,
+        neighbors,
+        joinable,
+    }
+}
+
+fn gather_join_statistics_single_family<'a>(
+    compatable_alignments: impl Iterator<Item = (usize, Block)>,
+    consensus_length: usize,
+    segments: SegmentedMatrixView,
+    region_statistics: &RegionStatistics,
     args: &AnnotationArgs,
     join_stats: &mut impl JoinStatisticsCollector,
 ) {
     let compatable_blocks = compatable_alignments
-        .sorted_by_key(|a| a.col_start)
+        .sorted_by_key(|(_u_b, a)| a.col_start)
         .collect_vec();
 
     compatable_blocks
         .iter()
         .enumerate()
-        .for_each(|(idx, a_block)| {
-            compatable_blocks[idx + 1..]
-                .iter()
-                .enumerate()
-                .for_each(|(idx2, b_block)| {
-                    let (consensus_distance, link_type) =
-                        block_consensus_distance(a_block, b_block);
-                    let joinable = is_joinable(
-                        block_target_distance(a_block, b_block),
-                        consensus_distance,
-                        link_type,
-                        block_length_on_query(a_block).min(block_length_on_query(b_block)),
-                        args,
-                    );
-
+        .for_each(|(idx, (a_segment_idx, a_block))| {
+            compatable_blocks[idx + 1..].iter().enumerate().for_each(
+                |(idx2, (b_segment_idx, b_block))| {
                     join_stats.add(
                         a_block,
                         b_block,
-                        consensus_length,
-                        idx + 1 == idx2,
-                        joinable,
+                        &link_info(
+                            a_block,
+                            b_block,
+                            args,
+                            calculate_unexplained_bases(
+                                segments,
+                                region_statistics,
+                                *a_segment_idx,
+                                *b_segment_idx,
+                                b_block.col_start,
+                            ),
+                            consensus_length,
+                            idx + 1 == idx2,
+                        ),
                     );
-                })
+                },
+            )
         })
 }
 
@@ -343,7 +353,7 @@ fn link_assemblies<T: JoinEstimator>(
     consensus_length: usize,
     segments: &SegmentedMatrix,
     query_statistics: &QueryStatistics<T>,
-    _region_statistics: &RegionStatistics,
+    region_statistics: &RegionStatistics,
     score_params: &ScoreParams,
     args: &AnnotationArgs,
 ) {
@@ -360,29 +370,31 @@ fn link_assemblies<T: JoinEstimator>(
             let a_block = &segments[a.0].blocks[a.1];
             let b_block = &segments[b.0].blocks[b.1];
 
-            let target_distance = block_target_distance(a_block, b_block);
-            let min_block_length =
-                block_length_on_query(a_block).min(block_length_on_query(b_block));
-
-            let (consensus_distance, link_type) = block_consensus_distance(a_block, b_block);
-
-            if is_joinable(
-                target_distance,
-                consensus_distance,
-                link_type,
-                min_block_length,
+            let link = link_info(
+                a_block,
+                b_block,
                 args,
-            ) {
-                let join_prob =
-                    query_statistics
-                        .estimator
-                        .predict(a_block, b_block, consensus_length, false);
+                calculate_unexplained_bases(
+                    segments,
+                    region_statistics,
+                    a.0,
+                    b.0,
+                    b_block.col_start,
+                ),
+                consensus_length,
+                a.0 + 1 == b.0,
+            );
+
+            if link.joinable {
+                let join_prob = query_statistics
+                    .estimator
+                    .predict(a_block, b_block, &link, false);
 
                 if join_prob >= args.join_likelihood_threshold {
                     let weight = if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
                         score_params.query_loop_score
                     } else {
-                        get_link_cost(args, score_params, consensus_distance, join_prob)
+                        get_link_cost(score_params, join_prob)
                     };
 
                     graph.insert(
@@ -391,7 +403,7 @@ fn link_assemblies<T: JoinEstimator>(
                             weight,
                             first_sparse_row: a.1,
                             second_sparse_row: b.1,
-                            link_type,
+                            link_type: link.link_type,
                         },
                     );
                 }

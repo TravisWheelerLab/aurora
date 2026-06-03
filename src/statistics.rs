@@ -11,7 +11,7 @@ pub fn ln_add_exp(a: f64, b: f64) -> f64 {
 
 // TODO: Support for generic floating types...
 #[allow(dead_code)]
-pub trait Distribution: Clone {
+pub trait Distribution {
     fn pdf(&self, x: f64) -> f64;
     fn cdf(&self, x: f64) -> f64;
     fn ppf(&self, p: f64) -> f64;
@@ -22,7 +22,7 @@ pub trait Distribution: Clone {
     fn logccdf(&self, x: f64) -> f64;
 }
 
-pub trait ParameterizedDistribution: Distribution + Debug + Default {
+pub trait ParameterizedDistribution: Distribution + Debug + Default + Clone {
     fn unit() -> Self {
         Self::default()
     }
@@ -451,40 +451,54 @@ impl Distribution for Lomax {
 }
 
 #[derive(Debug, Clone)]
-pub struct Laplace {
-    mean: f64,
+pub struct AssymetricLaplace {
+    mode: f64,
     scale: f64,
+    mode_quantile: f64,
 }
 
-impl ParameterizedDistribution for Laplace {}
+impl ParameterizedDistribution for AssymetricLaplace {}
 
-impl Laplace {
-    pub fn new(mean: f64, scale: f64) -> Self {
-        Self { mean, scale }
-    }
-
-    pub fn from_moments(mean: f64, standard_deviation: f64) -> Self {
+impl AssymetricLaplace {
+    pub fn new(mode: f64, scale: f64, mode_quantile: f64) -> Self {
         Self {
-            mean,
-            scale: standard_deviation / f64::consts::SQRT_2,
+            mode,
+            scale,
+            mode_quantile,
         }
     }
+
+    pub fn from_exponential_halves(mode: f64, negative_mean: f64, positive_mean: f64) -> Self {
+        Self::new(
+            mode,
+            (negative_mean * positive_mean) / (negative_mean + positive_mean),
+            1.0 / (positive_mean / negative_mean + 1.0),
+        )
+    }
+
+    pub fn symmetric_from_moments(mean: f64, standard_deviation: f64) -> Self {
+        Self::new(mean, standard_deviation / (8.0_f64.sqrt()), 0.5)
+    }
 }
 
-impl Default for Laplace {
+impl Default for AssymetricLaplace {
     fn default() -> Self {
-        Self {
-            mean: 0.0,
-            scale: 1.0,
-        }
+        Self::symmetric_from_moments(0.0, 1.0)
     }
 }
 
-impl Distribution for Laplace {
+impl Distribution for AssymetricLaplace {
     fn logpdf(&self, x: f64) -> f64 {
-        let mu = self.mean;
-        let b = self.scale;
-        (0.5 / b).ln() + -((x - mu).abs() / b)
+        let m = self.mode;
+        let l = self.scale;
+        let p = self.mode_quantile;
+        let exp_comp = if x <= m {
+            ((1.0 - p) / l) * (x - m)
+        } else {
+            -(p / l) * (x - m)
+        };
+
+        ((p * (1.0 - p)) / l).ln() + exp_comp
     }
 
     fn pdf(&self, x: f64) -> f64 {
@@ -492,9 +506,14 @@ impl Distribution for Laplace {
     }
 
     fn cdf(&self, x: f64) -> f64 {
-        let mu = self.mean;
-        let b = self.scale;
-        0.5 + 0.5 * (x - mu).signum() * (1.0 - (-(x - mu).abs() / b).exp())
+        let m = self.mode;
+        let l = self.scale;
+        let p = self.mode_quantile;
+        if x <= m {
+            p * (((1.0 - p) / l) * (x - m)).exp()
+        } else {
+            1.0 - (1.0 - p) * (-(p / l) * (x - m)).exp()
+        }
     }
 
     fn logcdf(&self, x: f64) -> f64 {
@@ -510,10 +529,14 @@ impl Distribution for Laplace {
     }
 
     fn ppf(&self, p: f64) -> f64 {
-        let mu = self.mean;
-        let b = self.scale;
-        let p = p.clamp(0.0, 1.0);
-        mu - b * (p - 0.5).signum() * (1.0 - 2.0 * (p - 0.5).abs()).ln()
+        let m = self.mode;
+        let l = self.scale;
+        let pm = self.mode_quantile;
+        if p <= pm {
+            m + (l / (1.0 - pm)) * (p / pm).ln()
+        } else {
+            m - (l / pm) * ((1.0 - p) / (1.0 - pm)).ln()
+        }
     }
 
     fn support(&self) -> (f64, f64) {
@@ -532,45 +555,11 @@ mod test {
     use super::*;
     use std::fmt::Debug;
 
-    pub trait TestDistribution: Debug {
-        fn tpdf(&self, x: f64) -> f64;
-        fn tcdf(&self, x: f64) -> f64;
-        fn tppf(&self, p: f64) -> f64;
-        fn tsupport(&self) -> (f64, f64);
-        fn tccdf(&self, x: f64) -> f64;
-        fn tlogpdf(&self, x: f64) -> f64;
-        fn tlogcdf(&self, x: f64) -> f64;
-        fn tlogccdf(&self, x: f64) -> f64;
-    }
+    // Add debug trait to allow for printout...
+    pub trait TestDistribution: Distribution + Debug {}
+    impl<T: Distribution + Debug> TestDistribution for T {}
 
-    impl<T: ParameterizedDistribution> TestDistribution for T {
-        fn tpdf(&self, x: f64) -> f64 {
-            self.pdf(x)
-        }
-        fn tcdf(&self, x: f64) -> f64 {
-            self.cdf(x)
-        }
-        fn tppf(&self, p: f64) -> f64 {
-            self.ppf(p)
-        }
-        fn tsupport(&self) -> (f64, f64) {
-            self.support()
-        }
-        fn tccdf(&self, x: f64) -> f64 {
-            self.ccdf(x)
-        }
-        fn tlogpdf(&self, x: f64) -> f64 {
-            self.logpdf(x)
-        }
-        fn tlogcdf(&self, x: f64) -> f64 {
-            self.logcdf(x)
-        }
-        fn tlogccdf(&self, x: f64) -> f64 {
-            self.logccdf(x)
-        }
-    }
-
-    fn as_box<T: ParameterizedDistribution + 'static>(d: T) -> Box<dyn TestDistribution> {
+    fn as_box<T: TestDistribution + 'static>(d: T) -> Box<dyn TestDistribution> {
         Box::new(d)
     }
 
@@ -582,7 +571,7 @@ mod test {
             as_box(ExponentialEstimator::unit()),
             as_box(HalfT::unit()),
             as_box(Frechet::unit()),
-            as_box(Laplace::unit()),
+            as_box(AssymetricLaplace::unit()),
             as_box(Gumbel::unit()),
             as_box(Lomax::unit()),
         ]
@@ -598,10 +587,10 @@ mod test {
     fn basic_distribution_propery_checks() {
         for dist in get_dists() {
             println!("Testing distribution: {:?}", dist);
-            let (mut low, mut high) = dist.tsupport();
+            let (mut low, mut high) = dist.support();
 
-            assert!(dist.tcdf(low) == 0.0);
-            assert!(dist.tcdf(high) == 1.0);
+            assert!(dist.cdf(low) == 0.0);
+            assert!(dist.cdf(high) == 1.0);
 
             if high == f64::INFINITY {
                 high = 5.0;
@@ -613,12 +602,12 @@ mod test {
             for x in linspace(low, high, 100) {
                 // Basic properties...
                 // println!("{x} -> {} vs {}", dist.tpdf(x), dist.tlogpdf(x).exp());
-                assert!(is_close(dist.tpdf(x), dist.tlogpdf(x).exp()));
-                assert!(is_close(dist.tcdf(x), dist.tlogcdf(x).exp()));
-                assert!(is_close(dist.tccdf(x), dist.tlogccdf(x).exp()));
-                assert!(is_close(dist.tccdf(x), 1.0 - dist.tcdf(x)));
+                assert!(is_close(dist.pdf(x), dist.logpdf(x).exp()));
+                assert!(is_close(dist.cdf(x), dist.logcdf(x).exp()));
+                assert!(is_close(dist.ccdf(x), dist.logccdf(x).exp()));
+                assert!(is_close(dist.ccdf(x), 1.0 - dist.cdf(x)));
                 // println!("{x} -> {}", dist.tppf(dist.tcdf(x)));
-                assert!(is_close(dist.tppf(dist.tcdf(x)), x));
+                assert!(is_close(dist.ppf(dist.cdf(x)), x));
             }
         }
     }

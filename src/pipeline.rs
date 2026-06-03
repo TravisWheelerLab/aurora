@@ -253,7 +253,8 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
     }
 
     let query_join_statistics = gather_join_statistics(
-        proximity_group.alignments,
+        proximity_group,
+        &segments,
         &alignment_data.query_lengths,
         &args.annotation_args,
     );

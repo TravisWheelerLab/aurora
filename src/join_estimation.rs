@@ -5,16 +5,13 @@ use std::{
 };
 
 use crate::{
-    assembly::{
-        block_target_distance, relative_consensus_distance, ConsensusDistanceNormalization,
-        LinkType,
-    },
+    assembly::{relative_consensus_distance, ConsensusDistanceNormalization, LinkType},
     p2estimator::{
         custom_quantile_estimator::{LomaxQuant, MedianEstimator},
         QuantileEstimator,
     },
     segments::Block,
-    statistics::{ln_add_exp, Distribution, ExponentialEstimator, HalfT, Laplace, Lomax},
+    statistics::{ln_add_exp, AssymetricLaplace, Distribution, ExponentialEstimator, HalfT, Lomax},
 };
 
 pub trait JoinEstimator: Clone + Default + Debug {
@@ -22,23 +19,28 @@ pub trait JoinEstimator: Clone + Default + Debug {
         &self,
         first_block: &Block,
         second_block: &Block,
-        consensus_length: usize,
+        link_info: &LinkInfo,
         log_space: bool,
     ) -> f64;
+}
+
+pub struct LinkInfo {
+    #[allow(dead_code)]
+    pub target_distance: isize,
+    #[allow(dead_code)]
+    pub consensus_distance: isize,
+    pub link_type: LinkType,
+    pub consensus_length: usize,
+    pub unexplained_bases: usize,
+    pub neighbors: bool,
+    pub joinable: bool,
 }
 
 pub trait JoinStatisticsCollector: Clone + Debug {
     fn new() -> Self;
     fn new_from_prior(bayesian_prior: &Self, pseudo_count: usize) -> Self;
     fn combine(&self, other: &Self) -> Self;
-    fn add(
-        &mut self,
-        first_block: &Block,
-        second_block: &Block,
-        consenus_length: usize,
-        neighbors: bool,
-        joinable: bool,
-    );
+    fn add(&mut self, first_block: &Block, second_block: &Block, link_info: &LinkInfo);
 }
 
 #[derive(Debug, Clone, Default)]
@@ -47,11 +49,8 @@ pub struct BayesianJoinEstimator {
     target_distance_nojoin: ExponentialEstimator,
     divergence_join: HalfT,
     divergence_nojoin: HalfT,
-    consensus_distance_join_pos: ExponentialEstimator,
-    consensus_distance_join_neg: ExponentialEstimator,
-    consensus_norm_pos: f64,
-    consensus_norm_neg: f64,
-    consensus_distance_nojoin: Laplace,
+    consensus_distance_join: AssymetricLaplace,
+    consensus_distance_nojoin: AssymetricLaplace,
     join_prior: f64,
 }
 
@@ -60,54 +59,26 @@ impl JoinEstimator for BayesianJoinEstimator {
         &self,
         first_block: &Block,
         second_block: &Block,
-        consensus_distance: usize,
+        link_info: &LinkInfo,
         log_space: bool,
     ) -> f64 {
-        let target_dist = block_target_distance(first_block, second_block) as f64;
+        let target_dist = link_info.unexplained_bases as f64;
         // Absolute value as t-dist is symmetric and we want to get prob in tail, also, we know the mean is 0...
         let divergence_diff = (second_block.kimura80 - first_block.kimura80).abs();
         let (rel_con_dist, _join_type) = relative_consensus_distance(
             first_block,
             second_block,
-            ConsensusDistanceNormalization::WithLength(consensus_distance),
-        );
-
-        let consensus_join_dist_logpdf = |x: f64| {
-            if x < 0.0 {
-                self.consensus_distance_join_neg.logpdf(x.abs()) + self.consensus_norm_neg.ln()
-            } else {
-                self.consensus_distance_join_pos.logpdf(x.abs()) + self.consensus_norm_pos.ln()
-            }
-        };
-
-        println!("{:#?}", self);
-        println!(
-            "{} {} {}",
-            rel_con_dist,
-            consensus_join_dist_logpdf(rel_con_dist).exp(),
-            self.consensus_distance_nojoin.pdf(rel_con_dist)
-        );
-        println!(
-            "{} {} {}",
-            target_dist,
-            self.target_distance_join.pdf(target_dist),
-            self.target_distance_nojoin.pdf(target_dist)
-        );
-        println!(
-            "{} {} {}",
-            divergence_diff,
-            self.divergence_join.pdf(divergence_diff),
-            self.divergence_nojoin.pdf(divergence_diff)
+            ConsensusDistanceNormalization::WithLength(link_info.consensus_length),
         );
 
         let join_score = self.join_prior.ln()
             + self.target_distance_join.logpdf(target_dist)
-            + self.divergence_join.logpdf(divergence_diff);
-        //+ self.consensus_distance_join.logpdf(rel_con_dist);
+            + self.divergence_join.logpdf(divergence_diff)
+            + self.consensus_distance_join.logpdf(rel_con_dist);
         let nojoin_score = (-self.join_prior).ln_1p()
             + self.target_distance_nojoin.logpdf(target_dist)
-            + self.divergence_nojoin.logpdf(divergence_diff);
-        //+ self.consensus_distance_nojoin.logpdf(rel_con_dist);
+            + self.divergence_nojoin.logpdf(divergence_diff)
+            + self.consensus_distance_nojoin.logpdf(rel_con_dist);
 
         let score_norm = ln_add_exp(join_score, nojoin_score);
         let score = join_score - score_norm;
@@ -215,12 +186,6 @@ impl From<MomentEstimator> for HalfT {
     }
 }
 
-impl From<MomentEstimator> for Laplace {
-    fn from(value: MomentEstimator) -> Self {
-        Self::from_moments(value.mean(), value.standard_deviation())
-    }
-}
-
 impl From<&LomaxQuant> for Lomax {
     fn from(value: &LomaxQuant) -> Self {
         // Using quantile selection trick originally developed for frechet... (quant ratio formula)
@@ -245,22 +210,20 @@ impl From<&MedianEstimator> for ExponentialEstimator {
 
 impl From<&BayesianJoinStatistics> for BayesianJoinEstimator {
     fn from(statistics: &BayesianJoinStatistics) -> Self {
-        let cons_total = (statistics.joinable_consensus_pos.samples()
-            + statistics.joinable_consensus_neg.samples())
-        .max(1);
-        let cons_pos_perc = statistics.joinable_consensus_pos.samples() as f64 / cons_total as f64;
-        let cons_neg_perc = statistics.joinable_consensus_neg.samples() as f64 / cons_total as f64;
-
         Self {
             target_distance_join: statistics.joinable_target_distance.into(),
             target_distance_nojoin: statistics.unjoinable_target_distance.into(),
             divergence_join: statistics.joinable_divergence.into(),
             divergence_nojoin: statistics.unjoinable_divergence.into(),
-            consensus_distance_join_pos: (&statistics.joinable_consensus_pos).into(),
-            consensus_distance_join_neg: (&statistics.joinable_consensus_neg).into(),
-            consensus_norm_pos: 0.5 * cons_pos_perc,
-            consensus_norm_neg: 0.5 * cons_neg_perc,
-            consensus_distance_nojoin: statistics.unjoinable_consensus.into(),
+            consensus_distance_join: AssymetricLaplace::from_exponential_halves(
+                0.0,
+                statistics.joinable_consensus_neg.mean(),
+                statistics.joinable_consensus_pos.mean(),
+            ),
+            consensus_distance_nojoin: AssymetricLaplace::symmetric_from_moments(
+                statistics.unjoinable_consensus.mean(),
+                statistics.unjoinable_consensus.standard_deviation(),
+            ),
             // We take sqrt since we count all pairs, not just neighbors.
             join_prior: (statistics.joinable_target_distance.samples() as f64
                 / (statistics.joinable_target_distance.samples()
@@ -277,8 +240,8 @@ pub struct BayesianJoinStatistics {
     unjoinable_target_distance: MomentEstimator,
     joinable_divergence: MomentEstimator,
     unjoinable_divergence: MomentEstimator,
-    joinable_consensus_pos: MedianEstimator,
-    joinable_consensus_neg: MedianEstimator,
+    joinable_consensus_pos: MomentEstimator,
+    joinable_consensus_neg: MomentEstimator,
     unjoinable_consensus: MomentEstimator,
 }
 
@@ -301,51 +264,45 @@ impl JoinStatisticsCollector for BayesianJoinStatistics {
             unjoinable_divergence: bayesian_prior
                 .unjoinable_divergence
                 .to_psuedo_count(pseudo_count),
-            joinable_consensus_pos: MedianEstimator::from_prior(
-                &bayesian_prior.joinable_consensus_pos,
-                pseudo_count,
-            ),
-            joinable_consensus_neg: MedianEstimator::from_prior(
-                &bayesian_prior.joinable_consensus_neg,
-                pseudo_count,
-            ),
+            joinable_consensus_pos: bayesian_prior
+                .joinable_consensus_pos
+                .to_psuedo_count(pseudo_count),
+            joinable_consensus_neg: bayesian_prior
+                .joinable_consensus_neg
+                .to_psuedo_count(pseudo_count),
             unjoinable_consensus: bayesian_prior
                 .unjoinable_consensus
                 .to_psuedo_count(pseudo_count),
         }
     }
 
-    fn add(
-        &mut self,
-        first_block: &Block,
-        second_block: &Block,
-        consensus_length: usize,
-        neighbors: bool,
-        joinable: bool,
-    ) {
-        let target_dist = block_target_distance(first_block, second_block).abs() as usize;
+    fn add(&mut self, first_block: &Block, second_block: &Block, link_info: &LinkInfo) {
+        if !link_info.neighbors {
+            return;
+        }
+
+        let target_dist = link_info.unexplained_bases;
         let divergence_diff = (second_block.kimura80 - first_block.kimura80).abs();
         let (rel_con_dist, join_type) = relative_consensus_distance(
             first_block,
             second_block,
-            ConsensusDistanceNormalization::WithLength(consensus_length),
+            ConsensusDistanceNormalization::WithLength(link_info.consensus_length),
         );
 
-        if joinable {
+        if link_info.joinable {
             self.joinable_target_distance += target_dist as f64;
             self.joinable_divergence += divergence_diff;
-            if neighbors && matches!(join_type, LinkType::Forward | LinkType::Reverse) {
-                //println!("CDist: {}", rel_con_dist);
+            if matches!(join_type, LinkType::Forward | LinkType::Reverse) {
                 if rel_con_dist >= 0.0 {
-                    self.joinable_consensus_pos.update(rel_con_dist.abs());
+                    self.joinable_consensus_pos += rel_con_dist.abs();
                 } else {
-                    self.joinable_consensus_neg.update(rel_con_dist.abs());
+                    self.joinable_consensus_neg += rel_con_dist.abs();
                 }
             }
         } else {
             self.unjoinable_target_distance += target_dist as f64;
             self.unjoinable_divergence += divergence_diff;
-            if neighbors && matches!(join_type, LinkType::Forward | LinkType::Reverse) {
+            if matches!(join_type, LinkType::Forward | LinkType::Reverse) {
                 self.unjoinable_consensus += rel_con_dist;
             }
         }
@@ -359,12 +316,8 @@ impl JoinStatisticsCollector for BayesianJoinStatistics {
                 + other.unjoinable_target_distance,
             joinable_divergence: self.joinable_divergence + other.joinable_divergence,
             unjoinable_divergence: self.unjoinable_divergence + other.unjoinable_divergence,
-            joinable_consensus_pos: self
-                .joinable_consensus_pos
-                .combine(&other.joinable_consensus_pos),
-            joinable_consensus_neg: self
-                .joinable_consensus_neg
-                .combine(&other.joinable_consensus_neg),
+            joinable_consensus_pos: self.joinable_consensus_pos + other.joinable_consensus_pos,
+            joinable_consensus_neg: self.joinable_consensus_neg + other.joinable_consensus_neg,
             unjoinable_consensus: self.unjoinable_consensus + other.unjoinable_consensus,
         }
     }

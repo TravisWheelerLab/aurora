@@ -100,14 +100,20 @@ impl Block {
         (self.query_id, self.row_idx)
     }
 
-    pub fn from_alignment(alignment: &Alignment, row: usize, confidence: f64, score: f64) -> Self {
+    pub fn from_alignment(
+        alignment: &Alignment,
+        group_start: usize,
+        row: usize,
+        confidence: f64,
+        score: f64,
+    ) -> Self {
         Self {
             row_idx: row,
             block_type: BlockType::Alignment,
             strand: alignment.strand,
             query_id: Some(alignment.query_id),
-            col_start: alignment.target_start,
-            col_end: alignment.target_end,
+            col_start: alignment.target_start.saturating_sub(group_start),
+            col_end: alignment.target_end.saturating_sub(group_start),
             query_start: alignment.query_start,
             query_end: alignment.query_end,
             avg_confidence: confidence,

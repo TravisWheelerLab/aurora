@@ -170,7 +170,7 @@ pub struct AnnotationArgs {
 
     /// The maximum seperation or overlap in nucleotides on both target and consensus
     /// for a join to be allowed between inverted alignments.
-    #[arg(long = "inversion-distance", default_value = "50", value_name = "n")]
+    #[arg(long = "inversion-distance", default_value = "200", value_name = "n")]
     pub inversion_distance: isize,
 
     /// The size of the window looked at to determine a single alignment score in nucleotides.
@@ -223,36 +223,6 @@ pub struct AnnotationArgs {
     /// Set to 0 or greater to disable.
     #[arg(long = "min-history-score", default_value = "-500.0", value_name = "f")]
     pub min_relative_history_score: f64,
-
-    /// The amount of overlap between two joinable sequences in the consensus
-    /// before a penalty starts being applied to the join.
-    #[arg(long = "free-join-overlap", default_value = "4", value_name = "n")]
-    pub free_join_consensus_overlap: usize,
-
-    /// The amount of gap between two joinable sequences
-    /// before a penalty starts being applied to the join.
-    #[arg(long = "free-join-gap", default_value = "10", value_name = "n")]
-    pub free_join_consensus_gap: usize,
-
-    /// The amount of penalty to apply to a join at the maximum allowed consensus overlap
-    /// A value of 1 means to apply a penalty equal to a query jump.
-    /// The cost grows linearly to this value as the overlap increases.
-    #[arg(
-        long = "consensus-overlap-penalty",
-        default_value = "1.0",
-        value_name = "f"
-    )]
-    pub join_consensus_overlap_penalty: f64,
-
-    /// The amount of penalty to apply to a join at the maximum allowed consensus gap
-    /// A value of 1 means to apply a penalty equal to a query jump.
-    /// The cost grows linearly to this value as the gap increases.
-    #[arg(
-        long = "consensus-gap-penalty",
-        default_value = "0.5",
-        value_name = "f"
-    )]
-    pub join_consensus_gap_penalty: f64,
 }
 
 #[derive(Args, Debug, Clone, Default)]

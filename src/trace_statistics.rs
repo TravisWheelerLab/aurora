@@ -6,7 +6,7 @@ use crate::{
     alignment::AlignmentData,
     join_estimation::{JoinEstimator, JoinStatisticsCollector},
     pipeline::NaiveTraceResults,
-    segments::Segment,
+    segments::{InitialSegments, Segment},
 };
 
 #[derive(Debug)]
@@ -35,6 +35,33 @@ pub enum OccuranceCountingMode {
     Segments,
     #[allow(dead_code)]
     Trace,
+}
+
+pub fn calculate_region_statistics(segments: &InitialSegments) -> RegionStatistics {
+    let mut region_stat = RegionStatistics {
+        total_bases: 0,
+        unexplained_bases: Vec::with_capacity(segments.len()),
+    };
+
+    let mut unexplained_bases_up_to: usize = 0;
+    let mut prior_segment: Option<&Segment> = None;
+
+    for seg in segments.view_segments() {
+        if let Some(prior_segment) = prior_segment {
+            // If a skip block was the prior block, add it's bases as unexplained.
+            if prior_segment.blocks.len() == 1 && prior_segment.blocks[0].row_idx == 0 {
+                unexplained_bases_up_to += seg.end_col - seg.start_col + 1;
+            }
+            unexplained_bases_up_to += seg.start_col - prior_segment.end_col - 1;
+            region_stat.total_bases += seg.start_col - prior_segment.end_col - 1;
+        }
+        region_stat.total_bases += seg.end_col - seg.start_col + 1;
+        region_stat.unexplained_bases.push(unexplained_bases_up_to);
+
+        prior_segment = Some(seg);
+    }
+
+    region_stat
 }
 
 pub fn trace_statistics<S: JoinStatisticsCollector + Debug + Into<E>, E: JoinEstimator>(
@@ -117,30 +144,7 @@ pub fn trace_statistics<S: JoinStatisticsCollector + Debug + Into<E>, E: JoinEst
             }
         }
 
-        let mut region_stat = RegionStatistics {
-            total_bases: 0,
-            unexplained_bases: Vec::with_capacity(trace_results.segments.len()),
-        };
-
-        let mut unexplained_bases_up_to: usize = 0;
-        let mut prior_segment: Option<&Segment> = None;
-
-        for seg in trace_results.segments.view_segments() {
-            if let Some(prior_segment) = prior_segment {
-                // If a skip block was the prior block, add it's bases as unexplained.
-                if prior_segment.blocks.len() == 1 && prior_segment.blocks[0].row_idx == 0 {
-                    unexplained_bases_up_to += seg.end_col - seg.start_col + 1;
-                }
-                unexplained_bases_up_to += seg.start_col - prior_segment.end_col - 1;
-                region_stat.total_bases += seg.start_col - prior_segment.end_col - 1;
-            }
-            region_stat.total_bases += seg.end_col - seg.start_col + 1;
-            region_stat.unexplained_bases.push(unexplained_bases_up_to);
-
-            prior_segment = Some(seg);
-        }
-
-        all_region_stats.push(region_stat);
+        all_region_stats.push(calculate_region_statistics(&trace_results.segments));
     }
 
     // Calculate join statistics for all families using combined prior as a starting point...
