@@ -20,28 +20,16 @@ struct InversionInfo {
     pub normal_joins: usize,
 }
 
-fn write_table<const N: usize, A: std::fmt::Display, B: std::fmt::Display>(
+fn write_tsv<const N: usize, A: std::fmt::Display, B: std::fmt::Display>(
     writer: &mut impl Write,
     header: &[A; N],
     data: &[[B; N]],
 ) -> std::io::Result<()> {
-    writeln!(writer, "<table>\n<thead>")?;
-
-    for heading in header.iter() {
-        writeln!(writer, "<th>{}</th>", heading)?;
-    }
-
-    writeln!(writer, "</thead>\n<tbody>")?;
+    writeln!(writer, "{}", header.iter().join("\t"))?;
 
     for row in data.iter() {
-        write!(writer, "<tr>")?;
-        for entry in row.iter() {
-            write!(writer, "<td>{}</td>", entry)?;
-        }
-        writeln!(writer, "</tr>")?;
+        writeln!(writer, "{}", row.iter().join("\t"))?;
     }
-
-    writeln!(writer, "</tbody>\n</table>")?;
 
     Ok(())
 }
@@ -54,13 +42,13 @@ fn write_statistics_table_page<const N: usize, A: std::fmt::Display, B: std::fmt
 ) -> std::io::Result<()> {
     let mut tmp_writer = Vec::<u8>::new();
 
-    write_table(&mut tmp_writer, header, data)?;
+    write_tsv(&mut tmp_writer, header, data)?;
 
     let table_page = TABLE_HTML
         .replace("PAGE_TITLE", title)
         .replace("SODA_TARGET", SODA_JS)
         .replace(
-            "TABLE_TARGET",
+            "TSV_TARGET",
             str::from_utf8(&tmp_writer).expect("UTF8 decoding failed!"),
         );
 
@@ -101,11 +89,11 @@ pub fn write_family_statistics(
         stats_writer,
         "Family Statistics",
         &[
-            "Family",
-            "Occurrences",
-            "Coverage",
-            "Kimura80 Boxplot",
-            "Kimura80 KDE",
+            "Family_string",
+            "Occurrences_int",
+            "Coverage_int",
+            "Kimura80_Boxplot_boxplot",
+            "Kimura80_KDE_violin",
         ],
         &family_stats
             .iter()
@@ -115,14 +103,8 @@ pub fn write_family_statistics(
                     k.to_string(),
                     v.occurrences.to_string(),
                     v.coverage.to_string(),
-                    format!(
-                        "<figure class=\"boxplot\" data-samples=\"{}\"></figure>",
-                        v.kimura80_values.0.iter().join(",")
-                    ),
-                    format!(
-                        "<figure class=\"violin\" data-samples=\"{}\"></figure>",
-                        v.kimura80_values.0.iter().join(",")
-                    ),
+                    v.kimura80_values.0.iter().join(":"),
+                    v.kimura80_values.0.iter().join(":"),
                 ]
             })
             .collect_vec(),
@@ -165,13 +147,13 @@ pub fn write_inversion_statistics(
     write_statistics_table_page(
         stats_writer,
         "Inversion Statistics",
-        &["Region", "Inversions", "Normal Joins"],
+        &["Region_region", "Inversions_int", "Normal_Joins_int"],
         &inversion_stats
             .iter()
             .sorted_by(|v1, v2| v2.1.cmp(v1.1))
             .map(|(k, v)| {
                 [
-                    format!("<a href=\"{}/index.html\">{}</a>", k, k),
+                    k.to_string(),
                     v.inversions.to_string(),
                     v.normal_joins.to_string(),
                 ]

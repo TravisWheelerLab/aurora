@@ -357,6 +357,7 @@ fn link_assemblies<T: JoinEstimator>(
     score_params: &ScoreParams,
     args: &AnnotationArgs,
 ) {
+    println!("{:#?}", query_statistics);
     // this relies on the alignments being sorted by target start
     let compatable_blocks = compatable_blocks.sorted().collect_vec();
 

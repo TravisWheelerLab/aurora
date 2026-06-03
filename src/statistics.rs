@@ -469,11 +469,9 @@ impl AssymetricLaplace {
     }
 
     pub fn from_exponential_halves(mode: f64, negative_mean: f64, positive_mean: f64) -> Self {
-        Self::new(
-            mode,
-            (negative_mean * positive_mean) / (negative_mean + positive_mean),
-            1.0 / (positive_mean / negative_mean + 1.0),
-        )
+        let nm = negative_mean.max(1e-8);
+        let pm = positive_mean.max(1e-8);
+        Self::new(mode, (nm * pm) / (nm + pm), 1.0 / (pm / nm + 1.0))
     }
 
     pub fn symmetric_from_moments(mean: f64, standard_deviation: f64) -> Self {

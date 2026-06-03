@@ -6,10 +6,7 @@ use std::{
 
 use crate::{
     assembly::{relative_consensus_distance, ConsensusDistanceNormalization, LinkType},
-    p2estimator::{
-        custom_quantile_estimator::{LomaxQuant, MedianEstimator},
-        QuantileEstimator,
-    },
+    p2estimator::custom_quantile_estimator::{LomaxQuant, MedianEstimator},
     segments::Block,
     statistics::{ln_add_exp, AssymetricLaplace, Distribution, ExponentialEstimator, HalfT, Lomax},
 };
@@ -210,11 +207,18 @@ impl From<&MedianEstimator> for ExponentialEstimator {
 
 impl From<&BayesianJoinStatistics> for BayesianJoinEstimator {
     fn from(statistics: &BayesianJoinStatistics) -> Self {
+        println!("{:#?}", statistics);
         Self {
             target_distance_join: statistics.joinable_target_distance.into(),
             target_distance_nojoin: statistics.unjoinable_target_distance.into(),
             divergence_join: statistics.joinable_divergence.into(),
-            divergence_nojoin: statistics.unjoinable_divergence.into(),
+            divergence_nojoin: HalfT::from_sample_mean(
+                statistics
+                    .unjoinable_divergence
+                    .mean()
+                    .max(statistics.joinable_divergence.mean()),
+                statistics.unjoinable_divergence.samples(),
+            ),
             consensus_distance_join: AssymetricLaplace::from_exponential_halves(
                 0.0,
                 statistics.joinable_consensus_neg.mean(),
@@ -277,10 +281,6 @@ impl JoinStatisticsCollector for BayesianJoinStatistics {
     }
 
     fn add(&mut self, first_block: &Block, second_block: &Block, link_info: &LinkInfo) {
-        if !link_info.neighbors {
-            return;
-        }
-
         let target_dist = link_info.unexplained_bases;
         let divergence_diff = (second_block.kimura80 - first_block.kimura80).abs();
         let (rel_con_dist, join_type) = relative_consensus_distance(

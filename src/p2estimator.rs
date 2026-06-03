@@ -1,4 +1,8 @@
-use std::cmp::Ordering;
+use std::{
+    cmp::Ordering,
+    ops::{Add, AddAssign},
+    usize,
+};
 
 use crate::statistics::Distribution;
 use itertools::Itertools;
@@ -8,14 +12,14 @@ use itertools::Itertools;
 //
 // We replace the P2 interpolation with PCHIP instead (See paper A Method for Constructing Local Monotone Piecewise Cubic Interpolants by F. N. Fritsch and J. Butland, or https://doi.org/10.1137/0905021)
 
-struct QuantileEstimatorData<'a> {
+pub struct QuantileEstimatorData<'a> {
     ranks: &'a [usize],
     values: &'a [f64],
     targets: &'a [f64],
     observations: &'a usize,
 }
 
-struct MutableQuantileEstimatorData<'a> {
+pub struct MutableQuantileEstimatorData<'a> {
     ranks: &'a mut [usize],
     values: &'a mut [f64],
     targets: &'a [f64],
@@ -342,40 +346,20 @@ fn _interpolated_value_prediction<
     }
 }
 
-pub trait QuantileEstimator: Distribution {
-    fn from_prior(prior: &Self, count: usize) -> Self;
-    fn update(&mut self, sample: f64);
-    fn update_all(&mut self, samples: &[f64]) {
-        for &s in samples.iter() {
-            self.update(s);
-        }
-    }
-    fn combine(&self, other: &Self) -> Self;
-    #[allow(dead_code)]
-    fn samples(&self) -> usize;
-}
+#[derive(Clone)]
+pub struct QuantileEstimator<T: QuantileEstimatorRepresentation>(T);
 
-trait SimpleQuantileEstimatorRepresentation: Clone {
-    fn new_like(other: &Self) -> Self;
-    fn _data(&self) -> QuantileEstimatorData<'_>;
-    fn _mut_data(&mut self) -> MutableQuantileEstimatorData<'_>;
-    fn _is_initialized(&self) -> bool {
-        let data = self._data();
-        *data.observations >= data.ranks.len()
-    }
-}
-
-impl<Q: SimpleQuantileEstimatorRepresentation> QuantileEstimator for Q {
-    fn samples(&self) -> usize {
-        *self._data().observations
+impl<T: QuantileEstimatorRepresentation> QuantileEstimator<T> {
+    pub fn samples(&self) -> usize {
+        *self.0._data().observations
     }
 
-    fn from_prior(prior: &Self, count_per_entry: usize) -> Self {
-        let prior_data = prior._data();
-        let mut new_self = Self::new_like(prior);
-        let new_data = new_self._mut_data();
+    pub fn to_psuedo_count(&self, count: usize) -> Self {
+        let prior_data = self.0._data();
+        let mut new_self = Self(T::new_like(&self.0));
+        let new_data = new_self.0._mut_data();
 
-        let new_observations = count_per_entry.max(1) * prior_data.ranks.len();
+        let new_observations = count.max(1) * prior_data.ranks.len();
 
         for i in 0..new_data.targets.len() {
             let closest_rank = ((new_data.targets[i] * (new_observations - 1) as f64) as usize)
@@ -385,15 +369,41 @@ impl<Q: SimpleQuantileEstimatorRepresentation> QuantileEstimator for Q {
                 );
 
             new_data.ranks[i] = closest_rank;
-            new_data.values[i] = prior.ppf(closest_rank as f64 / (new_observations - 1) as f64)
+            new_data.values[i] = self.ppf(closest_rank as f64 / (new_observations - 1) as f64)
         }
         *new_data.observations = new_observations;
 
         new_self
     }
+}
 
-    fn update(&mut self, sample: f64) {
-        let data = self._mut_data();
+impl QuantileEstimator<VectorQuantileRepresentation> {
+    pub fn new_from_slice(targets: &[f64]) -> Self {
+        Self(VectorQuantileRepresentation::new(targets))
+    }
+}
+
+impl<const N: usize> QuantileEstimator<ArrayQuantileRepresentation<N>> {
+    pub fn new_from_array(targets: &[f64; N]) -> Self {
+        Self(ArrayQuantileRepresentation::<N>::new(targets))
+    }
+}
+
+impl<T: QuantileEstimatorRepresentation + Default> Default for QuantileEstimator<T> {
+    fn default() -> Self {
+        Self(T::default())
+    }
+}
+
+impl<T: QuantileEstimatorRepresentation + Default> QuantileEstimator<T> {
+    fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl<T: QuantileEstimatorRepresentation> AddAssign<f64> for QuantileEstimator<T> {
+    fn add_assign(&mut self, sample: f64) {
+        let data = self.0._mut_data();
 
         match (*data.observations + 1).cmp(&data.values.len()) {
             Ordering::Less => {
@@ -413,36 +423,48 @@ impl<Q: SimpleQuantileEstimatorRepresentation> QuantileEstimator for Q {
             }
         }
     }
+}
 
-    fn combine(&self, other: &Self) -> Self {
-        match (self._is_initialized(), other._is_initialized()) {
+impl<T: QuantileEstimatorRepresentation> AddAssign<&[f64]> for QuantileEstimator<T> {
+    fn add_assign(&mut self, samples: &[f64]) {
+        for &s in samples.iter() {
+            *self += s;
+        }
+    }
+}
+
+impl<T: QuantileEstimatorRepresentation> Add<QuantileEstimator<T>> for QuantileEstimator<T> {
+    type Output = QuantileEstimator<T>;
+
+    fn add(self, rhs: QuantileEstimator<T>) -> Self::Output {
+        match (self.0._is_initialized(), rhs.0._is_initialized()) {
             (true, true) => {
-                let mut new_quant_est = Self::new_like(&self);
+                let mut new_quant_est = Self(T::new_like(&self.0));
 
-                _merge_estimators(self._data(), other._data(), new_quant_est._mut_data());
+                _merge_estimators(self.0._data(), rhs.0._data(), new_quant_est.0._mut_data());
 
                 new_quant_est
             }
             (true, false) | (false, false) => {
-                let other_data = other._data();
+                let other_data = rhs.0._data();
                 let mut new_quant_est = self.clone();
-                new_quant_est.update_all(&other_data.values[..*other_data.observations]);
+                new_quant_est += &other_data.values[..*other_data.observations];
                 new_quant_est
             }
             (false, true) => {
-                let self_data = self._data();
-                let mut new_quant_est = other.clone();
-                new_quant_est.update_all(&self_data.values[..*self_data.observations]);
+                let self_data = self.0._data();
+                let mut new_quant_est = rhs.clone();
+                new_quant_est += &self_data.values[..*self_data.observations];
                 new_quant_est
             }
         }
     }
 }
 
-impl<Q: SimpleQuantileEstimatorRepresentation> Distribution for Q {
+impl<T: QuantileEstimatorRepresentation> Distribution for QuantileEstimator<T> {
     fn cdf(&self, x: f64) -> f64 {
-        let data = self._data();
-        if self._is_initialized() {
+        let data = self.0._data();
+        if self.0._is_initialized() {
             _interpolated_value_prediction(
                 data.values,
                 data.ranks,
@@ -482,13 +504,13 @@ impl<Q: SimpleQuantileEstimatorRepresentation> Distribution for Q {
     }
 
     fn ppf(&self, p: f64) -> f64 {
-        let data = self._data();
+        let data = self.0._data();
         let est_rank = p.clamp(0.0, 1.0) * (*data.observations - 1) as f64;
 
-        let data = self._data();
+        let data = self.0._data();
         let (min_val, max_val) = self.support();
 
-        if self._is_initialized() {
+        if self.0._is_initialized() {
             _interpolated_value_prediction(
                 data.ranks,
                 data.values,
@@ -527,9 +549,9 @@ impl<Q: SimpleQuantileEstimatorRepresentation> Distribution for Q {
     }
 
     fn support(&self) -> (f64, f64) {
-        let data = self._data();
+        let data = self.0._data();
 
-        if self._is_initialized() {
+        if self.0._is_initialized() {
             (
                 *data.values.first().unwrap_or(&f64::NEG_INFINITY),
                 *data.values.last().unwrap_or(&f64::INFINITY),
@@ -545,16 +567,26 @@ impl<Q: SimpleQuantileEstimatorRepresentation> Distribution for Q {
     }
 }
 
+pub trait QuantileEstimatorRepresentation: Clone {
+    fn new_like(other: &Self) -> Self;
+    fn _data(&self) -> QuantileEstimatorData<'_>;
+    fn _mut_data(&mut self) -> MutableQuantileEstimatorData<'_>;
+    fn _is_initialized(&self) -> bool {
+        let data = self._data();
+        *data.observations >= data.ranks.len()
+    }
+}
+
 #[derive(Clone, Debug)]
-pub struct FixedSizeQuantileEstimator<const N: usize> {
+pub struct ArrayQuantileRepresentation<const N: usize> {
     values: [f64; N],
     ranks: [usize; N],
     targets: [f64; N],
     observations: usize,
 }
 
-impl<const N: usize> FixedSizeQuantileEstimator<N> {
-    pub fn new(targets: &[f64; N]) -> Self {
+impl<const N: usize> ArrayQuantileRepresentation<N> {
+    fn new(targets: &[f64; N]) -> Self {
         assert!(
             targets.is_sorted() && targets.first() == Some(&0.0) && targets.last() == Some(&1.0)
         );
@@ -567,7 +599,7 @@ impl<const N: usize> FixedSizeQuantileEstimator<N> {
     }
 }
 
-impl<const N: usize> SimpleQuantileEstimatorRepresentation for FixedSizeQuantileEstimator<N> {
+impl<const N: usize> QuantileEstimatorRepresentation for ArrayQuantileRepresentation<N> {
     fn new_like(other: &Self) -> Self {
         Self::new(&other.targets)
     }
@@ -592,15 +624,15 @@ impl<const N: usize> SimpleQuantileEstimatorRepresentation for FixedSizeQuantile
 }
 
 #[derive(Clone, Debug)]
-pub struct VectorQuantileEstimator {
+pub struct VectorQuantileRepresentation {
     values: Vec<f64>,
     ranks: Vec<usize>,
     targets: Vec<f64>,
     observations: usize,
 }
 
-impl VectorQuantileEstimator {
-    pub fn new(targets: &[f64]) -> Self {
+impl VectorQuantileRepresentation {
+    fn new(targets: &[f64]) -> Self {
         assert!(
             targets.is_sorted() && targets.first() == Some(&0.0) && targets.last() == Some(&1.0)
         );
@@ -613,7 +645,7 @@ impl VectorQuantileEstimator {
     }
 }
 
-impl SimpleQuantileEstimatorRepresentation for VectorQuantileEstimator {
+impl QuantileEstimatorRepresentation for VectorQuantileRepresentation {
     fn new_like(other: &Self) -> Self {
         Self::new(&other.targets)
     }
@@ -651,15 +683,15 @@ pub mod custom_quantile_estimator {
     }
 
     macro_rules! implement_fixed_quantile_estimator {
-        ($name:ident[$($val:expr),+]) => {
+        ($name:ident, $repr_name:ident, [$($val:expr), +]) => {
             #[derive(Clone, Debug)]
-            pub struct $name {
+            pub struct $repr_name {
                 values: [f64; Self::COUNT],
                 ranks: [usize; Self::COUNT],
                 observations: usize,
             }
 
-            impl $name {
+            impl $repr_name {
                 const TARGETS: [f64; count_exprs!($($val),+) + 2] = [0.0, $($val),+, 1.0];
                 const COUNT: usize = Self::TARGETS.len();
 
@@ -672,13 +704,13 @@ pub mod custom_quantile_estimator {
                 }
             }
 
-            impl Default for $name {
+            impl Default for $repr_name {
                 fn default() -> Self {
                     Self::new()
                 }
             }
 
-            impl SimpleQuantileEstimatorRepresentation for $name {
+            impl QuantileEstimatorRepresentation for $repr_name {
                 fn new_like(_other: &Self) -> Self {
                     Self::default()
                 }
@@ -699,21 +731,27 @@ pub mod custom_quantile_estimator {
                     }
                 }
             }
+
+            pub type $name = QuantileEstimator<$repr_name>;
         };
     }
 
-    implement_fixed_quantile_estimator!(LomaxQuant[0.18, 0.36, 0.4752, 0.5904, 0.7952]);
+    implement_fixed_quantile_estimator!(
+        LomaxQuant,
+        LomaxQuantRepr,
+        [0.18, 0.36, 0.4752, 0.5904, 0.7952]
+    );
     impl LomaxQuant {
         pub const PROB1: f64 = 0.36;
         pub const PROB2: f64 = 0.59;
     }
-    implement_fixed_quantile_estimator!(MedianEstimator[0.25, 0.5, 0.75]);
+    implement_fixed_quantile_estimator!(MedianEstimator, MedianEstimatorRepr, [0.25, 0.5, 0.75]);
 }
 
 #[cfg(test)]
 mod test {
     use crate::{
-        p2estimator::{FixedSizeQuantileEstimator, QuantileEstimator, VectorQuantileEstimator},
+        p2estimator::QuantileEstimator,
         statistics::{linspace, Distribution, Exponential},
     };
     use itertools::Itertools;
@@ -733,14 +771,13 @@ mod test {
     fn quantiles_on_exponential_dist() {
         let expon = Exponential::new(1.0);
         let mut estimator =
-            FixedSizeQuantileEstimator::new(&[0.0, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
+            QuantileEstimator::new_from_array(&[0.0, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
 
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(12345654321);
 
         for _ in 0..10_000 {
             let sample = expon.ppf(rng.random());
-
-            estimator.update(sample);
+            estimator += sample;
         }
 
         assert!(estimator.samples() == 10_000);
@@ -771,19 +808,19 @@ mod test {
     fn test_quantile_merging() {
         let expon = Exponential::new(1.0);
         let mut merged_estimator =
-            VectorQuantileEstimator::new(&linspace(0.0, 1.0, 10).collect_vec());
+            QuantileEstimator::new_from_slice(&linspace(0.0, 1.0, 10).collect_vec());
 
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(12345654321);
 
         for _ in 0..100 {
             let targets: Vec<f64> = linspace(0.0, 1.0, rng.random_range(5..15)).collect();
-            let mut estimator = VectorQuantileEstimator::new(&targets);
+            let mut estimator = QuantileEstimator::new_from_slice(&targets);
 
             for _ in 0..100 {
-                estimator.update(expon.ppf(rng.random()));
+                estimator += expon.ppf(rng.random());
             }
 
-            merged_estimator = merged_estimator.combine(&estimator);
+            merged_estimator = merged_estimator + estimator;
         }
 
         assert!(merged_estimator.samples() == 10_000);

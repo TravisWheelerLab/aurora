@@ -2,16 +2,18 @@
 <html>
     <head>
         <title>PAGE_TITLE</title>
-        <link rel="icon" type="image/x-icon" href="icon.svg"/>
+        <link rel="icon" type="image/x-icon" href="icon.svg" />
         <style>
             table {
-                border-collapse: collapse; 
+                border-collapse: collapse;
                 border: 2px solid rgb(140 140 140);
-                font-family: sans-serif; font-size: 0.8rem; 
-                letter-spacing: 1px; 
+                font-family: sans-serif;
+                font-size: 0.8rem;
+                letter-spacing: 1px;
             }
-            th, td { 
-                border: 1px solid rgb(160 160 160); 
+            th,
+            td {
+                border: 1px solid rgb(160 160 160);
                 padding: 8px 10px;
             }
 
@@ -35,210 +37,454 @@
                 margin: 0;
             }
         </style>
+        <script id="table-data" type="text/tab-separated-values">
+            TSV_TARGET
+        </script>
         <script type="module">
             SODA_TARGET;
-            
+
+            let ELEMS_PER_PAGE = 50;
+
             let d3 = soda.internalD3;
 
-            d3.selectAll("table").each(function(d, i) {
-                let header = d3.select(this).select("thead");
-                let body = d3.select(this).select("tbody");
+            let tsv = d3.tsvParse(
+                d3.select("#table-data").text().trim(),
+                (d) => {
+                    let new_obj = {};
+                    for (let [k, v] of Object.entries(d)) {
+                        let k_parts = k.split("_");
+                        let k_type = k_parts[k_parts.length - 1];
+                        let new_val;
+                        switch (k_type) {
+                            case "boxplot":
+                            case "violin":
+                                new_val = v
+                                    .split(":")
+                                    .map((v) => parseFloat(v));
+                                break;
+                            case "float":
+                                new_val = parseFloat(v);
+                                break;
+                            case "region":
+                            case "int":
+                                new_val = parseInt(v);
+                                break;
+                            case "string":
+                            default:
+                                new_val = v;
+                        }
 
-                function to_value(v) {
-                    let vf = parseFloat(v);
-                    return (vf != vf)? v: vf;
+                        new_obj[k] = new_val;
+                    }
+
+                    return new_obj;
+                },
+            );
+
+            function getCurrentOrder(fallback = [null, "desc"]) {
+                let url = new URL(window.location.href);
+                let order = url.searchParams.get("sortby");
+
+                if (order) {
+                    let [col, ord] = order.split(":");
+                    if (!fallback[0] || col == fallback[0]) {
+                        return [col, ord == "asc" ? "asc" : "desc"];
+                    }
+                }
+                return fallback;
+            }
+
+            function getFilter() {
+                let url = new URL(window.location.href);
+                let filter = url.searchParams.get("filter");
+
+                if (filter) {
+                    let new_obj = {};
+                    for (let item of filter.split(",")) {
+                        let [k, v] = item.split(":");
+                        new_obj[k] = v;
+                    }
+                    return new_obj;
                 }
 
-                header.selectAll("th")
-                    .on("click", function(d, i) {
-                        header.selectAll("th")
-                            .attr("class", function(d2, i2) {
-                                return (i2 != i)? "": ({
-                                    "": "desc",
-                                    "desc": "asc",
-                                    "asc": "desc"
-                                }[this.className] ?? "desc");
+                return {};
+            }
+
+            function encodeFilter(filter) {
+                return Object.entries(filter)
+                    .map(([k, v]) => `${k}:${v}`)
+                    .join(",");
+            }
+
+            function updateUrl(data) {
+                let url = new URL(window.location.href);
+                let params = url.searchParams;
+                for (let [k, v] of Object.entries(data)) {
+                    params.set(k, v);
+                }
+                window.history.pushState(null, "", url);
+            }
+
+            function renderHeader() {
+                let header = d3.select("#table-target").select("thead");
+                let row = header.select("tr");
+                let full_filter = getFilter();
+
+                row.selectAll("th")
+                    .data(tsv.columns)
+                    .enter()
+                    .append("th")
+                    .each(function (d) {
+                        let this_sel = d3.select(this);
+                        let k_parts = d.split("_");
+                        let k_type = k_parts[k_parts.length - 1];
+                        let k_name = k_parts.slice(0, -1).join(" ");
+                        this_sel.text(k_name);
+
+                        if (!["boxplot", "violin"].includes(k_type)) {
+                            let [col, direction] = getCurrentOrder();
+
+                            if (col == d) {
+                                this_sel.attr("class", direction);
+                            }
+
+                            this_sel.on("click", function () {
+                                let [col, ord] = getCurrentOrder([d, "asc"]);
+                                let new_ord = ord == "asc" ? "desc" : "asc";
+                                row.selectAll("th").attr(
+                                    "class",
+                                    function (other_d) {
+                                        return other_d == d ? new_ord : "";
+                                    },
+                                );
+                                updateUrl({
+                                    sortby: `${d}:${new_ord}`,
+                                    page: 0,
+                                });
+                                renderData();
                             });
 
-                        let order = this.className;
+                            this_sel.append("br");
+                            let prior_text = full_filter[d] ?? "";
+                            this_sel
+                                .append("input")
+                                .attr("type", "text")
+                                .attr("value", prior_text)
+                                .on("click", function (d) {
+                                    //d3.event.preventDefault();
+                                    d3.event.stopPropagation();
+                                    return false;
+                                })
+                                .on("input", function () {
+                                    let value = d3.event.target.value;
+                                    if (value == prior_text) {
+                                        return;
+                                    }
+                                    prior_text = value;
+                                    let filter = getFilter();
+                                    if (value) {
+                                        filter[d] = value;
+                                    } else {
+                                        delete filter[d];
+                                    }
 
-                        let ordered_elements = body.selectAll("tr")
-                            .nodes()
-                            .sort((a, b) => {
-                                let a_val = to_value(d3.select(a).selectAll("td").nodes()[i].innerText);
-                                let b_val = to_value(d3.select(b).selectAll("td").nodes()[i].innerText);
-                                return (order === "asc")? d3.ascending(a_val, b_val): d3.descending(a_val, b_val);
-                            });
-
-                        for(let elm of ordered_elements) {
-                            let parent = elm.parentElement;
-                            parent.removeChild(elm);
-                            parent.appendChild(elm);
-                        };
+                                    updateUrl({
+                                        filter: encodeFilter(filter),
+                                        page: 0,
+                                    });
+                                    renderData();
+                                });
+                        }
                     });
+            }
 
-                header.selectAll("th").append("br");
-                header.selectAll("th")
-                    .append("input")
-                    .attr("type", "text")
-                    .on("click", function(d, i) {
-                        d3.event.stopPropagation();
-                    })
-                    .on("input", function(d, i, sel) {
-                        let filters = sel.map((v) => v.value);
+            function renderData() {
+                let filter = getFilter();
+                let [col, ord] = getCurrentOrder();
 
-                        body.selectAll("tr")
-                            .style("display", function(d, i) {
-                                let vals = d3.select(this).selectAll("td").nodes().map((v) => v.innerText);
-                                let isValid = vals.every((v, i) => filters[i] == "" || v.includes(filters[i]));
-                                return (isValid)? "table-row": "none";
-                            });
+                let inner_tsv = tsv;
+
+                if (Object.keys(filter).length > 0) {
+                    inner_tsv = inner_tsv.filter((row) => {
+                        return Object.entries(filter).every(([k, v]) => {
+                            return row[k].toString().includes(v.toString());
+                        });
                     });
-            });
+                }
 
-            d3.selectAll("figure.boxplot")
-                .each(function() {
-                    let width = 250;
-                    let height = 70;
-                    let margin = {
-                        top: 10, right: 0, bottom: 30, left: 0
-                    };
-                    let inner_width = width - margin.left - margin.right;
-                    let inner_height = height - margin.bottom - margin.top; 
+                inner_tsv.columns = tsv.columns;
 
-                    let svg = d3.select(this)
-                        .append("svg")
-                        .attr("width", width)
-                        .attr("height", height)
-                        .append("g")
-                        .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
-                    
-                    let data = this.dataset.samples.split(",").map((v) => parseFloat(v)).sort(d3.ascending);
+                if (inner_tsv.columns.includes(col)) {
+                    if (ord == "asc") {
+                        inner_tsv = inner_tsv.sort((a, b) =>
+                            d3.ascending(a[col], b[col]),
+                        );
+                    } else {
+                        inner_tsv = inner_tsv.sort((a, b) =>
+                            d3.descending(a[col], b[col]),
+                        );
+                    }
+                }
 
-                    let q1 = d3.quantile(data, 0.25)
-                    let median = d3.quantile(data, 0.5)
-                    let q3 = d3.quantile(data, 0.75)
-                    let min = d3.min(data);
-                    let max = d3.max(data);
-                    let range = max - min;
-                    let offset = Math.max(range * 0.1, 1);
+                inner_tsv.columns = tsv.columns;
 
-                    let x = d3.scaleLinear()
-                        .domain([min - offset, max + offset])
-                        .range([0, inner_width]);
-                    svg.append("g")
-                        .attr("transform", "translate(0," + inner_height + ")")
-                        .call(d3.axisBottom(x).ticks(5));
+                let url = new URL(window.location.href);
+                let maxPage = Math.ceil(inner_tsv.length / ELEMS_PER_PAGE);
+                let page = Math.min(
+                    maxPage - 1,
+                    Math.max(
+                        0,
+                        Math.floor(parseInt(url.searchParams.get("page") ?? 0)),
+                    ),
+                );
+                let offset = ELEMS_PER_PAGE * page;
 
-                    let y = d3.scaleLinear()
-                        .domain([0, 1])
-                        .range([inner_height, 0]);
-
-                    let center = y(0.5);
-                    let bar_thickness = y(0) - y(0.5)
-                    
-                    svg.append("line")
-                        .attr("x1", x(min))
-                        .attr("x2", x(max))
-                        .attr("y1", center)
-                        .attr("y2", center)
-                        .attr("stroke", "black");
-
-                    svg.append("rect")
-                        .attr("x", x(q1))
-                        .attr("y", center - bar_thickness / 2)
-                        .attr("width", x(q3) - x(q1))
-                        .attr("height", bar_thickness)
-                        .attr("stroke", "black")
-                        .style("fill", "#69b3a2");
-
-                    svg.selectAll("toto")
-                        .data([min, median, max])
-                        .enter()
-                        .append("line")
-                        .attr("x1", (d) => x(d))
-                        .attr("x2", (d) => x(d))
-                        .attr("y1", center - bar_thickness / 2)
-                        .attr("y2", center + bar_thickness / 2)
-                        .attr("stroke", "black")
+                d3.select("#page-indicator").text(
+                    `Page: ${page + 1}/${maxPage}`,
+                );
+                d3.select("#prior-page").on("click", () => {
+                    updateUrl({ page: Math.max(0, page - 1) });
+                    renderData();
+                });
+                d3.select("#next-page").on("click", () => {
+                    updateUrl({ page: Math.min(maxPage - 1, page + 1) });
+                    renderData();
                 });
 
-            d3.selectAll("figure.violin")
-                .each(function() {
-                    function kernelDensityEstimator(kernel, X) {
-                        return (V) => {
-                            return X.map((x) => {
-                                return [x, d3.mean(V, (v) => { return kernel(x - v); })];
-                            });
-                        };
-                    }
-                    function kernelEpanechnikov(k) {
-                        return (v) => Math.abs(v /= k) <= 1 ? 0.75 * (1 - v * v) / k : 0;
-                    }
-                    function gaussianKernel(k) {
-                        return (v) => (1 / Math.sqrt(2 * Math.PI)) * Math.exp(-0.5 * (v / k) * (v / k)) / k;
-                    }
+                d3.select("#table-target")
+                    .select("tbody")
+                    .selectAll("tr")
+                    .remove();
 
-                    let width = 250;
-                    let height = 70;
-                    let margin = {
-                        top: 10, right: 0, bottom: 30, left: 0
+                let rows = d3
+                    .select("#table-target")
+                    .select("tbody")
+                    .selectAll("tr")
+                    .data(inner_tsv.slice(offset, offset + ELEMS_PER_PAGE))
+                    .enter()
+                    .append("tr");
+
+                let cells = rows
+                    .selectAll("td")
+                    .data((row) => {
+                        return inner_tsv.columns.map((col) => {
+                            return { column: col, value: row[col] };
+                        });
+                    })
+                    .enter()
+                    .append("td")
+                    .each(function (d, i) {
+                        let k_parts = d.column.split("_");
+                        let k_type = k_parts[k_parts.length - 1];
+
+                        switch (k_type) {
+                            case "region":
+                                d3.select(this)
+                                    .append("a")
+                                    .attr("href", `${d.value}/index.html`)
+                                    .text(d.value);
+                                break;
+                            case "boxplot":
+                                renderBoxplot(d3.select(this), d.value);
+                                break;
+                            case "violin":
+                                renderViolin(d3.select(this), d.value);
+                                break;
+                            case "float":
+                            case "int":
+                            case "string":
+                            default:
+                                d3.select(this).text(d.value);
+                        }
+                    });
+            }
+
+            function renderBoxplot(selection, data) {
+                let width = 250;
+                let height = 70;
+                let margin = {
+                    top: 10,
+                    right: 0,
+                    bottom: 30,
+                    left: 0,
+                };
+                let inner_width = width - margin.left - margin.right;
+                let inner_height = height - margin.bottom - margin.top;
+
+                let svg = selection
+                    .append("svg")
+                    .attr("width", width)
+                    .attr("height", height)
+                    .append("g")
+                    .attr(
+                        "transform",
+                        "translate(" + margin.left + "," + margin.top + ")",
+                    );
+
+                data = data.sort(d3.ascending);
+
+                let q1 = d3.quantile(data, 0.25);
+                let median = d3.quantile(data, 0.5);
+                let q3 = d3.quantile(data, 0.75);
+                let min = d3.min(data);
+                let max = d3.max(data);
+                let range = max - min;
+                let offset = Math.max(range * 0.1, 1);
+
+                let x = d3
+                    .scaleLinear()
+                    .domain([min - offset, max + offset])
+                    .range([0, inner_width]);
+                svg.append("g")
+                    .attr("transform", "translate(0," + inner_height + ")")
+                    .call(d3.axisBottom(x).ticks(5));
+
+                let y = d3
+                    .scaleLinear()
+                    .domain([0, 1])
+                    .range([inner_height, 0]);
+
+                let center = y(0.5);
+                let bar_thickness = y(0) - y(0.5);
+
+                svg.append("line")
+                    .attr("x1", x(min))
+                    .attr("x2", x(max))
+                    .attr("y1", center)
+                    .attr("y2", center)
+                    .attr("stroke", "black");
+
+                svg.append("rect")
+                    .attr("x", x(q1))
+                    .attr("y", center - bar_thickness / 2)
+                    .attr("width", x(q3) - x(q1))
+                    .attr("height", bar_thickness)
+                    .attr("stroke", "black")
+                    .style("fill", "#69b3a2");
+
+                svg.selectAll("toto")
+                    .data([min, median, max])
+                    .enter()
+                    .append("line")
+                    .attr("x1", (d) => x(d))
+                    .attr("x2", (d) => x(d))
+                    .attr("y1", center - bar_thickness / 2)
+                    .attr("y2", center + bar_thickness / 2)
+                    .attr("stroke", "black");
+            }
+
+            function renderViolin(selection, data) {
+                function kernelDensityEstimator(kernel, X) {
+                    return (V) => {
+                        return X.map((x) => {
+                            return [
+                                x,
+                                d3.mean(V, (v) => {
+                                    return kernel(x - v);
+                                }),
+                            ];
+                        });
                     };
-                    let inner_width = width - margin.left - margin.right;
-                    let inner_height = height - margin.bottom - margin.top; 
+                }
+                function kernelEpanechnikov(k) {
+                    return (v) =>
+                        Math.abs((v /= k)) <= 1 ? (0.75 * (1 - v * v)) / k : 0;
+                }
+                function gaussianKernel(k) {
+                    return (v) =>
+                        ((1 / Math.sqrt(2 * Math.PI)) *
+                            Math.exp(-0.5 * (v / k) * (v / k))) /
+                        k;
+                }
 
-                    let svg = d3.select(this)
-                        .append("svg")
-                        .attr("width", width)
-                        .attr("height", height)
-                        .append("g")
-                        .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
-                    
-                    let data = this.dataset.samples.split(",").map((v) => parseFloat(v)).sort(d3.ascending);
+                let width = 250;
+                let height = 70;
+                let margin = {
+                    top: 10,
+                    right: 0,
+                    bottom: 30,
+                    left: 0,
+                };
+                let inner_width = width - margin.left - margin.right;
+                let inner_height = height - margin.bottom - margin.top;
 
-                    let min = d3.min(data);
-                    let max = d3.max(data);
-                    let range = max - min;
-                    let offset = Math.max(range * 0.1, 1);
+                let svg = selection
+                    .append("svg")
+                    .attr("width", width)
+                    .attr("height", height)
+                    .append("g")
+                    .attr(
+                        "transform",
+                        "translate(" + margin.left + "," + margin.top + ")",
+                    );
 
-                    let irq = (d3.quantile(data, 0.75) - d3.quantile(data, 0.25)) / 1.349
-                    let sigma = Math.min(d3.deviation(data), irq);
-                    let est_h = 0.5 * sigma * (data.length ** (-0.2));
-                    est_h = (est_h != est_h)? 0.2: est_h;
+                data = data.sort(d3.ascending);
 
-                    let x = d3.scaleLinear()
-                        .domain([min - offset, max + offset])
-                        .range([0, inner_width]);
-                    svg.append("g")
-                        .attr("transform", "translate(0," + inner_height + ")")
-                        .call(d3.axisBottom(x).ticks(5));
+                let min = d3.min(data);
+                let max = d3.max(data);
+                let range = max - min;
+                let offset = Math.max(range * 0.1, 1);
 
-                    let kde = kernelDensityEstimator(gaussianKernel(est_h), x.ticks(100));
-                    let kde_result = kde(data);
-                    let kde_max = d3.max(kde_result.map((v) => v[1]));
+                let irq =
+                    (d3.quantile(data, 0.75) - d3.quantile(data, 0.25)) / 1.349;
+                let sigma = Math.min(d3.deviation(data), irq);
+                let est_h = 0.5 * sigma * data.length ** -0.2;
+                est_h = est_h != est_h ? 0.2 : est_h;
 
-                    let y = d3.scaleLinear()
-                        .domain([0, kde_max])
-                        .range([inner_height, 0]);
+                let x = d3
+                    .scaleLinear()
+                    .domain([min - offset, max + offset])
+                    .range([0, inner_width]);
+                svg.append("g")
+                    .attr("transform", "translate(0," + inner_height + ")")
+                    .call(d3.axisBottom(x).ticks(5));
 
-                    svg.append("path")
-                        .datum(kde_result)
-                        .style("stroke", "none")
-                        .style("fill","#69b3a2")
-                        .attr("d", d3.area()
+                let kde = kernelDensityEstimator(
+                    gaussianKernel(est_h),
+                    x.ticks(100),
+                );
+                let kde_result = kde(data);
+                let kde_max = d3.max(kde_result.map((v) => v[1]));
+
+                let y = d3
+                    .scaleLinear()
+                    .domain([0, kde_max])
+                    .range([inner_height, 0]);
+
+                svg.append("path")
+                    .datum(kde_result)
+                    .style("stroke", "none")
+                    .style("fill", "#69b3a2")
+                    .attr(
+                        "d",
+                        d3
+                            .area()
                             .x((d) => x(d[0]))
                             .y1((d) => y(d[1]))
                             .y0((d) => y(0))
-                            .curve(d3.curveCatmullRom)
-                        );
-                })
+                            .curve(d3.curveCatmullRom),
+                    );
+            }
+
+            renderHeader();
+            renderData();
         </script>
     </head>
     <body>
         <h1>PAGE_TITLE</h1>
-        <br>
+        <br />
         <a href="index.html">&lt Back</a>
-        <br>
-        TABLE_TARGET
+        <br />
+        <div style="display: flex; gap: 2em; padding: 2em 0.5em 0.25em 0.5em">
+            <input type="button" id="prior-page" value="Prior Page" />
+            <div id="page-indicator"></div>
+            <input type="button" id="next-page" value="Next Page" />
+        </div>
+        <table id="table-target">
+            <thead>
+                <tr></tr>
+            </thead>
+            <tbody></tbody>
+        </table>
     </body>
 </html>
