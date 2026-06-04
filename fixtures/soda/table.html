@@ -36,6 +36,10 @@
             figure {
                 margin: 0;
             }
+
+            th input[type="text"] {
+                width: 6em;
+            }
         </style>
         <script id="table-data" type="text/tab-separated-values">
             TSV_TARGET
@@ -168,6 +172,7 @@
                             let prior_text = full_filter[d] ?? "";
                             this_sel
                                 .append("input")
+                                .attr("id", d)
                                 .attr("type", "text")
                                 .attr("value", prior_text)
                                 .on("click", function (d) {
@@ -238,10 +243,16 @@
                     ),
                 );
                 let offset = ELEMS_PER_PAGE * page;
-
-                d3.select("#page-indicator").text(
-                    `Page: ${page + 1}/${maxPage}`,
+                let offset_end = Math.min(
+                    ELEMS_PER_PAGE * (page + 1),
+                    inner_tsv.length,
                 );
+
+                d3.select("#page-indicator")
+                    .style("white-space", "pre")
+                    .text(
+                        `Page: ${page + 1}/${maxPage}     Families: ${offset + 1}-${offset_end}/${inner_tsv.length}`,
+                    );
                 d3.select("#prior-page").on("click", () => {
                     updateUrl({ page: Math.max(0, page - 1) });
                     renderData();

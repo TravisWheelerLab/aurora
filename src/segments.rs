@@ -3,6 +3,7 @@ use std::{cmp::Ordering, collections::HashMap, fmt::Debug, iter::Fuse};
 
 use crate::{
     alignment::{Alignment, Strand},
+    annotation::AmbiguousAnnotation,
     assembly::SegmentAssemblyGraph,
     chunks::ProximityGroup,
     join_estimation::JoinEstimator,
@@ -119,6 +120,29 @@ impl Block {
             avg_confidence: confidence,
             alignment_score: score,
             kimura80: alignment.kimura80(alignment.query_start, alignment.query_end),
+            can_join_up_to: 0,
+        }
+    }
+
+    pub fn from_annotation(
+        annotation: &AmbiguousAnnotation,
+        selected_index: usize,
+        row: usize,
+    ) -> Self {
+        let simple_annot = &annotation.annotations[selected_index];
+
+        Self {
+            row_idx: row,
+            block_type: BlockType::Alignment,
+            strand: simple_annot.strand,
+            query_id: Some(simple_annot.query_id),
+            col_start: simple_annot.target_start,
+            col_end: simple_annot.target_end,
+            query_start: simple_annot.query_start,
+            query_end: simple_annot.query_end,
+            avg_confidence: annotation.confidence,
+            alignment_score: annotation.confidence.ln(),
+            kimura80: simple_annot.kimura80,
             can_join_up_to: 0,
         }
     }
