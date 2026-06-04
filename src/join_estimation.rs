@@ -143,11 +143,11 @@ impl Default for MomentEstimator {
     }
 }
 
-impl ops::Add<MomentEstimator> for MomentEstimator {
+impl ops::Add<&MomentEstimator> for &MomentEstimator {
     type Output = MomentEstimator;
 
-    fn add(self, rhs: MomentEstimator) -> Self::Output {
-        Self {
+    fn add(self, rhs: &MomentEstimator) -> Self::Output {
+        MomentEstimator {
             sum_square: self.sum_square + rhs.sum_square,
             sum: self.sum + rhs.sum,
             samples: self.samples + rhs.samples,
@@ -171,14 +171,14 @@ impl ops::AddAssign<f64> for MomentEstimator {
     }
 }
 
-impl From<MomentEstimator> for ExponentialEstimator {
-    fn from(value: MomentEstimator) -> Self {
+impl From<&MomentEstimator> for ExponentialEstimator {
+    fn from(value: &MomentEstimator) -> Self {
         Self::new(value.mean(), value.samples().max(1))
     }
 }
 
-impl From<MomentEstimator> for HalfT {
-    fn from(value: MomentEstimator) -> Self {
+impl From<&MomentEstimator> for HalfT {
+    fn from(value: &MomentEstimator) -> Self {
         Self::from_sample_mean(value.mean(), value.samples().max(1))
     }
 }
@@ -205,13 +205,21 @@ impl From<&MedianEstimator> for ExponentialEstimator {
     }
 }
 
+impl From<&MedianEstimator> for HalfT {
+    fn from(value: &MedianEstimator) -> Self {
+        Self::new(
+            value.ppf(0.5) / Self::new(1.0, value.samples()).ppf(0.5),
+            value.samples(),
+        )
+    }
+}
+
 impl From<&BayesianJoinStatistics> for BayesianJoinEstimator {
     fn from(statistics: &BayesianJoinStatistics) -> Self {
-        println!("{:#?}", statistics);
         Self {
-            target_distance_join: statistics.joinable_target_distance.into(),
-            target_distance_nojoin: statistics.unjoinable_target_distance.into(),
-            divergence_join: statistics.joinable_divergence.into(),
+            target_distance_join: (&statistics.joinable_target_distance).into(),
+            target_distance_nojoin: (&statistics.unjoinable_target_distance).into(),
+            divergence_join: (&statistics.joinable_divergence).into(),
             divergence_nojoin: HalfT::from_sample_mean(
                 statistics
                     .unjoinable_divergence
@@ -281,6 +289,10 @@ impl JoinStatisticsCollector for BayesianJoinStatistics {
     }
 
     fn add(&mut self, first_block: &Block, second_block: &Block, link_info: &LinkInfo) {
+        if !link_info.neighbors {
+            return;
+        }
+
         let target_dist = link_info.unexplained_bases;
         let divergence_diff = (second_block.kimura80 - first_block.kimura80).abs();
         let (rel_con_dist, join_type) = relative_consensus_distance(
@@ -310,15 +322,15 @@ impl JoinStatisticsCollector for BayesianJoinStatistics {
 
     fn combine(&self, other: &Self) -> Self {
         Self {
-            joinable_target_distance: self.joinable_target_distance
-                + other.joinable_target_distance,
-            unjoinable_target_distance: self.unjoinable_target_distance
-                + other.unjoinable_target_distance,
-            joinable_divergence: self.joinable_divergence + other.joinable_divergence,
-            unjoinable_divergence: self.unjoinable_divergence + other.unjoinable_divergence,
-            joinable_consensus_pos: self.joinable_consensus_pos + other.joinable_consensus_pos,
-            joinable_consensus_neg: self.joinable_consensus_neg + other.joinable_consensus_neg,
-            unjoinable_consensus: self.unjoinable_consensus + other.unjoinable_consensus,
+            joinable_target_distance: &self.joinable_target_distance
+                + &other.joinable_target_distance,
+            unjoinable_target_distance: &self.unjoinable_target_distance
+                + &other.unjoinable_target_distance,
+            joinable_divergence: &self.joinable_divergence + &other.joinable_divergence,
+            unjoinable_divergence: &self.unjoinable_divergence + &other.unjoinable_divergence,
+            joinable_consensus_pos: &self.joinable_consensus_pos + &other.joinable_consensus_pos,
+            joinable_consensus_neg: &self.joinable_consensus_neg + &other.joinable_consensus_neg,
+            unjoinable_consensus: &self.unjoinable_consensus + &other.unjoinable_consensus,
         }
     }
 }

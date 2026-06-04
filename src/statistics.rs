@@ -22,6 +22,7 @@ pub trait Distribution {
     fn logccdf(&self, x: f64) -> f64;
 }
 
+#[allow(dead_code)]
 pub trait ParameterizedDistribution: Distribution + Debug + Default + Clone {
     fn unit() -> Self {
         Self::default()
@@ -243,154 +244,6 @@ impl Distribution for HalfT {
 }
 
 #[derive(Debug, Clone)]
-pub struct Frechet {
-    alpha: f64,
-    scale: f64,
-    minimum: f64,
-}
-
-impl ParameterizedDistribution for Frechet {}
-
-impl Frechet {
-    pub fn new(alpha: f64, scale: f64, minimum: f64) -> Self {
-        Self {
-            alpha,
-            scale,
-            minimum,
-        }
-    }
-}
-
-impl Default for Frechet {
-    fn default() -> Self {
-        Self {
-            alpha: 1.0,
-            scale: 1.0,
-            minimum: 0.0,
-        }
-    }
-}
-
-impl Distribution for Frechet {
-    fn logpdf(&self, x: f64) -> f64 {
-        let a = self.alpha;
-        let s = self.scale;
-        let m = self.minimum;
-        if x > m {
-            (a / s).ln() + -(a + 1.0) * ((x - m) / s).ln() + -((x - m) / s).powf(-a)
-        } else {
-            f64::NEG_INFINITY
-        }
-    }
-
-    fn pdf(&self, x: f64) -> f64 {
-        self.logpdf(x).exp()
-    }
-
-    fn cdf(&self, x: f64) -> f64 {
-        self.logcdf(x).exp()
-    }
-
-    fn logcdf(&self, x: f64) -> f64 {
-        let a = self.alpha;
-        let s = self.scale;
-        let m = self.minimum;
-        if x > m {
-            -((x - m) / s).powf(-a)
-        } else {
-            f64::NEG_INFINITY
-        }
-    }
-
-    fn ppf(&self, p: f64) -> f64 {
-        let a = self.alpha;
-        let s = self.scale;
-        let m = self.minimum;
-        if p >= 1.0 {
-            f64::INFINITY
-        } else if p <= 0.0 {
-            m
-        } else {
-            m + s * (-p.min(1.0).ln()).powf(1.0 / -a)
-        }
-    }
-
-    fn ccdf(&self, x: f64) -> f64 {
-        1.0 - self.cdf(x)
-    }
-
-    fn logccdf(&self, x: f64) -> f64 {
-        self.ccdf(x).ln()
-    }
-
-    fn support(&self) -> (f64, f64) {
-        (self.minimum, f64::INFINITY)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Gumbel {
-    location: f64,
-    scale: f64,
-}
-
-impl Gumbel {
-    pub fn new(location: f64, scale: f64) -> Self {
-        Self { location, scale }
-    }
-}
-
-impl Default for Gumbel {
-    fn default() -> Self {
-        Self::new(0.0, 1.0)
-    }
-}
-
-impl ParameterizedDistribution for Gumbel {}
-
-impl Distribution for Gumbel {
-    fn logpdf(&self, x: f64) -> f64 {
-        let mu = self.location;
-        let beta = self.scale;
-        let z = (x - mu) / beta;
-        (1.0 / beta).ln() - (z + (-z).exp())
-    }
-
-    fn pdf(&self, x: f64) -> f64 {
-        self.logpdf(x).exp()
-    }
-
-    fn cdf(&self, x: f64) -> f64 {
-        self.logcdf(x).exp()
-    }
-
-    fn logcdf(&self, x: f64) -> f64 {
-        let mu = self.location;
-        let beta = self.scale;
-        let z = (x - mu) / beta;
-        -((-z).exp())
-    }
-
-    fn ppf(&self, p: f64) -> f64 {
-        let mu = self.location;
-        let beta = self.scale;
-        mu - beta * (-p.ln()).ln()
-    }
-
-    fn ccdf(&self, x: f64) -> f64 {
-        1.0 - self.cdf(x)
-    }
-
-    fn logccdf(&self, x: f64) -> f64 {
-        self.ccdf(x).ln()
-    }
-
-    fn support(&self) -> (f64, f64) {
-        (f64::NEG_INFINITY, f64::INFINITY)
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct Lomax {
     alpha: f64,
     lambda: f64,
@@ -542,16 +395,16 @@ impl Distribution for AssymetricLaplace {
     }
 }
 
-pub fn linspace(start: f64, stop: f64, steps: usize) -> impl Iterator<Item = f64> {
-    (0..steps)
-        .map(move |n| n as f64 / (steps as f64 - 1.0))
-        .map(move |n| start * (1.0 - n) + stop * n)
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
     use std::fmt::Debug;
+
+    pub fn linspace(start: f64, stop: f64, steps: usize) -> impl Iterator<Item = f64> {
+        (0..steps)
+            .map(move |n| n as f64 / (steps as f64 - 1.0))
+            .map(move |n| start * (1.0 - n) + stop * n)
+    }
 
     // Add debug trait to allow for printout...
     pub trait TestDistribution: Distribution + Debug {}
@@ -563,14 +416,12 @@ mod test {
 
     use super::{Exponential, ParameterizedDistribution};
 
-    fn get_dists() -> [Box<dyn TestDistribution>; 7] {
+    fn get_dists() -> [Box<dyn TestDistribution>; 5] {
         [
             as_box(Exponential::unit()),
             as_box(ExponentialEstimator::unit()),
             as_box(HalfT::unit()),
-            as_box(Frechet::unit()),
             as_box(AssymetricLaplace::unit()),
-            as_box(Gumbel::unit()),
             as_box(Lomax::unit()),
         ]
     }

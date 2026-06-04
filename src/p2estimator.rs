@@ -346,7 +346,7 @@ fn _interpolated_value_prediction<
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct QuantileEstimator<T: QuantileEstimatorRepresentation>(T);
 
 impl<T: QuantileEstimatorRepresentation> QuantileEstimator<T> {
@@ -433,13 +433,13 @@ impl<T: QuantileEstimatorRepresentation> AddAssign<&[f64]> for QuantileEstimator
     }
 }
 
-impl<T: QuantileEstimatorRepresentation> Add<QuantileEstimator<T>> for QuantileEstimator<T> {
+impl<T: QuantileEstimatorRepresentation> Add<&QuantileEstimator<T>> for &QuantileEstimator<T> {
     type Output = QuantileEstimator<T>;
 
-    fn add(self, rhs: QuantileEstimator<T>) -> Self::Output {
+    fn add(self, rhs: &QuantileEstimator<T>) -> Self::Output {
         match (self.0._is_initialized(), rhs.0._is_initialized()) {
             (true, true) => {
-                let mut new_quant_est = Self(T::new_like(&self.0));
+                let mut new_quant_est = QuantileEstimator::<T>(T::new_like(&self.0));
 
                 _merge_estimators(self.0._data(), rhs.0._data(), new_quant_est.0._mut_data());
 
@@ -752,10 +752,16 @@ pub mod custom_quantile_estimator {
 mod test {
     use crate::{
         p2estimator::QuantileEstimator,
-        statistics::{linspace, Distribution, Exponential},
+        statistics::{Distribution, Exponential},
     };
     use itertools::Itertools;
     use rand::{rngs::Xoshiro256PlusPlus, RngExt, SeedableRng};
+
+    pub fn linspace(start: f64, stop: f64, steps: usize) -> impl Iterator<Item = f64> {
+        (0..steps)
+            .map(move |n| n as f64 / (steps as f64 - 1.0))
+            .map(move |n| start * (1.0 - n) + stop * n)
+    }
 
     fn is_close(a: f64, b: f64) -> bool {
         let rel_tol = 1e-9;
@@ -820,7 +826,7 @@ mod test {
                 estimator += expon.ppf(rng.random());
             }
 
-            merged_estimator = merged_estimator + estimator;
+            merged_estimator = &merged_estimator + &estimator;
         }
 
         assert!(merged_estimator.samples() == 10_000);

@@ -92,7 +92,6 @@ pub fn write_family_statistics(
             "Family_string",
             "Occurrences_int",
             "Coverage_int",
-            "Kimura80_Boxplot_boxplot",
             "Kimura80_KDE_violin",
         ],
         &family_stats
@@ -103,7 +102,6 @@ pub fn write_family_statistics(
                     k.to_string(),
                     v.occurrences.to_string(),
                     v.coverage.to_string(),
-                    v.kimura80_values.0.iter().join(":"),
                     v.kimura80_values.0.iter().join(":"),
                 ]
             })

@@ -8,7 +8,11 @@ mod confidence;
 mod history_tracing;
 mod join_estimation;
 mod matrix;
+
+// Keeping around for enhanced parameter estimation work...
+#[allow(dead_code)]
 mod p2estimator;
+
 mod pipeline;
 mod score_params;
 mod segment_groups;
