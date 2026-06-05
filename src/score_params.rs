@@ -69,4 +69,18 @@ impl ScoreParams {
             prior_is_different,
         )
     }
+
+    pub fn join_transition(&self, prior_is_skip: bool, join_probability: f64) -> f64 {
+        let true_join_cost = fast_select(
+            self.query_to_skip_score + (self.query_loop_score - self.query_jump_score).abs(),
+            self.query_loop_score,
+            prior_is_skip,
+        );
+        let false_join_cost = fast_select(
+            self.query_to_skip_score,
+            self.query_jump_score,
+            prior_is_skip,
+        );
+        true_join_cost * join_probability + (1.0 - join_probability) * false_join_cost
+    }
 }

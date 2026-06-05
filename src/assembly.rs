@@ -6,7 +6,6 @@ use crate::{
     alignment::{Alignment, Strand},
     chunks::ProximityGroup,
     join_estimation::{JoinEstimator, JoinStatisticsCollector, LinkInfo},
-    score_params::ScoreParams,
     segments::{Block, InitialSegments, SegmentedMatrix, SegmentedMatrixView},
     trace_statistics::{calculate_region_statistics, QueryStatistics, RegionStatistics},
     AnnotationArgs,
@@ -82,15 +81,6 @@ pub struct Edge {
     pub link_type: LinkType,
 }
 
-fn get_link_cost(score_params: &ScoreParams, join_prob: f64) -> f64 {
-    // Doing this as the expected value over the transition scores...
-    let expected_score = join_prob * score_params.query_loop_score
-        + (1.0 - join_prob) * score_params.query_jump_score;
-
-    // Cost = linear consensus cost + linear target gap cost...
-    expected_score
-}
-
 pub fn block_target_distance(first_block: &Block, second_block: &Block) -> isize {
     second_block.col_start as isize - first_block.col_end as isize - 1
 }
@@ -147,6 +137,7 @@ pub enum ConsensusDistanceNormalization {
     Min,
     Sum,
     WithLength(usize),
+    WithUBAndLength(usize, usize),
 }
 
 pub fn relative_consensus_distance(
@@ -154,7 +145,16 @@ pub fn relative_consensus_distance(
     second_block: &Block,
     mode: ConsensusDistanceNormalization,
 ) -> (f64, LinkType) {
-    let (dist, link_type) = block_consensus_distance(first_block, second_block);
+    let (mut dist, link_type) = block_consensus_distance(first_block, second_block);
+
+    if let ConsensusDistanceNormalization::WithUBAndLength(ub, _length) = mode {
+        dist = if dist > 0 {
+            dist.saturating_sub(ub as isize).max(0)
+        } else {
+            dist
+        }
+    }
+
     let div = match mode {
         ConsensusDistanceNormalization::Sum => {
             block_length_on_query(first_block) + block_length_on_query(second_block)
@@ -166,6 +166,7 @@ pub fn relative_consensus_distance(
             block_length_on_query(first_block).min(block_length_on_query(second_block))
         }
         ConsensusDistanceNormalization::WithLength(length) => length,
+        ConsensusDistanceNormalization::WithUBAndLength(_ub, length) => length,
     };
     (dist as f64 / div as f64, link_type)
 }
@@ -324,24 +325,21 @@ fn gather_join_statistics_single_family<'a>(
         .for_each(|(idx, (a_segment_idx, a_block))| {
             compatable_blocks[idx + 1..].iter().enumerate().for_each(
                 |(idx2, (b_segment_idx, b_block))| {
-                    join_stats.add(
+                    let link_info = &link_info(
                         a_block,
                         b_block,
-                        &link_info(
-                            a_block,
-                            b_block,
-                            args,
-                            calculate_unexplained_bases(
-                                segments,
-                                region_statistics,
-                                *a_segment_idx,
-                                *b_segment_idx,
-                                b_block.col_start,
-                            ),
-                            consensus_length,
-                            idx + 1 == idx2,
+                        args,
+                        calculate_unexplained_bases(
+                            segments,
+                            region_statistics,
+                            *a_segment_idx,
+                            *b_segment_idx,
+                            b_block.col_start,
                         ),
+                        consensus_length,
+                        idx + 1 == idx2,
                     );
+                    join_stats.add(a_block, b_block, link_info);
                 },
             )
         })
@@ -354,7 +352,6 @@ fn link_assemblies<T: JoinEstimator>(
     segments: &SegmentedMatrix,
     query_statistics: &QueryStatistics<T>,
     region_statistics: &RegionStatistics,
-    score_params: &ScoreParams,
     args: &AnnotationArgs,
 ) {
     // this relies on the alignments being sorted by target start
@@ -392,9 +389,9 @@ fn link_assemblies<T: JoinEstimator>(
 
                 if join_prob >= args.join_likelihood_threshold {
                     let weight = if a_block.row_idx == b_block.row_idx && ((b.0 - 1) <= a.0) {
-                        score_params.query_loop_score
+                        1.0
                     } else {
-                        get_link_cost(score_params, join_prob)
+                        join_prob
                     };
 
                     graph.insert(
@@ -429,7 +426,6 @@ impl SegmentAssemblyGraph {
         segments: &SegmentedMatrix,
         region_statistics: &RegionStatistics,
         query_statistics: &[QueryStatistics<T>],
-        score_params: &ScoreParams,
         annotation_args: &AnnotationArgs,
     ) -> Self {
         let alignment_block_map = new_alignment_to_blocks_map(segments, alignments);
@@ -462,7 +458,6 @@ impl SegmentAssemblyGraph {
                     segments,
                     &query_statistics[id],
                     region_statistics,
-                    score_params,
                     annotation_args,
                 );
             });

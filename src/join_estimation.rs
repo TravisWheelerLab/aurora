@@ -29,6 +29,7 @@ pub struct LinkInfo {
     pub link_type: LinkType,
     pub consensus_length: usize,
     pub unexplained_bases: usize,
+    #[allow(dead_code)]
     pub neighbors: bool,
     pub joinable: bool,
 }
@@ -65,7 +66,10 @@ impl JoinEstimator for BayesianJoinEstimator {
         let (rel_con_dist, _join_type) = relative_consensus_distance(
             first_block,
             second_block,
-            ConsensusDistanceNormalization::WithLength(link_info.consensus_length),
+            ConsensusDistanceNormalization::WithUBAndLength(
+                link_info.unexplained_bases,
+                link_info.consensus_length,
+            ),
         );
 
         let join_score = self.join_prior.ln()
@@ -232,6 +236,7 @@ impl From<&BayesianJoinStatistics> for BayesianJoinEstimator {
                 statistics.joinable_consensus_neg.mean(),
                 statistics.joinable_consensus_pos.mean(),
             ),
+            // TODO: Replace with beta dist, better matches dists we see...
             consensus_distance_nojoin: AssymetricLaplace::symmetric_from_moments(
                 statistics.unjoinable_consensus.mean(),
                 statistics.unjoinable_consensus.standard_deviation(),
@@ -240,8 +245,7 @@ impl From<&BayesianJoinStatistics> for BayesianJoinEstimator {
             join_prior: (statistics.joinable_target_distance.samples() as f64
                 / (statistics.joinable_target_distance.samples()
                     + statistics.unjoinable_target_distance.samples())
-                .max(1) as f64)
-                .sqrt(),
+                .max(1) as f64),
         }
     }
 }
@@ -289,16 +293,19 @@ impl JoinStatisticsCollector for BayesianJoinStatistics {
     }
 
     fn add(&mut self, first_block: &Block, second_block: &Block, link_info: &LinkInfo) {
-        if !link_info.neighbors {
-            return;
-        }
+        //if !link_info.neighbors {
+        //    return;
+        //}
 
         let target_dist = link_info.unexplained_bases;
         let divergence_diff = (second_block.kimura80 - first_block.kimura80).abs();
         let (rel_con_dist, join_type) = relative_consensus_distance(
             first_block,
             second_block,
-            ConsensusDistanceNormalization::WithLength(link_info.consensus_length),
+            ConsensusDistanceNormalization::WithUBAndLength(
+                link_info.unexplained_bases,
+                link_info.consensus_length,
+            ),
         );
 
         if link_info.joinable {

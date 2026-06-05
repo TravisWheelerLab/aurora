@@ -641,7 +641,6 @@ pub fn assemble_and_link_segments<'a, T: JoinEstimator>(
         &initial_segments.segments,
         region_statistics,
         query_statistics,
-        score_params,
         annotation_args,
     );
     finalize_segments(

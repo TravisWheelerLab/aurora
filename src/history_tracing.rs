@@ -265,7 +265,7 @@ struct JoinLink {
     origin_history: usize,
     linked_history: usize,
     link_side: Side,
-    score: f64,
+    probability: f64,
 }
 
 impl JoinLink {
@@ -273,7 +273,7 @@ impl JoinLink {
         self.origin_history == other.origin_history
             && self.linked_history == other.linked_history
             && self.link_side == other.link_side
-            && ((self.score - other.score).abs() < epsilon)
+            && ((self.probability - other.probability).abs() < epsilon)
     }
 }
 
@@ -297,7 +297,7 @@ impl Ord for JoinLink {
             .cmp(&other.origin_history)
             .then_with(|| self.linked_history.cmp(&other.linked_history))
             .then_with(|| self.link_side.cmp(&other.link_side))
-            .then_with(|| self.score.total_cmp(&other.score))
+            .then_with(|| self.probability.total_cmp(&other.probability))
     }
 }
 
@@ -362,7 +362,7 @@ fn get_valid_joins_for_current_group(
                                         origin_history: prior_origin_history,
                                         linked_history: prior_link_history,
                                         link_side: prior_linkable_side,
-                                        score: weight,
+                                        probability: weight,
                                     });
 
                                 solved_current +=
@@ -705,8 +705,19 @@ fn add_single_join(
         history_depth,
     );
 
-    let right_score = right_join_link.as_ref().map(|v| v.score).unwrap_or(0.0);
-    let left_score = left_join_link.as_ref().map(|v| v.score).unwrap_or(0.0);
+    let prior_is_skip = match &histories[prior_hist_idx] {
+        HistoryEntry::Append(val) | HistoryEntry::Join(val) => val.group_index == 0,
+        HistoryEntry::Root => true,
+    };
+
+    let right_score = right_join_link
+        .as_ref()
+        .map(|v| score_params.join_transition(prior_is_skip, v.probability))
+        .unwrap_or(0.0);
+    let left_score = left_join_link
+        .as_ref()
+        .map(|v| score_params.join_transition(prior_is_skip, v.probability))
+        .unwrap_or(0.0);
     // If two joins, we incurred a expensive query-to-query jump in the past, so now we undo that cost...
     let bonus = if left_join_link.is_some() && right_join_link.is_some() {
         -score_params.query_jump_score

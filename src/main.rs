@@ -31,10 +31,13 @@ mod viterbi;
 mod viz;
 mod windowed_scores;
 
+use core::ops::RangeBounds;
 use std::{
     collections::HashMap,
+    fmt::Debug,
     fs::{self, create_dir_all, File},
     io::{BufRead, BufReader, BufWriter, Write},
+    ops::Bound,
     path::PathBuf,
 };
 
@@ -45,6 +48,8 @@ use anyhow::{Ok, Result};
 use clap::{Args, Parser};
 use itertools::Itertools;
 use rayon::prelude::*;
+use std::str::FromStr;
+use thiserror::Error;
 use viz::VizConstraint;
 
 use crate::{
@@ -111,6 +116,31 @@ pub struct PerformanceArgs {
     pub num_threads: usize,
 }
 
+#[derive(Error, Debug)]
+enum ParseRangedError<T: Debug, E> {
+    #[error(transparent)]
+    ParseError(#[from] E),
+    #[error("float value {0:?} is not between {1:?} and {2:?}")]
+    RangeError(T, Bound<T>, Bound<T>),
+}
+
+const fn ranged<F: PartialOrd + Debug + FromStr + Send + Sync + Clone + Copy + 'static>(
+    range: impl RangeBounds<F> + Send + Sync + Clone + 'static,
+) -> impl Fn(&str) -> Result<F, ParseRangedError<F, F::Err>> + Clone + Send + Sync + 'static {
+    move |v: &str| {
+        let f = F::from_str(v)?;
+        if range.contains(&f) {
+            Result::Ok(f)
+        } else {
+            Result::Err(ParseRangedError::RangeError(
+                f,
+                range.start_bound().map(|v| *v),
+                range.end_bound().map(|v| *v),
+            ))
+        }
+    }
+}
+
 #[derive(Args, Debug, Clone, Default)]
 pub struct AnnotationArgs {
     /// The penalty of jumping between query models
@@ -118,7 +148,8 @@ pub struct AnnotationArgs {
         short = 'J',
         long = "query-jump",
         default_value = "-127.0",
-        value_name = "f"
+        value_name = "f",
+        value_parser = ranged::<f64>(..-1.0)
     )]
     pub query_jump_penalty: f64,
 
@@ -128,7 +159,8 @@ pub struct AnnotationArgs {
         short = 'L',
         long = "skip-loop",
         default_value = "30",
-        value_name = "n"
+        value_name = "n",
+        value_parser = ranged::<usize>(1..)
     )]
     pub num_skip_loops_eq_to_jump: usize,
 
@@ -148,17 +180,19 @@ pub struct AnnotationArgs {
     #[arg(
         long = "join-likelihood-threshold",
         default_value = "0.25",
-        value_name = "f"
+        value_name = "f",
+        value_parser = ranged::<f64>(0.0..1.0)
     )]
     pub join_likelihood_threshold: f64,
 
-    /// The maximum overlap in the consensus at which
+    /// The maximum allowed overlap in the consensus at which
     /// a join is considered between compatible alignments.
     #[arg(
         short = 'O',
         long = "consensus-join-overlap",
         default_value = "200",
-        value_name = "n"
+        value_name = "n",
+        value_parser = ranged::<isize>(0..)
     )]
     pub consensus_join_overlap: isize,
 
@@ -167,14 +201,21 @@ pub struct AnnotationArgs {
     #[arg(
         short = 'C',
         long = "consensus-join-distance",
-        default_value = "3750",
-        value_name = "n"
+        default_value = "2500",
+        value_name = "n",
+        value_parser = ranged::<isize>(0..)
     )]
     pub consensus_join_distance: isize,
 
     /// The maximum seperation or overlap in nucleotides on both target and consensus
     /// for a join to be allowed between inverted alignments.
-    #[arg(long = "inversion-distance", default_value = "200", value_name = "n")]
+    #[arg(
+        short = 'I',
+        long = "inversion-distance",
+        default_value = "200",
+        value_name = "n",
+        value_parser = ranged::<isize>(0..)
+    )]
     pub inversion_distance: isize,
 
     /// The size of the window looked at to determine a single alignment score in nucleotides.
@@ -182,7 +223,8 @@ pub struct AnnotationArgs {
         short = 'W',
         long = "window-size",
         default_value = "31",
-        value_name = "n"
+        value_name = "n",
+        value_parser = ranged::<usize>(1..)
     )]
     pub score_window_size: usize,
 
@@ -191,7 +233,8 @@ pub struct AnnotationArgs {
         short = 'B',
         long = "background-window-size",
         default_value = "61",
-        value_name = "n"
+        value_name = "n",
+        value_parser = ranged::<usize>(1..)
     )]
     pub background_window_size: usize,
 
@@ -208,7 +251,8 @@ pub struct AnnotationArgs {
     #[arg(
         long = "min-segment-confidence",
         default_value = "0.1",
-        value_name = "f"
+        value_name = "f",
+        value_parser = ranged::<f64>(0.0..1.0)
     )]
     pub min_block_confidence: f64,
 
