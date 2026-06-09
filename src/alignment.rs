@@ -1,4 +1,5 @@
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
+use itertools::Itertools;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
@@ -520,7 +521,7 @@ impl AlignmentData {
         //   16: ACCT/GGA/TCT/CGTGGCCT/CGGGGGTTGGGGACCCCTG
         //   17: 14p41g.matrix
 
-        let substitution_matrices = VecMap::from(SubstitutionMatrix::parse(matrices));
+        let substitution_matrices = VecMap::from(SubstitutionMatrix::parse(matrices)?);
 
         let mut target_groups: Vec<TargetGroup> = vec![];
         let mut target_name_map: VecMap<String> = VecMap::new();
@@ -531,31 +532,47 @@ impl AlignmentData {
         let caf_lines = BufReader::new(caf).lines();
 
         caf_lines
-            .map(|l| l.expect("failed to read line"))
-            .filter(|l| !l.is_empty())
+            .filter_ok(|l| !l.is_empty())
             .enumerate()
-            .for_each(|(line_num, line)| {
+            .try_for_each(|(line_num, line_unchecked)| {
+                let error_msg =
+                    |msg, col| move || format!("{} at line '{}', column '{}'", msg, line_num, col);
+
+                let error_msg_str = |msg: String, col: usize| {
+                    move || format!("{} at line '{}', column '{}'", msg, line_num, col)
+                };
+
+                let line = line_unchecked?;
                 let tokens: Vec<&str> = line.split(',').collect();
 
+                if tokens.len() < 18 {
+                    return Err(anyhow!(
+                        "line {} does not have at least 18 columns!",
+                        line_num
+                    ));
+                }
+
                 let target_name = tokens[4].to_string();
-                let target_start =
-                    str::parse::<usize>(tokens[5]).expect("failed to parse target start");
-                let target_end =
-                    str::parse::<usize>(tokens[6]).expect("failed to parse target end");
+                let target_start = str::parse::<usize>(tokens[5])
+                    .with_context(error_msg("failed to parse target start", 5))?;
+                let target_end = str::parse::<usize>(tokens[6])
+                    .with_context(error_msg("failed to parse target end", 6))?;
                 let query_name = tokens[8].to_string();
-                let query_start =
-                    str::parse::<usize>(tokens[10]).expect("failed to parse query start");
-                let query_end = str::parse::<usize>(tokens[11]).expect("failed to parse query end");
-                let query_remaining =
-                    str::parse::<usize>(tokens[12]).expect("failed to parse query remaining");
+                let query_start = str::parse::<usize>(tokens[10])
+                    .with_context(error_msg("failed to parse query start", 10))?;
+                let query_end = str::parse::<usize>(tokens[11])
+                    .with_context(error_msg("failed to parse query end", 11))?;
+                let query_remaining = str::parse::<usize>(tokens[12])
+                    .with_context(error_msg("failed to parse query remaining", 12))?;
 
                 let strand = match tokens[13] {
-                    "0" => Strand::Forward,
-                    "1" => Strand::Reverse,
-                    _ => {
-                        panic!()
-                    }
-                };
+                    "0" => Ok(Strand::Forward),
+                    "1" => Ok(Strand::Reverse),
+                    v => Err(anyhow!(error_msg_str(
+                        format!("invalid strand value: '{}'", v),
+                        13
+                    )())),
+                }?;
 
                 let (query_start, query_end) = match strand {
                     Strand::Forward => (query_start, query_end),
@@ -595,7 +612,10 @@ impl AlignmentData {
                     .values()
                     .enumerate()
                     .find(|(_, m)| m.name == substitution_matrix_name)
-                    .expect("unknown substitution matrix")
+                    .with_context(error_msg_str(
+                        format!("unknown substitution matrix '{}'", substitution_matrix_name),
+                        17,
+                    ))?
                     .0;
 
                 target_group.alignments.push(Alignment {
@@ -610,7 +630,9 @@ impl AlignmentData {
                     query_id,
                     substitution_matrix_id,
                 });
-            });
+
+                Ok(())
+            })?;
 
         if let Some(buf) = ultra {
             let buf_reader = BufReader::new(buf);

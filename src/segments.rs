@@ -497,7 +497,13 @@ pub fn segments_from_matrix_trace(
             .collect_vec();
 
         // Compute scores and start/end points for all rows in this segment....
-        // TODO: This isn't fully correct, if we want it to be we need to track if this segment starts in, and if the segment ends in a skip state to compute correct transitions for history tracing...
+        // TODO: This isn't fully correct,
+        // if we want it to be identical to initial viterbi trace,
+        // we need to track if each block in this segment starts in the skip state,
+        // and if each block in each segment ends in a skip state to compute correct
+        // transitions for history tracing...
+        // This would require a few additional booleans/states for each block and adjustments
+        // to the history tracing to incorperate them...
         for column in seg.col_start..=seg.col_end {
             let rows = &matrix_definition.active_rows_by_col[column];
             let row_iter = rows

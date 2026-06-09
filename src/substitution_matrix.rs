@@ -1,8 +1,7 @@
-use std::{
-    fs::File,
-    io::{BufRead, BufReader, Read},
-    path::Path,
-};
+use std::io::{BufRead, BufReader, Read};
+
+use anyhow::{anyhow, Context};
+use itertools::Itertools;
 
 use crate::alphabet::{
     ALIGNMENT_ALPHABET_STR, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, STR_TO_DIGITAL_NUCLEOTIDE,
@@ -194,13 +193,7 @@ impl SubstitutionMatrix {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn from_file(path: impl AsRef<Path>) -> Vec<SubstitutionMatrix> {
-        let file = File::open(path).expect("failed to open matrix file");
-        SubstitutionMatrix::parse(file)
-    }
-
-    pub fn parse<R: Read>(matrix_buf: R) -> Vec<SubstitutionMatrix> {
+    pub fn parse<R: Read>(matrix_buf: R) -> anyhow::Result<Vec<SubstitutionMatrix>> {
         let mut matrices = vec![];
 
         let buf_reader = BufReader::new(matrix_buf);
@@ -208,9 +201,8 @@ impl SubstitutionMatrix {
 
         let mut lines: Vec<String> = buf_reader
             .lines()
-            .map(|l| l.expect("failed to read line"))
-            .filter(|l| !l.is_empty())
-            .collect();
+            .filter_ok(|l| !l.is_empty())
+            .try_collect()?;
 
         // add a single blank line to the
         // end to serve as a sentinel
@@ -232,26 +224,38 @@ impl SubstitutionMatrix {
         line_tokens
             .iter()
             .zip(line_tokens.iter().skip(1))
-            .for_each(|(tokens, next_tokens)| {
+            .enumerate()
+            .try_for_each(|(line_num, (tokens, next_tokens))| {
+                let error_msg = |msg| move || format!("{} at line {}", msg, line_num);
+
                 match state {
                     ParserState::Header => match tokens.first() {
                         Some(&"#matrix") => {
                             name = tokens[1].to_string();
                         }
                         Some(&"#gap-open") => {
-                            gap_open = tokens[1].parse::<f64>().expect("failed to parse float");
+                            gap_open = tokens[1]
+                                .parse::<f64>()
+                                .with_context(error_msg("failed to parse int"))?;
                         }
                         Some(&"#gap-ext") => {
-                            gap_extend = tokens[1].parse::<f64>().expect("failed to parse float");
+                            gap_extend = tokens[1]
+                                .parse::<f64>()
+                                .with_context(error_msg("failed to parse float"))?;
                         }
                         Some(&"#lambda") => {
-                            lambda = tokens[1].parse::<f64>().expect("failed to parse float");
+                            lambda = tokens[1]
+                                .parse::<f64>()
+                                .with_context(error_msg("failed to parse float"))?;
                         }
                         Some(&"#fi") => {
                             let freqs: Vec<f64> = tokens[1..=4]
                                 .iter()
-                                .map(|&f| f.parse::<f64>().expect("failed to parse float"))
-                                .collect();
+                                .map(|&f| {
+                                    f.parse::<f64>()
+                                        .with_context(error_msg("failed to parse float"))
+                                })
+                                .try_collect()?;
                             background_freqs_i
                                 .iter_mut()
                                 .zip(freqs)
@@ -260,14 +264,17 @@ impl SubstitutionMatrix {
                         Some(&"#fj") => {
                             let freqs: Vec<f64> = tokens[1..=4]
                                 .iter()
-                                .map(|&f| f.parse::<f64>().expect("failed to parse float"))
-                                .collect();
+                                .map(|&f| {
+                                    f.parse::<f64>()
+                                        .with_context(error_msg("failed to parse float"))
+                                })
+                                .try_collect()?;
                             background_freqs_j
                                 .iter_mut()
                                 .zip(freqs)
                                 .for_each(|(a, b)| *a = b);
                         }
-                        _ => panic!(),
+                        _ => return Err(anyhow!(error_msg("Unknown matrices file syntax!")())),
                     },
                     ParserState::Chars => {
                         chars = tokens.iter().map(|t| t.to_string()).collect();
@@ -275,8 +282,11 @@ impl SubstitutionMatrix {
                     ParserState::Scores => scores_vec.push(
                         tokens
                             .iter()
-                            .map(|t| t.parse::<f64>().expect("failed to parse float"))
-                            .collect(),
+                            .map(|t| {
+                                t.parse::<f64>()
+                                    .with_context(error_msg("failed to parse float"))
+                            })
+                            .try_collect()?,
                     ),
                 }
 
@@ -288,9 +298,12 @@ impl SubstitutionMatrix {
                     let char_indices: Vec<usize> = chars
                         .iter()
                         .map(|c| {
-                            (*STR_TO_DIGITAL_NUCLEOTIDE.get(c).expect("invalid char")) as usize
+                            STR_TO_DIGITAL_NUCLEOTIDE
+                                .get(c)
+                                .ok_or_else(|| anyhow!(error_msg("invalid char")()))
+                                .map(|v| *v as usize)
                         })
-                        .collect();
+                        .try_collect()?;
 
                     scores_vec
                         .iter()
@@ -321,26 +334,30 @@ impl SubstitutionMatrix {
                         scores,
                     ));
                     scores_vec = vec![];
+
+                    Ok::<_, anyhow::Error>(())
                 };
 
                 state = match next_tokens.first() {
                     Some(token) if token.starts_with('#') => {
                         if let ParserState::Scores = state {
-                            add_matrix()
+                            add_matrix()?;
                         }
                         ParserState::Header
                     }
                     Some(token) if token.parse::<f64>().is_err() => ParserState::Chars,
                     Some(token) if token.parse::<f64>().is_ok() => ParserState::Scores,
                     None => {
-                        add_matrix();
-                        return;
+                        add_matrix()?;
+                        return Ok(());
                     }
-                    _ => panic!(),
+                    _ => return Err(anyhow!(error_msg("Unknown syntax in matrices file!")())),
                 };
-            });
 
-        matrices
+                Ok(())
+            })?;
+
+        Ok(matrices)
     }
 }
 
@@ -432,7 +449,7 @@ mod tests {
             [0.0220, 0.1331, 0.0368, 0.9131],
         ];
 
-        let matrix_vec = SubstitutionMatrix::parse(matrix_buf);
+        let matrix_vec = SubstitutionMatrix::parse(matrix_buf)?;
         let matrix = matrix_vec.first().unwrap();
 
         matrix
@@ -477,7 +494,7 @@ mod tests {
             -30 -30 -30 -30 -30 -30 -30 -30 -30 -30 -30 -30"
             .as_bytes();
 
-        let matrix_vec = SubstitutionMatrix::parse(matrix_buf);
+        let matrix_vec = SubstitutionMatrix::parse(matrix_buf)?;
         let matrix = matrix_vec.first().unwrap();
 
         let correct: [[f64; 12]; 12] = [
@@ -568,7 +585,7 @@ mod tests {
             -30 -30 -30 -30 -30 -30 -30 -30 -30 -30 -30 -30"
             .as_bytes();
 
-        let matrix_vec = SubstitutionMatrix::parse(matrix_buf);
+        let matrix_vec = SubstitutionMatrix::parse(matrix_buf)?;
         let matrix = matrix_vec.first().unwrap();
 
         let mut ali: Vec<Alignment> = [

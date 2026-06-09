@@ -236,7 +236,7 @@ impl From<&BayesianJoinStatistics> for BayesianJoinEstimator {
                 statistics.joinable_consensus_neg.mean(),
                 statistics.joinable_consensus_pos.mean(),
             ),
-            // TODO: Replace with beta dist, better matches dists we see...
+            // TODO: Consider replacing with beta dist, better matches dists we see...
             consensus_distance_nojoin: AssymetricLaplace::symmetric_from_moments(
                 statistics.unjoinable_consensus.mean(),
                 statistics.unjoinable_consensus.standard_deviation(),

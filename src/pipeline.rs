@@ -205,7 +205,10 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
     .unwrap();
 
     confidence(&mut confidence_matrix);
-    let confidence_by_row = windowed_confidence(&mut confidence_matrix);
+    let confidence_by_row = windowed_confidence(
+        &mut confidence_matrix,
+        args.annotation_args.score_window_size,
+    );
 
     let segments;
     let simple_trace;

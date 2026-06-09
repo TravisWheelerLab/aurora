@@ -44,7 +44,7 @@ use std::{
 use alignment::AlignmentData;
 use chunks::ProximityGroup;
 
-use anyhow::{Ok, Result};
+use anyhow::{anyhow, Context, Ok, Result};
 use clap::{Args, Parser};
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -348,18 +348,18 @@ fn main() -> Result<()> {
         if let Result::Ok(metadata) = fs::metadata(&viz_args.viz_output_path) {
             if metadata.is_dir() {
                 // TODO: real error
-                panic!(
-                    "directory: {} already exists",
-                    viz_args.viz_output_path.to_str().unwrap()
-                )
+                return Result::Err(anyhow!(
+                    "directory: '{}' already exists",
+                    viz_args.viz_output_path.to_str().unwrap_or("?")
+                ));
             }
         }
 
-        create_dir_all(&viz_args.viz_output_path)?;
-        viz_args.viz_output_path = viz_args.viz_output_path.canonicalize()?;
-
         if let Some(path) = &viz_args.viz_reference_bed_path {
-            let file = File::open(path).expect("failed to open viz reference bed file");
+            let file = File::open(path).context(format!(
+                "failed to open viz reference bed file: '{}'",
+                path.to_str().unwrap_or("?")
+            ))?;
             let reader = BufReader::new(file);
 
             let mut chrom_list = vec![String::from("sentinel")];
@@ -369,36 +369,51 @@ fn main() -> Result<()> {
                 .lines()
                 .map(|l| l.unwrap())
                 .enumerate()
-                .for_each(|(line_num, line)| {
+                .try_for_each(|(line_num, line)| {
+                    let line_num_info = || format!("failed to read line {}", line);
+
                     let tokens: Vec<&str> = line.split_whitespace().collect();
                     let chrom = tokens[0].to_string();
-                    let start = tokens[1].parse::<usize>().expect("failed to parse int");
+                    let start = tokens[1].parse::<usize>().with_context(line_num_info)?;
 
-                    let last_chrom = chrom_list.last().expect("chrom list is empty");
+                    let last_chrom = chrom_list.last().context("chrom list is empty")?;
 
                     if chrom == *last_chrom {
                         if prev_start > start {
-                            panic!("bed file is unsorted");
+                            return Result::Err(anyhow!("bed file is unsorted"));
                         }
                     } else if !chrom_list.contains(&chrom) {
                         chrom_list.push(chrom.clone());
                         index.insert(chrom, line_num);
                     } else {
-                        panic!("bed file is unsorted");
+                        return Result::Err(anyhow!("bed file is unsorted"));
                     }
 
                     prev_start = start;
-                });
+
+                    Ok(())
+                })
+                .context(format!(
+                    "failed to parse bed file: '{}'",
+                    path.to_str().unwrap_or("?")
+                ))?;
 
             viz_args.viz_reference_bed_index = index;
         }
     }
 
-    let alignments_file = File::open(&args.alignments)?;
-    let matrices_file = File::open(&args.matrices)?;
+    let alignments_file = File::open(&args.alignments).context(format!(
+        "failed to open alignments file: '{}'",
+        args.alignments
+    ))?;
+    let matrices_file = File::open(&args.matrices)
+        .context(format!("failed to open matrices file: '{}'", args.matrices))?;
 
     let ultra_file = match args.ultra_args.ultra_file_path {
-        Some(ref path) => Some(File::open(path)?),
+        Some(ref path) => Some(File::open(path).context(format!(
+            "failed to open ultra file: '{}'",
+            path.to_str().unwrap_or("?")
+        ))?),
         None => None,
     };
 
@@ -422,22 +437,27 @@ fn main() -> Result<()> {
     if let Some(path) = &args.io_args.regions_path {
         let regions_file = File::create(path).unwrap();
         let mut regions_writer = BufWriter::new(regions_file);
-        proximity_groups.iter().enumerate().for_each(|(idx, g)| {
-            writeln!(
-                &mut regions_writer,
-                "{},{},{}:{},{}:{}",
-                idx,
-                alignment_data.target_name_map.get(g.target_id),
-                g.target_start,
-                g.target_end,
-                g.line_start,
-                g.line_end,
-            )
-            .expect("failed to write to regions file")
-        });
+        proximity_groups
+            .iter()
+            .enumerate()
+            .try_for_each(|(idx, g)| {
+                writeln!(
+                    &mut regions_writer,
+                    "{},{},{}:{},{}:{}",
+                    idx,
+                    alignment_data.target_name_map.get(g.target_id),
+                    g.target_start,
+                    g.target_end,
+                    g.line_start,
+                    g.line_end,
+                )
+                .context("failed to write to regions file")
+            })?;
     }
 
     if viz_args.viz {
+        create_dir_all(&viz_args.viz_output_path)?;
+        viz_args.viz_output_path = viz_args.viz_output_path.canonicalize()?;
         let mut index_file = File::create(viz_args.viz_output_path.join("index.html")).unwrap();
 
         write_index_file(
@@ -446,7 +466,7 @@ fn main() -> Result<()> {
             &proximity_groups,
             &viz_args.viz_constraints,
         )
-        .expect("failed to write to index.html");
+        .context("failed to write to index.html file for visualization")?;
     }
 
     debug_assert!(validate_groups(

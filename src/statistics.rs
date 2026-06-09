@@ -9,7 +9,6 @@ pub fn ln_add_exp(a: f64, b: f64) -> f64 {
     max + (min - max).exp().ln_1p()
 }
 
-// TODO: Support for generic floating types...
 #[allow(dead_code)]
 pub trait Distribution {
     fn pdf(&self, x: f64) -> f64;
