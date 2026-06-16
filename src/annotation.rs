@@ -108,7 +108,12 @@ fn get_strings(simple_annotations: &[SimpleAnnotation], simplify: bool) -> [Stri
     [
         get_mutli_option_string(simple_annotations, |v| v.target_start, simplify),
         get_mutli_option_string(simple_annotations, |v| v.target_end, simplify),
-        get_mutli_option_string(simple_annotations, |v| v.query_name.clone(), simplify),
+        get_mutli_option_string(
+            simple_annotations,
+            // Remove spaces as it breaks the format...
+            |v| v.query_name.replace(" ", "-"),
+            simplify,
+        ),
         get_mutli_option_string(simple_annotations, |v| v.query_start, simplify),
         get_mutli_option_string(simple_annotations, |v| v.query_end, simplify),
         get_mutli_option_string(simple_annotations, |v| v.strand, simplify),
@@ -127,7 +132,8 @@ impl AmbiguousAnnotation {
         format!(
             "{:w0$} {:w1$} {:w2$} {:w3$} {:w4$} {:w5$} {:w6$} {:w7$} {:4.3} {:w8$} {:w9$} {}",
             self.annotations.len(),
-            self.target_name,
+            // Remove spaces as it breaks the format...
+            self.target_name.replace(" ", "-"),
             ts,
             te,
             qn,

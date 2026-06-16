@@ -2,10 +2,8 @@ use crate::matrix::Matrix;
 
 /// Smooth the values of a confidence matrix by convolving it with a fixed size rectangular kernel that adds to 1.
 /// This is the same as averaging values over the window range.
-/// The current kernel size is hardcoded to 31.
-pub fn windowed_confidence(matrix: &mut Matrix<f64>) -> Vec<f64> {
-    // TODO: parameterize this
-    let half_window_size = 15usize;
+pub fn windowed_confidence(matrix: &mut Matrix<f64>, window_size: usize) -> Vec<f64> {
+    let half_window_size = (window_size - 1) / 2;
 
     let mut confidence_by_row = vec![0.0; matrix.num_rows()];
 
