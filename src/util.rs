@@ -1,3 +1,7 @@
+use std::io::{self};
+
+use itertools::Itertools;
+
 use crate::alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE;
 
 /// A simple Vec-based map that facilitates mapping
@@ -84,4 +88,17 @@ impl StrSliceExt for &str {
             })
             .collect()
     }
+}
+
+pub fn read_non_empty_lines(
+    readable: impl io::BufRead,
+) -> impl Iterator<Item = io::Result<(usize, String)>> {
+    readable
+        .lines()
+        .enumerate()
+        .map(|(lineno, v)| match v {
+            Ok(s) => Ok((lineno + 1, s)),
+            Err(e) => Err(e),
+        })
+        .filter_ok(|(_lineno, s)| !s.trim().is_empty())
 }

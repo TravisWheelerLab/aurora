@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufReader, Read};
 
 use anyhow::{anyhow, Context};
 use itertools::Itertools;
@@ -6,6 +6,7 @@ use itertools::Itertools;
 use crate::alphabet::{
     ALIGNMENT_ALPHABET_STR, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, STR_TO_DIGITAL_NUCLEOTIDE,
 };
+use crate::util::read_non_empty_lines;
 
 pub trait AlignmentScore {
     #[allow(dead_code)]
@@ -199,18 +200,15 @@ impl SubstitutionMatrix {
         let buf_reader = BufReader::new(matrix_buf);
         let mut state = ParserState::Header;
 
-        let mut lines: Vec<String> = buf_reader
-            .lines()
-            .filter_ok(|l| !l.is_empty())
-            .try_collect()?;
+        let mut lines: Vec<(usize, String)> = read_non_empty_lines(buf_reader).try_collect()?;
 
         // add a single blank line to the
         // end to serve as a sentinel
-        lines.push("".to_string());
+        lines.push((lines.last().map(|v| v.0).unwrap_or(1), "".to_string()));
 
-        let line_tokens: Vec<Vec<&str>> = lines
+        let line_tokens: Vec<(usize, Vec<&str>)> = lines
             .iter()
-            .map(|l| l.split_whitespace().collect::<Vec<&str>>())
+            .map(|l| (l.0, l.1.split_whitespace().collect::<Vec<&str>>()))
             .collect();
 
         let mut name = "".to_string();
@@ -224,8 +222,7 @@ impl SubstitutionMatrix {
         line_tokens
             .iter()
             .zip(line_tokens.iter().skip(1))
-            .enumerate()
-            .try_for_each(|(line_num, (tokens, next_tokens))| {
+            .try_for_each(|((line_num, tokens), (_, next_tokens))| {
                 let error_msg = |msg| move || format!("{} at line {}", msg, line_num);
 
                 match state {

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufReader, Read};
 use std::{fmt, hash};
 
 use serde::{ser::SerializeStruct, Serialize, Serializer};
@@ -12,7 +12,7 @@ use crate::alphabet::{
     NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, T_DIGITAL, UTF8_TO_DIGITAL_NUCLEOTIDE,
 };
 use crate::substitution_matrix::SubstitutionMatrix;
-use crate::util::{StrSliceExt, VecMap};
+use crate::util::{read_non_empty_lines, StrSliceExt, VecMap};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Strand {
@@ -528,118 +528,113 @@ impl AlignmentData {
         let mut query_lengths: HashMap<usize, usize> = HashMap::new();
         query_lengths.insert(0, 0);
 
-        let caf_lines = BufReader::new(caf).lines();
+        let caf_buffer = BufReader::new(caf);
 
-        caf_lines
-            .enumerate()
-            .try_for_each(|(line_num, line_unchecked)| {
-                let error_msg =
-                    |msg, col| move || format!("{} at line '{}', column '{}'", msg, line_num, col);
+        read_non_empty_lines(caf_buffer).try_for_each(|line_unchecked| {
+            let (line_num, line) = line_unchecked?;
 
-                let error_msg_str = |msg: String, col: usize| {
-                    move || format!("{} at line '{}', column '{}'", msg, line_num, col)
-                };
+            let error_msg =
+                |msg, col| move || format!("{} at line '{}', column '{}'", msg, line_num, col);
 
-                let line = line_unchecked?;
+            let error_msg_str = |msg: String, col: usize| {
+                move || format!("{} at line '{}', column '{}'", msg, line_num, col)
+            };
 
-                if line.is_empty() {
-                    return Ok(());
+            let tokens: Vec<&str> = line.split(',').collect();
+
+            if tokens.len() < 18 {
+                return Err(anyhow!(
+                    "line {} does not have at least 18 columns!",
+                    line_num
+                ));
+            }
+
+            let target_name = tokens[4].to_string();
+            let target_start = str::parse::<usize>(tokens[5])
+                .with_context(error_msg("failed to parse target start", 5))?;
+            let target_end = str::parse::<usize>(tokens[6])
+                .with_context(error_msg("failed to parse target end", 6))?;
+            let query_name = tokens[8].to_string();
+            let query_start = str::parse::<usize>(tokens[10])
+                .with_context(error_msg("failed to parse query start", 10))?;
+            let query_end = str::parse::<usize>(tokens[11])
+                .with_context(error_msg("failed to parse query end", 11))?;
+            let query_remaining = str::parse::<usize>(tokens[12])
+                .with_context(error_msg("failed to parse query remaining", 12))?;
+
+            let strand = match tokens[13] {
+                "0" => Ok(Strand::Forward),
+                "1" => Ok(Strand::Reverse),
+                v => Err(anyhow!(error_msg_str(
+                    format!("invalid strand value: '{}'", v),
+                    13
+                )())),
+            }?;
+
+            let (query_start, query_end) = match strand {
+                Strand::Forward => (query_start, query_end),
+                Strand::Reverse => (query_end, query_start),
+                _ => unreachable!(),
+            };
+
+            let (target_seq, query_seq) = caf_str_to_digital_nucleotides(tokens[16]);
+            let substitution_matrix_name = tokens[17].to_string();
+
+            let target_id = target_name_map.insert(target_name);
+            let target_group = match target_groups.get_mut(target_id) {
+                Some(group) => group,
+                None => {
+                    target_groups.push(TargetGroup {
+                        target_id,
+                        target_start,
+                        target_end,
+                        alignments: vec![],
+                        tandem_repeats: vec![],
+                    });
+                    target_groups.last_mut().unwrap()
                 }
+            };
 
-                let tokens: Vec<&str> = line.split(',').collect();
-
-                if tokens.len() < 18 {
-                    return Err(anyhow!(
-                        "line {} does not have at least 18 columns!",
-                        line_num
-                    ));
+            let query_id = query_name_map.insert(query_name);
+            match strand {
+                Strand::Forward => {
+                    query_lengths.insert(query_id, query_end + query_remaining);
                 }
-
-                let target_name = tokens[4].to_string();
-                let target_start = str::parse::<usize>(tokens[5])
-                    .with_context(error_msg("failed to parse target start", 5))?;
-                let target_end = str::parse::<usize>(tokens[6])
-                    .with_context(error_msg("failed to parse target end", 6))?;
-                let query_name = tokens[8].to_string();
-                let query_start = str::parse::<usize>(tokens[10])
-                    .with_context(error_msg("failed to parse query start", 10))?;
-                let query_end = str::parse::<usize>(tokens[11])
-                    .with_context(error_msg("failed to parse query end", 11))?;
-                let query_remaining = str::parse::<usize>(tokens[12])
-                    .with_context(error_msg("failed to parse query remaining", 12))?;
-
-                let strand = match tokens[13] {
-                    "0" => Ok(Strand::Forward),
-                    "1" => Ok(Strand::Reverse),
-                    v => Err(anyhow!(error_msg_str(
-                        format!("invalid strand value: '{}'", v),
-                        13
-                    )())),
-                }?;
-
-                let (query_start, query_end) = match strand {
-                    Strand::Forward => (query_start, query_end),
-                    Strand::Reverse => (query_end, query_start),
-                    _ => unreachable!(),
-                };
-
-                let (target_seq, query_seq) = caf_str_to_digital_nucleotides(tokens[16]);
-                let substitution_matrix_name = tokens[17].to_string();
-
-                let target_id = target_name_map.insert(target_name);
-                let target_group = match target_groups.get_mut(target_id) {
-                    Some(group) => group,
-                    None => {
-                        target_groups.push(TargetGroup {
-                            target_id,
-                            target_start,
-                            target_end,
-                            alignments: vec![],
-                            tandem_repeats: vec![],
-                        });
-                        target_groups.last_mut().unwrap()
-                    }
-                };
-
-                let query_id = query_name_map.insert(query_name);
-                match strand {
-                    Strand::Forward => {
-                        query_lengths.insert(query_id, query_end + query_remaining);
-                    }
-                    Strand::Reverse => {
-                        query_lengths.insert(query_id, query_start + query_remaining);
-                    }
-                    Strand::Unset => panic!(),
+                Strand::Reverse => {
+                    query_lengths.insert(query_id, query_start + query_remaining);
                 }
-                let substitution_matrix_id = substitution_matrices
-                    .values()
-                    .enumerate()
-                    .find(|(_, m)| m.name == substitution_matrix_name)
-                    .with_context(error_msg_str(
-                        format!("unknown substitution matrix '{}'", substitution_matrix_name),
-                        17,
-                    ))?
-                    .0;
+                Strand::Unset => panic!(),
+            }
+            let substitution_matrix_id = substitution_matrices
+                .values()
+                .enumerate()
+                .find(|(_, m)| m.name == substitution_matrix_name)
+                .with_context(error_msg_str(
+                    format!("unknown substitution matrix '{}'", substitution_matrix_name),
+                    17,
+                ))?
+                .0;
 
-                target_group.alignments.push(Alignment {
-                    target_seq,
-                    query_seq,
-                    target_start,
-                    target_end,
-                    query_start,
-                    query_end,
-                    strand,
-                    id: 0, // We fix this later, we don't know if these are sorted yet...
-                    query_id,
-                    substitution_matrix_id,
-                });
+            target_group.alignments.push(Alignment {
+                target_seq,
+                query_seq,
+                target_start,
+                target_end,
+                query_start,
+                query_end,
+                strand,
+                id: 0, // We fix this later, we don't know if these are sorted yet...
+                query_id,
+                substitution_matrix_id,
+            });
 
-                Ok(())
-            })?;
+            Ok(())
+        })?;
 
         if let Some(buf) = ultra {
             let buf_reader = BufReader::new(buf);
-            let ultra_json: UltraJson = serde_json::from_reader(buf_reader)?;
+            let ultra_json: UltraJson = serde_json::from_reader(buf_reader)
+                .context("Failed to load provided ultra file.")?;
             ultra_json
                 .repeats
                 .into_iter()
