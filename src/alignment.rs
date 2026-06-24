@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Context, Result};
-use itertools::Itertools;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
@@ -532,7 +531,6 @@ impl AlignmentData {
         let caf_lines = BufReader::new(caf).lines();
 
         caf_lines
-            .filter_ok(|l| !l.is_empty())
             .enumerate()
             .try_for_each(|(line_num, line_unchecked)| {
                 let error_msg =
@@ -543,6 +541,11 @@ impl AlignmentData {
                 };
 
                 let line = line_unchecked?;
+
+                if line.is_empty() {
+                    return Ok(());
+                }
+
                 let tokens: Vec<&str> = line.split(',').collect();
 
                 if tokens.len() < 18 {
@@ -626,7 +629,7 @@ impl AlignmentData {
                     query_start,
                     query_end,
                     strand,
-                    id: line_num + 1,
+                    id: 0, // We fix this later, we don't know if these are sorted yet...
                     query_id,
                     substitution_matrix_id,
                 });
@@ -663,16 +666,17 @@ impl AlignmentData {
                 });
         }
 
-        target_groups
-            .iter_mut()
-            .for_each(|g| g.alignments.sort_by(|a, b| a.id.cmp(&b.id)));
+        // Sort all alignment entries...
+        let mut ali_id = 0;
 
-        target_groups.iter().for_each(|g| {
-            debug_assert!(g
-                .alignments
-                .iter()
-                .zip(g.alignments.iter().skip(1))
-                .all(|(a, b)| a.target_start <= b.target_start));
+        target_groups.iter_mut().for_each(|g| {
+            g.alignments
+                .sort_by(|a, b| a.target_start.cmp(&b.target_start));
+
+            g.alignments.iter_mut().for_each(|v| {
+                v.id = ali_id;
+                ali_id += 1;
+            });
         });
 
         Ok(Self {
