@@ -19,7 +19,6 @@ pub struct RegionStatistics {
 pub struct QueryStatistics<T: JoinEstimator> {
     pub occurances: usize,
     pub coverage: usize,
-    pub target_span: usize,
     pub estimator: T,
 }
 
@@ -79,20 +78,16 @@ pub fn trace_statistics<S: JoinStatisticsCollector + Debug + Into<E>, E: JoinEst
     assert!(naive_traces
         .iter()
         .zip(naive_traces.iter().skip(1))
-        .all(|(v1, v2)| v1.region_index + 1 == v2.region_index && v1.target_end < v2.target_start));
+        .all(|(v1, v2)| v1.region_index + 1 == v2.region_index));
 
     let mut query_stats: Vec<QueryStatistics<E>> = vec![
         QueryStatistics {
             occurances: 0,
             coverage: 0,
-            target_span: 0,
             estimator: E::default(),
         };
         alignment_data.query_name_map.size()
     ];
-
-    let mut query_span: Vec<Option<(usize, usize)>> =
-        vec![None; alignment_data.query_name_map.size()];
 
     let mut all_region_stats: Vec<RegionStatistics> = Vec::with_capacity(naive_traces.len());
     // We combine stats for all families to use as a prior (psuedo-count, single sample) for all stats...
@@ -110,16 +105,6 @@ pub fn trace_statistics<S: JoinStatisticsCollector + Debug + Into<E>, E: JoinEst
                         if let Some(query_id) = blk.query_id {
                             query_stats[query_id].occurances += 1;
                             query_stats[query_id].coverage += blk.col_end - blk.col_start + 1;
-                            query_span[query_id] = match query_span[query_id] {
-                                None => Some((
-                                    trace_results.target_start + blk.col_start,
-                                    trace_results.target_start + blk.col_end,
-                                )),
-                                Some((start, end)) => Some((
-                                    start.min(trace_results.target_start + blk.col_start),
-                                    end.max(trace_results.target_start + blk.col_end),
-                                )),
-                            }
                         }
                     }
                 }
@@ -129,17 +114,6 @@ pub fn trace_statistics<S: JoinStatisticsCollector + Debug + Into<E>, E: JoinEst
                     query_stats[trace_blk.query_id].occurances += 1;
                     query_stats[trace_blk.query_id].coverage +=
                         trace_blk.col_end - trace_blk.col_start + 1;
-
-                    query_span[trace_blk.query_id] = match query_span[trace_blk.query_id] {
-                        None => Some((
-                            trace_results.target_start + trace_blk.col_start,
-                            trace_results.target_start + trace_blk.col_end,
-                        )),
-                        Some((start, end)) => Some((
-                            start.min(trace_results.target_start + trace_blk.col_start),
-                            end.max(trace_results.target_start + trace_blk.col_end),
-                        )),
-                    }
                 }
             }
         }
@@ -157,12 +131,7 @@ pub fn trace_statistics<S: JoinStatisticsCollector + Debug + Into<E>, E: JoinEst
         }
     }
 
-    for (query_info, query_span, join_stat) in
-        izip!(query_stats.iter_mut(), query_span.iter(), all_join_stats)
-    {
-        if let Some((start, end)) = query_span {
-            query_info.target_span = end - start + 1;
-        }
+    for (query_info, join_stat) in izip!(query_stats.iter_mut(), all_join_stats) {
         query_info.estimator = join_stat.into();
     }
 
