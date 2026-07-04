@@ -335,72 +335,11 @@ pub struct VisualizationArgs {
     /// Disable history tracing entirely, dumping only visuals.
     #[arg(long = "disable-tracing")]
     pub disable_tracing: bool,
-
-    #[clap(skip)]
-    pub viz_reference_bed_index: HashMap<String, usize>,
 }
 
 fn main() -> Result<()> {
     let mut args = AuroraArgs::parse();
     let viz_args = &mut args.visualization_args;
-
-    if viz_args.viz {
-        if let Result::Ok(metadata) = fs::metadata(&viz_args.viz_output_path) {
-            if metadata.is_dir() {
-                // TODO: real error
-                return Result::Err(anyhow!(
-                    "directory: '{}' already exists",
-                    viz_args.viz_output_path.to_str().unwrap_or("?")
-                ));
-            }
-        }
-
-        if let Some(path) = &viz_args.viz_reference_bed_path {
-            let file = File::open(path).context(format!(
-                "failed to open viz reference bed file: '{}'",
-                path.to_str().unwrap_or("?")
-            ))?;
-            let reader = BufReader::new(file);
-
-            let mut chrom_list = vec![String::from("sentinel")];
-            let mut prev_start = 0usize;
-            let mut index: HashMap<String, usize> = HashMap::new();
-            reader
-                .lines()
-                .map(|l| l.unwrap())
-                .enumerate()
-                .try_for_each(|(line_num, line)| {
-                    let line_num_info = || format!("failed to read line {}", line);
-
-                    let tokens: Vec<&str> = line.split_whitespace().collect();
-                    let chrom = tokens[0].to_string();
-                    let start = tokens[1].parse::<usize>().with_context(line_num_info)?;
-
-                    let last_chrom = chrom_list.last().context("chrom list is empty")?;
-
-                    if chrom == *last_chrom {
-                        if prev_start > start {
-                            return Result::Err(anyhow!("bed file is unsorted"));
-                        }
-                    } else if !chrom_list.contains(&chrom) {
-                        chrom_list.push(chrom.clone());
-                        index.insert(chrom, line_num);
-                    } else {
-                        return Result::Err(anyhow!("bed file is unsorted"));
-                    }
-
-                    prev_start = start;
-
-                    Ok(())
-                })
-                .context(format!(
-                    "failed to parse bed file: '{}'",
-                    path.to_str().unwrap_or("?")
-                ))?;
-
-            viz_args.viz_reference_bed_index = index;
-        }
-    }
 
     let alignments_file = File::open(&args.alignments).context(format!(
         "failed to open alignments file: '{}'",
@@ -455,19 +394,7 @@ fn main() -> Result<()> {
             })?;
     }
 
-    if viz_args.viz {
-        create_dir_all(&viz_args.viz_output_path)?;
-        viz_args.viz_output_path = viz_args.viz_output_path.canonicalize()?;
-        let mut index_file = File::create(viz_args.viz_output_path.join("index.html")).unwrap();
-
-        write_index_file(
-            &mut index_file,
-            &alignment_data,
-            &proximity_groups,
-            &viz_args.viz_constraints,
-        )
-        .context("failed to write to index.html file for visualization")?;
-    }
+    if viz_args.viz {}
 
     debug_assert!(validate_groups(
         &proximity_groups,
@@ -533,27 +460,6 @@ fn main() -> Result<()> {
         if let Some(amb_file_out) = ambiguity_file.as_mut() {
             AmbiguousAnnotation::write(annots, amb_file_out, false)?;
         }
-    }
-
-    if args.visualization_args.viz {
-        let mut family_stats_writer = File::create(
-            args.visualization_args
-                .viz_output_path
-                .join("family_stats.html"),
-        )?;
-        write_family_statistics(
-            &mut family_stats_writer,
-            &results,
-            &alignment_data.query_lengths,
-        )?;
-        let mut inv_stats_writer = File::create(
-            args.visualization_args
-                .viz_output_path
-                .join("inversion_stats.html"),
-        )?;
-        write_inversion_statistics(&mut inv_stats_writer, &results)?;
-        let mut icon_file = File::create(args.visualization_args.viz_output_path.join("icon.svg"))?;
-        icon_file.write_all(ICON_SVG.as_bytes())?;
     }
 
     Ok(())

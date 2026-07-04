@@ -20,7 +20,7 @@ use crate::{
     viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment},
     viz::{
         debug::{dump_debug_history_info, dump_final_trace_statistics},
-        AdjudicationSodaDataArgs, AdjudicationSodaWriter,
+        AdjudicationSodaDataArgs, RegionAdjudicationSodaWriter,
     },
     windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
     AuroraArgs,
@@ -149,7 +149,7 @@ pub struct NaiveTraceResults<T: JoinStatisticsCollector> {
     pub alignment_confidences: Vec<f64>,
     pub active_columns: Vec<(usize, usize)>,
     pub query_join_statistics: Vec<(usize, T)>,
-    pub viz_writer: AdjudicationSodaWriter,
+    pub viz_writer: Option<RegionAdjudicationSodaWriter>,
     pub region_index: usize,
 }
 
@@ -157,6 +157,7 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
     proximity_group: &ProximityGroup,
     alignment_data: &AlignmentData,
     region_idx: usize,
+    mut region_viz_writer: Option<RegionAdjudicationSodaWriter>,
     args: &AuroraArgs,
 ) -> NaiveTraceResults<T> {
     let annot_args = &args.annotation_args;
@@ -239,18 +240,12 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
         );
     }
 
-    let mut viz_writer = AdjudicationSodaWriter::new(
-        proximity_group,
-        alignment_data,
-        &args.visualization_args.viz_output_path,
-        region_idx,
-        &args.visualization_args.viz_constraints,
-    );
-
-    if args.visualization_args.viz && args.visualization_args.viz_enable_scores {
-        viz_writer
-            .write_confidences(&confidence_matrix)
-            .expect("Unable to write confidences!!!");
+    if let Some(viz_writer) = region_viz_writer.as_mut() {
+        if args.visualization_args.viz && args.visualization_args.viz_enable_scores {
+            viz_writer
+                .write_confidences(&confidence_matrix)
+                .expect("Unable to write confidences!!!");
+        }
     }
 
     let query_join_statistics = gather_join_statistics(
@@ -267,7 +262,7 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
         alignment_confidences: confidence_by_row,
         active_columns: get_active_columns(&confidence_matrix),
         query_join_statistics,
-        viz_writer,
+        viz_writer: region_viz_writer,
         region_index: region_idx,
     }
 }
@@ -336,27 +331,28 @@ pub fn run_history_trace<T: JoinEstimator, S: JoinStatisticsCollector>(
         naive_trace.region_index,
     );
 
-    if vis_args.viz {
-        naive_trace
-            .viz_writer
-            .write(AdjudicationSodaDataArgs {
-                group: proximity_group,
-                alignment_confidences: &naive_trace.alignment_confidences,
-                active_columns: &naive_trace.active_columns,
-                alignment_data,
-                annotations: &annotations,
-                target_seq: &build_target_seq_from_alignments(
-                    proximity_group.alignments,
-                    proximity_group.target_start,
-                    proximity_group.target_end - proximity_group.target_start + 1,
-                ),
-                trace: &refined_trace_segments,
-                segments,
-                history_counts: &get_history_lengths(&history),
-                links: &assembly_graph,
-                viz_args: vis_args,
-            })
-            .expect("Unable to write visualization!");
+    if let Some(viz_writer) = naive_trace.viz_writer.as_mut() {
+        if vis_args.viz {
+            viz_writer
+                .write(AdjudicationSodaDataArgs {
+                    group: proximity_group,
+                    alignment_confidences: &naive_trace.alignment_confidences,
+                    active_columns: &naive_trace.active_columns,
+                    alignment_data,
+                    annotations: &annotations,
+                    target_seq: &build_target_seq_from_alignments(
+                        proximity_group.alignments,
+                        proximity_group.target_start,
+                        proximity_group.target_end - proximity_group.target_start + 1,
+                    ),
+                    trace: &refined_trace_segments,
+                    segments,
+                    history_counts: &get_history_lengths(&history),
+                    links: &assembly_graph,
+                    viz_args: vis_args,
+                })
+                .expect("Unable to write visualization!");
+        }
     }
 
     annotations

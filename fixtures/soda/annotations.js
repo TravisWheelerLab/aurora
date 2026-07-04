@@ -1,3 +1,59 @@
+SODA_TARGET;
+
+let HTML_TEMPLATE = `
+  HTML_TARGET
+`;
+
+async function load_b64_gzip_json(text) {
+  let rawText;
+  if (Uint8Array.fromBase64) {
+    rawText = Uint8Array.fromBase64(text);
+  } else {
+    rawText = new Uint8Array(text.length);
+    for (let i = 0; i < text.length; i++)
+      rawText[i] = text.charCodeAt(i);
+  }
+
+  const ds = new DecompressionStream("gzip");
+  const blob = new Blob([rawText]);
+  const stream = blob.stream().pipeThrough(ds);
+  const blob_out = await new Response(stream).blob();
+  return JSON.parse(await blob_out.text());
+}
+
+async function bootstrap() {
+  let confidences = document.getElementById("confidences");
+  let data_elm = document.getElementById("data");
+
+  if (!data_elm) {
+    console.error("Unable to find annotation data.")
+    document.body.innerText = "Unable to find annotation data.";
+    return;
+  }
+
+  let data = load_b64_gzip_json(data.textContent);
+
+  if(confidences) {
+    data.alignmentConfidences = await load_b64_gzip_json(confidences.textContent);
+  }
+
+  window.auroraData = data;
+
+  let parser = new DOMParser();
+  let relative_path = document.getElementById("code").src.split("/").slice(0, -1);
+  let html_template = HTML_TEMPLATE
+    .replace("ICON_PATH_TARGET", [...relative_path, "icon.svg"].join("/"))
+    .replace("INDEX_PATH_TARGET", [...relative_path, "index.html"].join("/"));
+  let template_doc = parser.parseFromString(html_template, "text/html");
+
+  // Update the page...
+  document.head.append(...template_doc.head.children);
+  document.body = template_doc.body;
+
+  run(data);
+}
+
+
 function run(data) {
   document
     .querySelector(".container")
@@ -1654,3 +1710,7 @@ function run(data) {
     ]);
   }
 }
+
+document.addEventListener("DOMContentLoaded", function() {
+  bootstrap();
+});
