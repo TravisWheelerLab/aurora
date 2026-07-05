@@ -9,15 +9,14 @@ use crate::{
     viz::bed::BedRecord,
     viz::block::BlockGroup,
     viz::VizConstraint,
-    VisualizationArgs,
 };
 use itertools::Itertools;
-use std::collections::HashMap;
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader};
+use std::{collections::HashMap, path::PathBuf};
 
-pub struct AdjudicationSodaDataArgs<'a> {
+pub struct FullAdjudicationSodaDataArgs<'a> {
     pub group: &'a ProximityGroup<'a>,
     pub alignment_confidences: &'a [f64],
     pub active_columns: &'a [(usize, usize)],
@@ -28,10 +27,11 @@ pub struct AdjudicationSodaDataArgs<'a> {
     pub segments: &'a SegmentedMatrix,
     pub history_counts: &'a [usize],
     pub links: &'a SegmentAssemblyGraph,
-    //pub viz_args: &'a VisualizationArgs,
+    pub viz_bed_path: Option<&'a PathBuf>,
+    pub viz_bed_offset: Option<usize>,
 }
 
-pub(super) struct AdjudicationSodaData<'a> {
+pub struct AdjudicationSodaData<'a> {
     group: &'a ProximityGroup<'a>,
     alignment_confidences: &'a [f64],
     active_columns: &'a [(usize, usize)],
@@ -43,11 +43,12 @@ pub(super) struct AdjudicationSodaData<'a> {
     segments: &'a SegmentedMatrix,
     history_counts: &'a [usize],
     links: &'a SegmentAssemblyGraph,
-    //viz_args: &'a VisualizationArgs,
+    viz_bed_path: Option<&'a PathBuf>,
+    viz_bed_offset: Option<usize>,
 }
 
 impl<'a> AdjudicationSodaData<'a> {
-    pub fn new(args: AdjudicationSodaDataArgs<'a>) -> Self {
+    pub fn new(args: FullAdjudicationSodaDataArgs<'a>) -> Self {
         Self {
             group: args.group,
             alignment_confidences: args.alignment_confidences,
@@ -60,7 +61,8 @@ impl<'a> AdjudicationSodaData<'a> {
             segments: args.segments,
             history_counts: args.history_counts,
             links: args.links,
-            //viz_args: args.viz_args,
+            viz_bed_path: args.viz_bed_path,
+            viz_bed_offset: args.viz_bed_offset,
         }
     }
 
@@ -261,10 +263,7 @@ impl<'a> AdjudicationSodaData<'a> {
             .target_name_map
             .get(self.group.target_id);
 
-        if let (Some(path), Some(&offset)) = (
-            &self.viz_args.viz_reference_bed_path,
-            self.viz_args.viz_reference_bed_index.get(target_name),
-        ) {
+        if let (Some(path), Some(offset)) = (self.viz_bed_path, self.viz_bed_offset) {
             let file = File::open(path).expect("failed to open reference bed");
             let reader = BufReader::new(file);
             for line in reader.lines().skip(offset) {

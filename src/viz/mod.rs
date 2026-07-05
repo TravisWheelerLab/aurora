@@ -10,7 +10,7 @@ use data::*;
 use stats::*;
 
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     fs::{self, File},
     io::{self, BufRead, Write},
     num::ParseIntError,
@@ -23,12 +23,18 @@ use crate::{
     alignment::{Alignment, AlignmentData},
     alphabet::{ALIGNMENT_ALPHABET_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, SPACE_UTF8},
     annotation::AmbiguousAnnotation,
+    assembly::SegmentAssemblyGraph,
     chunks::ProximityGroup,
+    history_tracing::RefinedTraceSegment,
     matrix::Matrix,
+    segments::SegmentedMatrix,
+    util::VecMap,
 };
 use base64::prelude::*;
 use flate2::{write::GzEncoder, Compression};
 use itertools::Itertools;
+
+const SODA_JS: &str = include_str!("../../fixtures/soda/soda.js");
 
 #[derive(Clone, Debug)]
 pub struct VizConstraint {
@@ -127,13 +133,12 @@ impl Alignment {
 pub struct SodaVizWriter {
     viz_path: PathBuf,
     viz_ref_bed_path: Option<PathBuf>,
-    region_info: HashMap<usize, (String, usize, usize)>,
+    region_info: HashMap<usize, (usize, usize, usize)>,
     bed_index: Option<HashMap<String, usize>>,
     constraints: Vec<VizConstraint>,
 }
 
 impl SodaVizWriter {
-    const SODA_JS: &str = include_str!("../../fixtures/soda/soda.js");
     pub const ICON_SVG: &str = include_str!("../../fixtures/soda/icon-opt.svg");
     const INDEX_TEMPLATE: &str = include_str!("../../fixtures/soda/index.html");
     const HTML_TEMPLATE: &'static str = include_str!("../../fixtures/soda/annotations.html");
@@ -220,7 +225,8 @@ impl SodaVizWriter {
 
     fn write_index_file(
         writer: &mut impl Write,
-        region_links: &HashMap<usize, (String, usize, usize)>,
+        region_links: &HashMap<usize, (usize, usize, usize)>,
+        target_name_map: &VecMap<String>,
         viz_constraints: &[VizConstraint],
     ) -> std::io::Result<()> {
         let mut index_links = String::new();
@@ -238,10 +244,10 @@ impl SodaVizWriter {
                 ));
             });
 
-        region_links.iter().sorted_by_key(|v| v.0).for_each(|(idx, (target_name, start, end))| {
+        region_links.iter().sorted_by_key(|v| v.0).for_each(|(idx, (target_id, start, end))| {
             index_links.push_str(&format!(
                 "<div class=\"region\" data-target=\"{name}\" data-start=\"{start}\" data-end=\"{end}\"><a href=\"{idx}/index.html\"><h3>region {idx} | {name} {start}:{end}</h3></a></div>\n",
-                name = target_name,
+                name = target_name_map.get(*target_id),
                 start = start,
                 end = end,
                 idx = idx,
@@ -255,9 +261,49 @@ impl SodaVizWriter {
         )
     }
 
+    pub fn new_region(
+        &mut self,
+        proximity_group: &ProximityGroup,
+        alignment_data: &AlignmentData,
+        region_idx: usize,
+    ) -> Option<RegionAdjudicationSodaWriter> {
+        let entry = self.region_info.entry(region_idx);
+
+        if let Entry::Occupied(_) = entry {
+            return None;
+        }
+
+        entry.insert_entry((
+            proximity_group.target_id,
+            proximity_group.target_start,
+            proximity_group.target_end,
+        ));
+
+        Some(RegionAdjudicationSodaWriter::new(
+            proximity_group,
+            alignment_data,
+            &self.viz_path,
+            region_idx,
+            &self.constraints,
+            self.viz_ref_bed_path.as_ref(),
+            self.bed_index
+                .as_ref()
+                .map(|v| {
+                    v.get(
+                        alignment_data
+                            .target_name_map
+                            .get(proximity_group.target_id),
+                    )
+                    .copied()
+                })
+                .flatten(),
+        ))
+    }
+
     pub fn finalize(
         &self,
         annotations: &[(usize, Vec<AmbiguousAnnotation>)],
+        target_name_map: &VecMap<String>,
         query_lengths: &HashMap<usize, usize>,
     ) -> io::Result<()> {
         let mut family_stats_writer = File::create(self.viz_path.join("family_stats.html"))?;
@@ -268,15 +314,20 @@ impl SodaVizWriter {
         icon_file.write_all(Self::ICON_SVG.as_bytes())?;
 
         let mut index_file = File::create(self.viz_path.join("index.html"))?;
-        Self::write_index_file(&mut index_file, &self.region_info, &self.constraints);
+        Self::write_index_file(
+            &mut index_file,
+            &self.region_info,
+            target_name_map,
+            &self.constraints,
+        )?;
 
         let mut js_file = File::create(self.viz_path.join("annotations.js"))?;
         writeln!(
             &mut js_file,
             "{}",
             Self::JS
-                .replace("SODA_TARGET", Self::SODA_JS)
                 .replace("HTML_TARGET", Self::HTML_TEMPLATE)
+                .replace("SODA_TARGET", SODA_JS)
         )?;
 
         Ok(())
@@ -289,6 +340,8 @@ pub struct RegionAdjudicationSodaWriter {
     has_dumped_confidences: bool,
     finished: bool,
     constraints: Vec<VizConstraint>,
+    viz_bed_path: Option<PathBuf>,
+    viz_bed_offset: Option<usize>,
 }
 
 fn to_safe_compressed_string(data: &str) -> io::Result<String> {
@@ -296,6 +349,19 @@ fn to_safe_compressed_string(data: &str) -> io::Result<String> {
     encoder.write_all(data.as_bytes())?;
     let bytes = encoder.finish()?;
     Ok(BASE64_STANDARD.encode(bytes))
+}
+
+pub struct AdjudicationSodaDataArgs<'a> {
+    pub group: &'a ProximityGroup<'a>,
+    pub alignment_confidences: &'a [f64],
+    pub active_columns: &'a [(usize, usize)],
+    pub alignment_data: &'a AlignmentData,
+    pub annotations: &'a [AmbiguousAnnotation],
+    pub target_seq: &'a [u8],
+    pub trace: &'a Vec<RefinedTraceSegment>,
+    pub segments: &'a SegmentedMatrix,
+    pub history_counts: &'a [usize],
+    pub links: &'a SegmentAssemblyGraph,
 }
 
 impl RegionAdjudicationSodaWriter {
@@ -307,6 +373,8 @@ impl RegionAdjudicationSodaWriter {
         viz_path: &impl AsRef<Path>,
         region_idx: usize,
         constraints: &[VizConstraint],
+        viz_bed_path: Option<&impl AsRef<Path>>,
+        viz_bed_offset: Option<usize>,
     ) -> Self {
         Self {
             viz_path: viz_path.as_ref().to_path_buf(),
@@ -327,6 +395,8 @@ impl RegionAdjudicationSodaWriter {
                 })
                 .cloned()
                 .collect_vec(),
+            viz_bed_path: viz_bed_path.map(|v| v.as_ref().to_path_buf()),
+            viz_bed_offset: viz_bed_offset,
         }
     }
 
@@ -379,7 +449,7 @@ impl RegionAdjudicationSodaWriter {
         let html_start = html_start
             .replace("REGION_INDEX", &self.region_idx.to_string())
             .replace(
-                "CONFIDENCE_TARGET",
+                "CONFIDENCES_TARGET",
                 &to_safe_compressed_string(&self.confidence_json(confidence_matrix)?)?,
             );
 
@@ -451,7 +521,20 @@ impl RegionAdjudicationSodaWriter {
             return Err(io::Error::other("Already fully written the visual!"));
         }
 
-        let mut soda_data = AdjudicationSodaData::new(args);
+        let mut soda_data = AdjudicationSodaData::new(FullAdjudicationSodaDataArgs {
+            group: args.group,
+            alignment_confidences: args.alignment_confidences,
+            active_columns: args.active_columns,
+            alignment_data: args.alignment_data,
+            annotations: args.annotations,
+            target_seq: args.target_seq,
+            trace: args.trace,
+            segments: args.segments,
+            history_counts: args.history_counts,
+            links: args.links,
+            viz_bed_path: self.viz_bed_path.as_ref(),
+            viz_bed_offset: self.viz_bed_offset,
+        });
         let html_end = Self::DATA_TEMPLATE
             .split_once("FILE_SPLIT_POINT")
             .ok_or(io::Error::other(
@@ -489,8 +572,8 @@ impl RegionAdjudicationSodaWriter {
     fn write_single(
         &self,
         path: &PathBuf,
-        js_path: &str,
         template: &str,
+        js_path: &str,
         args: &mut AdjudicationSodaData,
         constraint: Option<&VizConstraint>,
     ) -> io::Result<()> {

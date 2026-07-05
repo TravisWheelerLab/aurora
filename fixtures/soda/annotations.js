@@ -31,7 +31,7 @@ async function bootstrap() {
     return;
   }
 
-  let data = load_b64_gzip_json(data.textContent);
+  let data = await load_b64_gzip_json(data_elm.textContent);
 
   if(confidences) {
     data.alignmentConfidences = await load_b64_gzip_json(confidences.textContent);

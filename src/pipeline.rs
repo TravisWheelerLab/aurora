@@ -241,7 +241,7 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
     }
 
     if let Some(viz_writer) = region_viz_writer.as_mut() {
-        if args.visualization_args.viz && args.visualization_args.viz_enable_scores {
+        if args.visualization_args.viz_enable_scores {
             viz_writer
                 .write_confidences(&confidence_matrix)
                 .expect("Unable to write confidences!!!");
@@ -332,27 +332,24 @@ pub fn run_history_trace<T: JoinEstimator, S: JoinStatisticsCollector>(
     );
 
     if let Some(viz_writer) = naive_trace.viz_writer.as_mut() {
-        if vis_args.viz {
-            viz_writer
-                .write(AdjudicationSodaDataArgs {
-                    group: proximity_group,
-                    alignment_confidences: &naive_trace.alignment_confidences,
-                    active_columns: &naive_trace.active_columns,
-                    alignment_data,
-                    annotations: &annotations,
-                    target_seq: &build_target_seq_from_alignments(
-                        proximity_group.alignments,
-                        proximity_group.target_start,
-                        proximity_group.target_end - proximity_group.target_start + 1,
-                    ),
-                    trace: &refined_trace_segments,
-                    segments,
-                    history_counts: &get_history_lengths(&history),
-                    links: &assembly_graph,
-                    viz_args: vis_args,
-                })
-                .expect("Unable to write visualization!");
-        }
+        viz_writer
+            .write(AdjudicationSodaDataArgs {
+                group: proximity_group,
+                alignment_confidences: &naive_trace.alignment_confidences,
+                active_columns: &naive_trace.active_columns,
+                alignment_data,
+                annotations: &annotations,
+                target_seq: &build_target_seq_from_alignments(
+                    proximity_group.alignments,
+                    proximity_group.target_start,
+                    proximity_group.target_end - proximity_group.target_start + 1,
+                ),
+                trace: &refined_trace_segments,
+                segments,
+                history_counts: &get_history_lengths(&history),
+                links: &assembly_graph,
+            })
+            .expect("Unable to write visualization!");
     }
 
     annotations

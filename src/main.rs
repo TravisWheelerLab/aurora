@@ -33,10 +33,9 @@ mod windowed_scores;
 
 use core::ops::RangeBounds;
 use std::{
-    collections::HashMap,
     fmt::Debug,
-    fs::{self, create_dir_all, File},
-    io::{BufRead, BufReader, BufWriter, Write},
+    fs::File,
+    io::{BufWriter, Write},
     ops::Bound,
     path::PathBuf,
 };
@@ -44,7 +43,7 @@ use std::{
 use alignment::AlignmentData;
 use chunks::ProximityGroup;
 
-use anyhow::{anyhow, Context, Ok, Result};
+use anyhow::{Context, Ok, Result};
 use clap::{Args, Parser};
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -58,10 +57,7 @@ use crate::{
     join_estimation::{BayesianJoinEstimator, BayesianJoinStatistics},
     pipeline::{run_history_trace, run_naive_trace, NaiveTraceResults},
     trace_statistics::{trace_statistics, OccuranceCountingMode, TraceStatistics},
-    viz::{
-        stats::{write_family_statistics, write_inversion_statistics},
-        write_index_file, ICON_SVG,
-    },
+    viz::SodaVizWriter,
 };
 
 #[cfg(not(target_env = "msvc"))]
@@ -394,7 +390,15 @@ fn main() -> Result<()> {
             })?;
     }
 
-    if viz_args.viz {}
+    let mut soda_viz = if viz_args.viz {
+        Some(SodaVizWriter::new(
+            &viz_args.viz_output_path,
+            viz_args.viz_reference_bed_path.as_ref(),
+            &viz_args.viz_constraints,
+        )?)
+    } else {
+        None
+    };
 
     debug_assert!(validate_groups(
         &proximity_groups,
@@ -418,11 +422,23 @@ fn main() -> Result<()> {
         .build_global()
         .unwrap();
 
+    let mut region_vizs = Vec::new();
+
+    for (idx, group) in proximity_groups.iter().enumerate() {
+        region_vizs.push(soda_viz.as_mut().map(|v| {
+            v.new_region(group, &alignment_data, idx)
+                .expect("Tried to make the same region twice!")
+        }));
+    }
+
     let mut naive_results = proximity_groups
         .par_iter()
         .panic_fuse()
+        .zip(region_vizs)
         .enumerate()
-        .map(|(region_idx, group)| run_naive_trace(group, &alignment_data, region_idx, &args))
+        .map(|(region_idx, (group, viz_gen))| {
+            run_naive_trace(group, &alignment_data, region_idx, viz_gen, &args)
+        })
         .collect::<Vec<NaiveTraceResults<BayesianJoinStatistics>>>();
     naive_results.sort_by_key(|v| v.region_index);
 
@@ -461,6 +477,17 @@ fn main() -> Result<()> {
             AmbiguousAnnotation::write(annots, amb_file_out, false)?;
         }
     }
+
+    soda_viz
+        .map(|v| {
+            v.finalize(
+                &results,
+                &alignment_data.target_name_map,
+                &alignment_data.query_lengths,
+            )
+        })
+        .transpose()
+        .context("Failed to finalize visual!")?;
 
     Ok(())
 }
