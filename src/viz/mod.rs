@@ -10,7 +10,7 @@ use data::*;
 use stats::*;
 
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::HashMap,
     fs::{self, File},
     io::{self, BufRead, Write},
     num::ParseIntError,
@@ -34,8 +34,6 @@ use crate::{
 };
 use base64::prelude::*;
 use itertools::Itertools;
-
-const SODA_JS: &str = include_str!("../../fixtures/soda/soda.js");
 
 #[derive(Clone, Debug)]
 pub struct VizConstraint {
@@ -134,12 +132,12 @@ impl Alignment {
 pub struct SodaVizWriter {
     viz_path: PathBuf,
     viz_ref_bed_path: Option<PathBuf>,
-    region_info: HashMap<usize, (usize, usize, usize)>,
-    bed_index: Option<HashMap<String, usize>>,
+    bed_index: Option<Vec<(u64, usize)>>,
     constraints: Vec<VizConstraint>,
 }
 
 impl SodaVizWriter {
+    pub const SODA_JS: &str = include_str!("../../fixtures/soda/soda.js");
     pub const ICON_SVG: &'static str = include_str!("../../fixtures/soda/icon-opt.svg");
     const INDEX_TEMPLATE: &'static str = include_str!("../../fixtures/soda/index.html");
     const FZSTD_JS: &'static str = include_str!("../../fixtures/soda/fzstd.js");
@@ -147,6 +145,8 @@ impl SodaVizWriter {
     const JS: &'static str = include_str!("../../fixtures/soda/annotations.js");
 
     pub fn new(
+        proximity_groups: &[ProximityGroup],
+        target_name_map: &VecMap<String>,
         viz_path: &impl AsRef<Path>,
         viz_ref_bed_path: Option<&impl AsRef<Path>>,
         constraints: &[VizConstraint],
@@ -168,6 +168,16 @@ impl SodaVizWriter {
 
         let bed_index = match &viz_ref_bed_buf {
             Some(path) => {
+                let mut target_groups: HashMap<&String, (usize, usize)> = HashMap::new();
+
+                for (i, grp) in proximity_groups.iter().enumerate() {
+                    let entry = target_groups
+                        .entry(target_name_map.get(grp.target_id))
+                        .or_insert((i, i + 1));
+                    entry.0 = entry.0.min(i);
+                    entry.1 = entry.1.max(i + 1);
+                }
+
                 let file = File::open(path).context(format!(
                     "failed to open viz reference bed file: '{}'",
                     path.to_str().unwrap_or("?")
@@ -176,17 +186,39 @@ impl SodaVizWriter {
 
                 let mut chrom_list = vec![String::from("sentinel")];
                 let mut prev_start = 0usize;
-                let mut index: HashMap<String, usize> = HashMap::new();
+
+                let mut line_start = 0u64;
+
+                let mut group_end: usize = 0;
+                let mut group_offset: usize = 0;
+
+                // File offset, first line (inclusive), last line (exclusive).
+                let mut index: Vec<Option<(u64, usize, usize)>> =
+                    vec![None; proximity_groups.len()];
                 reader
                     .lines()
-                    .map(|l| l.unwrap())
                     .enumerate()
-                    .try_for_each(|(line_num, line)| {
-                        let line_num_info = || format!("failed to read line {}", line);
+                    .try_for_each(|(line_num, res_line)| {
+                        let line = res_line?;
+                        let trimmed_line = line.trim();
 
-                        let tokens: Vec<&str> = line.split_whitespace().collect();
+                        if trimmed_line.is_empty() {
+                            line_start += line.len() as u64 + 1;
+                            return Ok(());
+                        }
+
+                        let line_num_info = || format!("failed to read line {}", line_num + 1);
+
+                        let tokens: Vec<&str> = trimmed_line.split_whitespace().collect();
+
+                        if tokens.len() < 3 {
+                            return Result::Err(anyhow!("line doesn't have at least 3 columns!"))
+                                .with_context(line_num_info);
+                        }
+
                         let chrom = tokens[0].to_string();
                         let start = tokens[1].parse::<usize>().with_context(line_num_info)?;
+                        let end = tokens[2].parse::<usize>().with_context(line_num_info)?;
 
                         let last_chrom = chrom_list.last().context("chrom list is empty")?;
 
@@ -196,12 +228,29 @@ impl SodaVizWriter {
                             }
                         } else if !chrom_list.contains(&chrom) {
                             chrom_list.push(chrom.clone());
-                            index.insert(chrom, line_num);
+                            let range = target_groups.get(&chrom).unwrap_or(&(0, 0));
+                            group_offset = range.0;
+                            group_end = range.1;
                         } else {
                             return Result::Err(anyhow!("bed file is unsorted"));
                         }
 
+                        while group_offset < group_end
+                            && (start > proximity_groups[group_offset].target_end)
+                        {
+                            group_offset += 1;
+                        }
+
+                        if group_offset < group_end
+                            && end >= proximity_groups[group_offset].target_start
+                        {
+                            let entry =
+                                index[group_offset].get_or_insert((line_start, line_num, line_num));
+                            entry.2 = line_num + 1;
+                        }
+
                         prev_start = start;
+                        line_start += line.len() as u64 + 1; // Include the \n
 
                         Ok(())
                     })
@@ -219,15 +268,23 @@ impl SodaVizWriter {
         Ok(Self {
             viz_path: viz_path_buf,
             viz_ref_bed_path: viz_ref_bed_buf,
-            region_info: HashMap::new(),
-            bed_index,
+            bed_index: bed_index.map(|v| {
+                v.iter()
+                    .map(|v| match v {
+                        Some((file_start, first_line, last_line)) => {
+                            (*file_start, last_line - first_line)
+                        }
+                        None => (0, 0),
+                    })
+                    .collect_vec()
+            }),
             constraints: constraints.into(),
         })
     }
 
     fn write_index_file(
         writer: &mut impl Write,
-        region_links: &HashMap<usize, (usize, usize, usize)>,
+        regions: &[ProximityGroup],
         target_name_map: &VecMap<String>,
         viz_constraints: &[VizConstraint],
     ) -> std::io::Result<()> {
@@ -246,12 +303,12 @@ impl SodaVizWriter {
                 ));
             });
 
-        region_links.iter().sorted_by_key(|v| v.0).for_each(|(idx, (target_id, start, end))| {
+        regions.iter().enumerate().for_each(|(idx, group)| {
             index_links.push_str(&format!(
                 "<div class=\"region\" data-target=\"{name}\" data-start=\"{start}\" data-end=\"{end}\"><a href=\"{idx}/index.html\"><h3>region {idx} | {name} {start}:{end}</h3></a></div>\n",
-                name = target_name_map.get(*target_id),
-                start = start,
-                end = end,
+                name = target_name_map.get(*&group.target_id),
+                start = group.target_start,
+                end = group.target_end,
                 idx = idx,
             ));
         });
@@ -264,46 +321,25 @@ impl SodaVizWriter {
     }
 
     pub fn new_region(
-        &mut self,
+        &self,
         proximity_group: &ProximityGroup,
         alignment_data: &AlignmentData,
         region_idx: usize,
-    ) -> Option<RegionAdjudicationSodaWriter> {
-        let entry = self.region_info.entry(region_idx);
-
-        if let Entry::Occupied(_) = entry {
-            return None;
-        }
-
-        entry.insert_entry((
-            proximity_group.target_id,
-            proximity_group.target_start,
-            proximity_group.target_end,
-        ));
-
-        Some(RegionAdjudicationSodaWriter::new(
+    ) -> RegionAdjudicationSodaWriter {
+        RegionAdjudicationSodaWriter::new(
             proximity_group,
             alignment_data,
             &self.viz_path,
             region_idx,
             &self.constraints,
             self.viz_ref_bed_path.as_ref(),
-            self.bed_index
-                .as_ref()
-                .map(|v| {
-                    v.get(
-                        alignment_data
-                            .target_name_map
-                            .get(proximity_group.target_id),
-                    )
-                    .copied()
-                })
-                .flatten(),
-        ))
+            self.bed_index.as_ref().map(|b| b[region_idx]),
+        )
     }
 
     pub fn finalize(
         &self,
+        proximity_groups: &[ProximityGroup],
         annotations: &[(usize, Vec<AmbiguousAnnotation>)],
         target_name_map: &VecMap<String>,
         query_lengths: &HashMap<usize, usize>,
@@ -318,19 +354,18 @@ impl SodaVizWriter {
         let mut index_file = File::create(self.viz_path.join("index.html"))?;
         Self::write_index_file(
             &mut index_file,
-            &self.region_info,
+            proximity_groups,
             target_name_map,
             &self.constraints,
         )?;
 
         let mut js_file = File::create(self.viz_path.join("annotations.js"))?;
-        writeln!(
-            &mut js_file,
-            "{}",
+        js_file.write_all(
             Self::JS
                 .replace("HTML_TARGET", Self::HTML_TEMPLATE)
                 .replace("FZSTD_TARGET", Self::FZSTD_JS)
-                .replace("SODA_TARGET", SODA_JS)
+                .replace("SODA_TARGET", Self::SODA_JS)
+                .as_bytes(),
         )?;
 
         Ok(())
@@ -344,7 +379,7 @@ pub struct RegionAdjudicationSodaWriter {
     finished: bool,
     constraints: Vec<VizConstraint>,
     viz_bed_path: Option<PathBuf>,
-    viz_bed_offset: Option<usize>,
+    viz_bed_offset: Option<(u64, usize)>,
 }
 
 fn to_safe_compressed_string(data: &str) -> io::Result<String> {
@@ -375,7 +410,7 @@ impl RegionAdjudicationSodaWriter {
         region_idx: usize,
         constraints: &[VizConstraint],
         viz_bed_path: Option<&impl AsRef<Path>>,
-        viz_bed_offset: Option<usize>,
+        viz_bed_offset: Option<(u64, usize)>,
     ) -> Self {
         Self {
             viz_path: viz_path.as_ref().to_path_buf(),

@@ -11,10 +11,13 @@ use crate::{
     viz::VizConstraint,
 };
 use itertools::Itertools;
-use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader};
 use std::{collections::HashMap, path::PathBuf};
+use std::{
+    fs::File,
+    io::{Seek, SeekFrom},
+};
 
 pub struct FullAdjudicationSodaDataArgs<'a> {
     pub group: &'a ProximityGroup<'a>,
@@ -28,7 +31,7 @@ pub struct FullAdjudicationSodaDataArgs<'a> {
     pub history_counts: &'a [usize],
     pub links: &'a SegmentAssemblyGraph,
     pub viz_bed_path: Option<&'a PathBuf>,
-    pub viz_bed_offset: Option<usize>,
+    pub viz_bed_offset: Option<(u64, usize)>,
 }
 
 pub struct AdjudicationSodaData<'a> {
@@ -44,7 +47,7 @@ pub struct AdjudicationSodaData<'a> {
     history_counts: &'a [usize],
     links: &'a SegmentAssemblyGraph,
     viz_bed_path: Option<&'a PathBuf>,
-    viz_bed_offset: Option<usize>,
+    viz_bed_offset: Option<(u64, usize)>,
 }
 
 impl<'a> AdjudicationSodaData<'a> {
@@ -265,15 +268,23 @@ impl<'a> AdjudicationSodaData<'a> {
 
         if let (Some(path), Some(offset)) = (self.viz_bed_path, self.viz_bed_offset) {
             let file = File::open(path).expect("failed to open reference bed");
-            let reader = BufReader::new(file);
-            for line in reader.lines().skip(offset) {
-                let line = line?;
+            let mut reader = BufReader::new(file);
+
+            reader.seek(SeekFrom::Start(offset.0))?;
+
+            for raw_line in reader.lines().take(offset.1) {
+                let raw_line = raw_line?;
+                let line = raw_line.trim();
+
+                if line.is_empty() {
+                    continue;
+                }
 
                 let tokens: Vec<&str> = line.split_whitespace().collect();
 
                 let target = tokens[0];
                 if target != target_name {
-                    continue;
+                    break;
                 }
 
                 let thick_start = tokens[6].parse::<usize>().expect("failed to parse usize");

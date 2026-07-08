@@ -5,7 +5,7 @@ use crate::{
         block_target_distance, relative_consensus_distance, ConsensusDistanceNormalization,
     },
     segments::{Block, Unordered},
-    viz::SODA_JS,
+    viz::SodaVizWriter,
 };
 use core::str;
 use itertools::Itertools;
@@ -58,7 +58,7 @@ fn write_statistics_table_page<const N: usize, A: std::fmt::Display, B: std::fmt
 
     let table_page = TABLE_HTML
         .replace("PAGE_TITLE", title)
-        .replace("SODA_TARGET", SODA_JS)
+        .replace("SODA_TARGET", SodaVizWriter::SODA_JS)
         .replace(
             "TSV_TARGET",
             str::from_utf8(&tmp_writer).expect("UTF8 decoding failed!"),

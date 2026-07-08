@@ -390,8 +390,10 @@ fn main() -> Result<()> {
             })?;
     }
 
-    let mut soda_viz = if viz_args.viz {
+    let soda_viz = if viz_args.viz {
         Some(SodaVizWriter::new(
+            &proximity_groups,
+            &alignment_data.target_name_map,
             &viz_args.viz_output_path,
             viz_args.viz_reference_bed_path.as_ref(),
             &viz_args.viz_constraints,
@@ -422,22 +424,15 @@ fn main() -> Result<()> {
         .build_global()
         .unwrap();
 
-    let mut region_vizs = Vec::new();
-
-    for (idx, group) in proximity_groups.iter().enumerate() {
-        region_vizs.push(soda_viz.as_mut().map(|v| {
-            v.new_region(group, &alignment_data, idx)
-                .expect("Tried to make the same region twice!")
-        }));
-    }
-
     let mut naive_results = proximity_groups
         .par_iter()
         .panic_fuse()
-        .zip(region_vizs)
         .enumerate()
-        .map(|(region_idx, (group, viz_gen))| {
-            run_naive_trace(group, &alignment_data, region_idx, viz_gen, &args)
+        .map(|(region_idx, group)| {
+            let viz = soda_viz
+                .as_ref()
+                .map(|v| v.new_region(group, &alignment_data, region_idx));
+            run_naive_trace(group, &alignment_data, region_idx, viz, &args)
         })
         .collect::<Vec<NaiveTraceResults<BayesianJoinStatistics>>>();
     naive_results.sort_by_key(|v| v.region_index);
@@ -481,6 +476,7 @@ fn main() -> Result<()> {
     soda_viz
         .map(|v| {
             v.finalize(
+                &proximity_groups,
                 &results,
                 &alignment_data.target_name_map,
                 &alignment_data.query_lengths,
