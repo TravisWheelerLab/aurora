@@ -17,6 +17,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use zstd::encode_all;
+
 use anyhow::{anyhow, Context};
 
 use crate::{
@@ -31,7 +33,6 @@ use crate::{
     util::VecMap,
 };
 use base64::prelude::*;
-use flate2::{write::GzEncoder, Compression};
 use itertools::Itertools;
 
 const SODA_JS: &str = include_str!("../../fixtures/soda/soda.js");
@@ -139,8 +140,9 @@ pub struct SodaVizWriter {
 }
 
 impl SodaVizWriter {
-    pub const ICON_SVG: &str = include_str!("../../fixtures/soda/icon-opt.svg");
-    const INDEX_TEMPLATE: &str = include_str!("../../fixtures/soda/index.html");
+    pub const ICON_SVG: &'static str = include_str!("../../fixtures/soda/icon-opt.svg");
+    const INDEX_TEMPLATE: &'static str = include_str!("../../fixtures/soda/index.html");
+    const FZSTD_JS: &'static str = include_str!("../../fixtures/soda/fzstd.js");
     const HTML_TEMPLATE: &'static str = include_str!("../../fixtures/soda/annotations.html");
     const JS: &'static str = include_str!("../../fixtures/soda/annotations.js");
 
@@ -327,6 +329,7 @@ impl SodaVizWriter {
             "{}",
             Self::JS
                 .replace("HTML_TARGET", Self::HTML_TEMPLATE)
+                .replace("FZSTD_TARGET", Self::FZSTD_JS)
                 .replace("SODA_TARGET", SODA_JS)
         )?;
 
@@ -345,9 +348,7 @@ pub struct RegionAdjudicationSodaWriter {
 }
 
 fn to_safe_compressed_string(data: &str) -> io::Result<String> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(data.as_bytes())?;
-    let bytes = encoder.finish()?;
+    let bytes = encode_all(data.as_bytes(), 1)?;
     Ok(BASE64_STANDARD.encode(bytes))
 }
 

@@ -1,4 +1,5 @@
 SODA_TARGET;
+FZSTD_TARGET;
 
 let HTML_TEMPLATE = `
   HTML_TARGET
@@ -9,16 +10,14 @@ async function load_b64_gzip_json(text) {
   if (Uint8Array.fromBase64) {
     rawText = Uint8Array.fromBase64(text);
   } else {
+    text = btoa(text);
     rawText = new Uint8Array(text.length);
     for (let i = 0; i < text.length; i++)
       rawText[i] = text.charCodeAt(i);
   }
 
-  const ds = new DecompressionStream("gzip");
-  const blob = new Blob([rawText]);
-  const stream = blob.stream().pipeThrough(ds);
-  const blob_out = await new Response(stream).blob();
-  return JSON.parse(await blob_out.text());
+  const json = new TextDecoder().decode(fzstd.decompress(rawText));
+  return JSON.parse(json);
 }
 
 async function bootstrap() {
