@@ -327,6 +327,11 @@ pub struct VisualizationArgs {
     /// Dump additional debug files to the visualization.
     #[arg(long = "debug")]
     pub debug: bool,
+
+    /// Exclude regions with no competing annotations from the visualization output.
+    /// These regions will still show up in aurora's output.
+    #[arg(long = "viz-hide-simple-regions")]
+    pub viz_hide_simple_regions: bool,
 }
 
 fn main() -> Result<()> {
@@ -393,6 +398,7 @@ fn main() -> Result<()> {
             &viz_args.viz_output_path,
             viz_args.viz_reference_bed_path.as_ref(),
             &viz_args.viz_constraints,
+            viz_args.viz_hide_simple_regions,
         )?)
     } else {
         None
@@ -427,7 +433,8 @@ fn main() -> Result<()> {
         .map(|(region_idx, group)| {
             let viz = soda_viz
                 .as_ref()
-                .map(|v| v.new_region(group, &alignment_data, region_idx));
+                .map(|v| v.new_region(group, &alignment_data, region_idx))
+                .flatten();
             run_naive_trace(group, &alignment_data, region_idx, viz, &args)
         })
         .collect::<Vec<NaiveTraceResults<BayesianJoinStatistics>>>();

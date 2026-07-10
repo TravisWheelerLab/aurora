@@ -10,7 +10,7 @@ use data::*;
 use stats::*;
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs::{self, File},
     io::{self, BufRead, BufWriter, Write},
     num::ParseIntError,
@@ -134,6 +134,47 @@ pub struct SodaVizWriter {
     viz_ref_bed_path: Option<PathBuf>,
     bed_index: Option<Vec<(u64, usize)>>,
     constraints: Vec<VizConstraint>,
+    hide_simple_regions: bool,
+}
+
+/// Check if there are any overlapping alignments in a proximity group...
+fn is_simple_proximity_group(group: &ProximityGroup) -> bool {
+    // Start -> End
+    let mut alignment_starts: BTreeMap<usize, usize> = BTreeMap::new();
+
+    fn check_and_add(tree: &mut BTreeMap<usize, usize>, al_start: usize, al_end: usize) -> bool {
+        let before = tree.range(..=al_start).next_back();
+        let after = tree.range(al_start + 1..).next();
+
+        if let Some((_, &b_end)) = before {
+            if al_start <= b_end {
+                return false;
+            }
+        }
+
+        if let Some((&af_start, _)) = after {
+            if al_end >= af_start {
+                return false;
+            }
+        }
+
+        tree.insert(al_start, al_end);
+        true
+    }
+
+    for al in group.alignments.iter() {
+        if !check_and_add(&mut alignment_starts, al.target_start, al.target_end) {
+            return false;
+        }
+    }
+
+    for tr in group.tandem_repeats.iter() {
+        if !check_and_add(&mut alignment_starts, tr.target_start, tr.target_end) {
+            return false;
+        }
+    }
+
+    true
 }
 
 impl SodaVizWriter {
@@ -150,6 +191,7 @@ impl SodaVizWriter {
         viz_path: &impl AsRef<Path>,
         viz_ref_bed_path: Option<&impl AsRef<Path>>,
         constraints: &[VizConstraint],
+        hide_simple_regions: bool,
     ) -> anyhow::Result<Self> {
         let viz_path_buf = viz_path.as_ref().to_path_buf();
         let viz_ref_bed_buf = viz_ref_bed_path
@@ -279,6 +321,7 @@ impl SodaVizWriter {
                     .collect_vec()
             }),
             constraints: constraints.into(),
+            hide_simple_regions,
         })
     }
 
@@ -287,6 +330,7 @@ impl SodaVizWriter {
         regions: &[ProximityGroup],
         target_name_map: &VecMap<String>,
         viz_constraints: &[VizConstraint],
+        exclude_simple_viz: bool,
     ) -> std::io::Result<()> {
         let mut index_links = String::new();
 
@@ -304,6 +348,10 @@ impl SodaVizWriter {
             });
 
         regions.iter().enumerate().for_each(|(idx, group)| {
+            if exclude_simple_viz && is_simple_proximity_group(group) {
+                return;
+            }
+
             index_links.push_str(&format!(
                 "<div class=\"region\" data-target=\"{name}\" data-start=\"{start}\" data-end=\"{end}\"><a href=\"{idx}/index.html\"><h3>region {idx} | {name} {start}:{end}</h3></a></div>\n",
                 name = target_name_map.get(*&group.target_id),
@@ -325,8 +373,12 @@ impl SodaVizWriter {
         proximity_group: &ProximityGroup,
         alignment_data: &AlignmentData,
         region_idx: usize,
-    ) -> RegionAdjudicationSodaWriter {
-        RegionAdjudicationSodaWriter::new(
+    ) -> Option<RegionAdjudicationSodaWriter> {
+        if self.hide_simple_regions && is_simple_proximity_group(proximity_group) {
+            return None;
+        }
+
+        Some(RegionAdjudicationSodaWriter::new(
             proximity_group,
             alignment_data,
             &self.viz_path,
@@ -334,7 +386,7 @@ impl SodaVizWriter {
             &self.constraints,
             self.viz_ref_bed_path.as_ref(),
             self.bed_index.as_ref().map(|b| b[region_idx]),
-        )
+        ))
     }
 
     pub fn finalize(
@@ -367,6 +419,7 @@ impl SodaVizWriter {
             proximity_groups,
             target_name_map,
             &self.constraints,
+            self.hide_simple_regions,
         )?;
 
         let mut js_file = File::create(self.viz_path.join("annotations.js"))?;
