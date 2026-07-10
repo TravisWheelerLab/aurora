@@ -327,10 +327,6 @@ pub struct VisualizationArgs {
     /// Dump additional debug files to the visualization.
     #[arg(long = "debug")]
     pub debug: bool,
-
-    /// Disable history tracing entirely, dumping only visuals.
-    #[arg(long = "disable-tracing")]
-    pub disable_tracing: bool,
 }
 
 fn main() -> Result<()> {

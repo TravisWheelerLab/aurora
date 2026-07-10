@@ -12,7 +12,7 @@ use stats::*;
 use std::{
     collections::HashMap,
     fs::{self, File},
-    io::{self, BufRead, Write},
+    io::{self, BufRead, BufWriter, Write},
     num::ParseIntError,
     path::{Path, PathBuf},
 };
@@ -344,14 +344,24 @@ impl SodaVizWriter {
         target_name_map: &VecMap<String>,
         query_lengths: &HashMap<usize, usize>,
     ) -> io::Result<()> {
-        let mut family_stats_writer = File::create(self.viz_path.join("family_stats.html"))?;
+        let mut target_stats_writer =
+            BufWriter::new(File::create(self.viz_path.join("target_stats.html"))?);
+        write_target_statistics(
+            &mut target_stats_writer,
+            &annotations,
+            self.viz_ref_bed_path.as_ref(),
+            self.bed_index.as_ref(),
+        )?;
+        let mut family_stats_writer =
+            BufWriter::new(File::create(self.viz_path.join("family_stats.html"))?);
         write_family_statistics(&mut family_stats_writer, &annotations, &query_lengths)?;
-        let mut inv_stats_writer = File::create(self.viz_path.join("inversion_stats.html"))?;
+        let mut inv_stats_writer =
+            BufWriter::new(File::create(self.viz_path.join("inversion_stats.html"))?);
         write_inversion_statistics(&mut inv_stats_writer, &annotations)?;
         let mut icon_file = File::create(self.viz_path.join("icon.svg"))?;
         icon_file.write_all(Self::ICON_SVG.as_bytes())?;
 
-        let mut index_file = File::create(self.viz_path.join("index.html"))?;
+        let mut index_file = BufWriter::new(File::create(self.viz_path.join("index.html"))?);
         Self::write_index_file(
             &mut index_file,
             proximity_groups,

@@ -20,8 +20,8 @@
                         let start = parseInt(div.dataset.start);
                         let end = parseInt(div.dataset.end);
                         let is_pos_match = (
-                            !search_digit_text 
-                            || search_number != search_number 
+                            !search_digit_text
+                            || search_number != search_number
                             || (search_number >= start && search_number <= end)
                             || (String(start).startsWith(search_digit_text))
                             || (String(end).startsWith(search_digit_text))
@@ -37,7 +37,7 @@
                             }
                         } else {
                             div.style.display = "none";
-                            div.style.backgroundColor = "transparent"; 
+                            div.style.backgroundColor = "transparent";
                         }
                     }
                 }
@@ -49,6 +49,8 @@
     </head>
     <body>
         <h1>Statistics</h1>
+        <a href="target_stats.html">Target Statistics</a>
+        <br>
         <a href="family_stats.html">Families</a>
         <br>
         <a href="inversion_stats.html">Inversions</a>

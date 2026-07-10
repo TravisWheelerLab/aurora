@@ -71,31 +71,68 @@ function run(data) {
   let optionTimeoutTime = 100;
   let optionTimeoutId = 0;
 
-  let classNames = [
-    "sine",
-    "line",
-    "ltr",
-    "dna",
-    "simple",
-    "low_complexity",
-    "satellite",
-    "rna",
-    "other",
-    "unknown",
-  ];
+  let classColorCache = {
+    "sine": "#1f77b4",
+    "line": "#ff7f0e",
+    "ltr": "#2ca02c",
+    "dna": "#d62728",
+    "simple": "#9467bd",
+    "low_complexity": "#8c564b",
+    "satellite": "#e377c2",
+    "rna": "#7f7f7f",
+    "other": "#bcbd22",
+    "unknown": "#17becf",
+    "unspecified": "#17becf",
+    "simple_repeat": "#d13d8e",
+    "tandem-repeat": "#d13d8e",
+  }
 
-  let classColors = [
-    "#1f77b4",
-    "#ff7f0e",
-    "#2ca02c",
-    "#d62728",
-    "#9467bd",
-    "#8c564b",
-    "#e377c2",
-    "#7f7f7f",
-    "#bcbd22",
-    "#17becf",
-  ];
+  function stringToColor(s, heavyChars = 5) {
+      let validChars = 69;
+      let hash = 0;
+      let revHash = 0;
+      let multiplier = 360 * (2 ** heavyChars);
+      let stepDivisor = 2;
+      let range = 360;
+
+      let m = multiplier / (validChars - 1);
+
+      for(let i = 0; i < s.length; i++) {
+          hash = (hash + charToNumber(s.charAt(i)) * m) % range;
+          revHash = (revHash + charToNumber(s.charAt(s.length - (1 + i))) * m) % range;
+          m /= stepDivisor;
+      }
+
+      let sat = 60 + (revHash % 30);
+      let light = 30 + ((revHash * 30) % 50);
+
+      return "hsl(" + hash + ", " + sat + "%, " + light + "%)";
+  }
+
+
+  function charToNumber(char) {
+      if("a" <= char && char <= "z") {
+          return (char.charCodeAt(0) - "a".charCodeAt(0)) + 1;
+      }
+      else {
+          return 0;
+      }
+  }
+
+  function classColorFromName(name) {
+    for (let splitChar of ["#", "_"]) {
+      let nameSplit = name.split(splitChar);
+
+      if (nameSplit.length > 1) {
+        let c = nameSplit[1].split("/")[0].toLowerCase();
+        if(!(c in classColorCache)) {
+          classColorCache[c] = stringToColor(c);
+        }
+        return classColorCache[c];
+      }
+    }
+    return classColorCache["unknown"];
+  }
 
   // this maps contain the dom
   // nodes that control options
@@ -303,17 +340,7 @@ function run(data) {
         }
 
         function classColor(d) {
-          let firstSplit = d.a.label.split("#");
-          if (firstSplit.length > 1) {
-            let c = firstSplit[1].split("/")[0].toLowerCase();
-            let i = classNames.indexOf(c);
-            if (i == -1) {
-              i = 9;
-            }
-            return classColors[i];
-          } else {
-            return classColors[9];
-          }
+          return classColorFromName(d.a.label);
         }
 
         soda.rectangle({
@@ -487,20 +514,9 @@ function run(data) {
 
         function classColor(d) {
           if (d.a.row == 0) {
-            return "#4d4d4dff";
+            return "#4d4d4d";
           }
-          let lbl = d.a.label;
-          let firstSplit = lbl.split("#");
-          if (firstSplit.length > 1) {
-            let c = firstSplit[1].split("/")[0].toLowerCase();
-            let i = classNames.indexOf(c);
-            if (i == -1) {
-              i = 9;
-            }
-            return classColors[i];
-          } else {
-            return classColors[9];
-          }
+          return classColorFromName(d.a.label);
         }
 
         // Color segments with alternating colors...
