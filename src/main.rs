@@ -17,6 +17,7 @@ mod pipeline;
 mod score_params;
 mod segment_groups;
 mod segments;
+mod sequence_store;
 mod statistics;
 mod substitution_matrix;
 mod support;
@@ -25,6 +26,7 @@ mod support;
 #[allow(dead_code)]
 mod union_find;
 
+mod formats;
 mod trace_statistics;
 mod util;
 mod viterbi;

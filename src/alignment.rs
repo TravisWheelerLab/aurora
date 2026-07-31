@@ -1,18 +1,22 @@
 use anyhow::{anyhow, Context, Result};
+use itertools::Itertools;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::{BufReader, Read};
+use std::sync::Arc;
 use std::{fmt, hash};
 
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
+use crate::alignment::CigarSegment::{Aligned, QueryGap, TargetGap};
 use crate::alphabet::{
     NucleotideAlignmentType, NucleotideByteUtils, ALIGNMENT_ALPHABET_STR, A_DIGITAL, C_DIGITAL,
     DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, G_DIGITAL,
     NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, T_DIGITAL, UTF8_TO_DIGITAL_NUCLEOTIDE,
 };
+use crate::sequence_store::SequenceIndex;
 use crate::substitution_matrix::SubstitutionMatrix;
-use crate::util::{read_non_empty_lines, StrSliceExt, VecMap};
+use crate::util::VecMap;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Strand {
@@ -51,10 +55,168 @@ impl fmt::Display for Strand {
     }
 }
 
-#[derive(Default, Eq)]
+pub struct ULEBS(Vec<u8>);
+
+impl ULEBS {
+    fn iter(&self) -> ULEBIterator<'_> {
+        return ULEBIterator {
+            ints: &self.0,
+            offset: 0,
+        };
+    }
+}
+
+impl<T: Iterator<Item = u64>> From<T> for ULEBS {
+    fn from(values: T) -> Self {
+        let mut data: Vec<u8> = Vec::new();
+
+        for value in values {
+            let mut value = value;
+            while value > 0x80 {
+                data.push((value & 0x7F) as u8 | 0x80);
+                value = value >> 7;
+            }
+            data.push((value & 0x7F) as u8);
+        }
+
+        ULEBS(data)
+    }
+}
+
+pub struct ULEBIterator<'a> {
+    ints: &'a [u8],
+    offset: usize,
+}
+
+fn decode_next_uleb(arr: &[u8], mut offset: usize) -> Result<(u64, usize), (u64, usize)> {
+    let mut result_int: u64 = 0;
+    let mut shift: u8 = 0;
+
+    let move_by = (arr.len() - offset).min(9);
+
+    for _ in 0..move_by {
+        let b = arr[offset];
+        offset += 1;
+        result_int |= (b as u64 & 0b01111111) << shift;
+        if (b & 0x80) == 0 {
+            return Result::Ok((result_int, offset));
+        }
+        shift += 7;
+    }
+
+    Result::Err((result_int, offset))
+}
+
+impl Iterator for ULEBIterator<'_> {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.offset >= self.ints.len() {
+            return None;
+        }
+
+        let (val, next_offset) = decode_next_uleb(self.ints, self.offset).unwrap();
+        self.offset = next_offset;
+        Some(val)
+    }
+}
+
+pub struct Cigar(ULEBS);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CigarSegment {
+    Aligned(u64),
+    TargetGap(u64),
+    QueryGap(u64),
+}
+
+impl From<CigarSegment> for i64 {
+    fn from(value: CigarSegment) -> Self {
+        match value {
+            Aligned(val) | QueryGap(val) => val as i64,
+            TargetGap(val) => -(val as i64),
+        }
+    }
+}
+
+impl Cigar {
+    pub fn iter(&self) -> CigarIterator<'_> {
+        CigarIterator(ULEBIterator {
+            ints: &self.0 .0,
+            offset: 0,
+        })
+    }
+}
+
+impl<T: Iterator<Item = i64>> From<T> for Cigar {
+    fn from(values: T) -> Self {
+        let cigar = Cigar(
+            values
+                .enumerate()
+                .map(|(i, v)| {
+                    if i & 1 == 0 {
+                        (v as u64)
+                    } else {
+                        zig_zag_encode(v)
+                    }
+                })
+                .into(),
+        );
+        assert!(cigar.0 .0.len() > 0 && cigar.0 .0.len() % 2 == 1);
+        cigar
+    }
+}
+
+fn zig_zag_decode(num: u64) -> i64 {
+    (num >> 1) as i64 ^ -((num & 1) as i64)
+}
+
+fn zig_zag_encode(num: i64) -> u64 {
+    if num >= 0 {
+        (num as u64) << 1
+    } else {
+        ((-num as u64) << 1) - 1
+    }
+}
+
+pub struct CigarIterator<'a>(ULEBIterator<'a>);
+
+impl Iterator for CigarIterator<'_> {
+    type Item = CigarSegment;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.0.offset & 1 == 0 {
+            self.0.next().map(|v| Aligned(v))
+        } else {
+            self.0.next().map(|v| {
+                let z = zig_zag_decode(v);
+                if z >= 0 {
+                    QueryGap(v)
+                } else {
+                    TargetGap(v)
+                }
+            })
+        }
+    }
+}
+
+pub struct AlignmentSequence {
+    target_seq: Arc<(usize, Vec<u8>)>,
+    query_seq: Arc<(usize, Vec<u8>)>,
+    cigar: Cigar,
+}
+
+impl PartialEq for AlignmentSequence {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for AlignmentSequence {}
+
+#[derive(Eq)]
 pub struct Alignment {
-    pub target_seq: Vec<u8>,
-    pub query_seq: Vec<u8>,
+    pub sequence: AlignmentSequence,
     pub target_start: usize,
     pub target_end: usize,
     pub query_start: usize,
@@ -65,40 +227,106 @@ pub struct Alignment {
     pub substitution_matrix_id: usize,
 }
 
-impl Alignment {
-    #[allow(dead_code)]
-    pub fn from_str(str: &str) -> Self {
-        let tokens: Vec<&str> = str.split('\n').collect();
+struct AlignmentIterator<'a, I: Iterator<Item = CigarSegment>, F: Fn(CigarSegment) -> bool> {
+    cigar_seq: I,
+    seq: &'a [u8],
+    reverse: bool,
+    gap_check: F,
+    is_gap: bool,
+    cigar_remaining: usize,
+    cigar_steps: usize,
+    offset: usize,
+}
 
-        let target = tokens[0];
-        let query = tokens[1];
-        assert_eq!(target.len(), query.len());
-
-        let target_seq = target.to_digital_nucleotides();
-        let query_seq = query.to_digital_nucleotides();
-
-        let target_len = target_seq
-            .iter()
-            .filter(|&&b| b != GAP_OPEN_DIGITAL && b != GAP_EXTEND_DIGITAL)
-            .count();
-
-        let query_len = query_seq
-            .iter()
-            .filter(|&&b| b != GAP_OPEN_DIGITAL && b != GAP_EXTEND_DIGITAL)
-            .count();
-
+impl<'a, I: Iterator<Item = CigarSegment>, F: Fn(CigarSegment) -> bool>
+    AlignmentIterator<'a, I, F>
+{
+    fn new(cigar: I, seq: &'a [u8], reverse: bool, gap_check: F) -> Self {
         Self {
-            target_seq,
-            query_seq,
-            target_start: 1,
-            target_end: target_len,
-            query_start: 1,
-            query_end: query_len,
-            strand: Strand::Forward,
-            id: 0,
-            query_id: 0,
-            substitution_matrix_id: 0,
+            cigar_seq: cigar,
+            seq,
+            reverse,
+            gap_check: gap_check,
+            is_gap: false,
+            cigar_remaining: 0,
+            cigar_steps: 0,
+            offset: 0,
         }
+    }
+}
+
+impl<I: Iterator<Item = CigarSegment>, F: Fn(CigarSegment) -> bool> Iterator
+    for AlignmentIterator<'_, I, F>
+{
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.offset >= self.seq.len() {
+            return None;
+        }
+
+        if self.cigar_remaining == 0 {
+            if let Some(next_val) = self.cigar_seq.next() {
+                let gap: i64 = next_val.into();
+                self.cigar_remaining = gap.abs() as usize;
+                self.is_gap = (self.gap_check)(next_val);
+                self.cigar_steps = 0;
+            }
+        }
+        if self.cigar_remaining == 0 {
+            return None;
+        }
+
+        let char = if self.is_gap {
+            if self.cigar_steps == 0 {
+                GAP_OPEN_DIGITAL
+            } else {
+                GAP_EXTEND_DIGITAL
+            }
+        } else {
+            let c = if self.reverse {
+                self.seq[self.seq.len() - (self.offset + 1)]
+            } else {
+                self.seq[self.offset]
+            };
+            self.offset += 1;
+            c
+        };
+
+        self.cigar_remaining -= 1;
+        self.cigar_steps += 1;
+
+        Some(char)
+    }
+}
+
+impl Alignment {
+    pub fn target_aligned_sequence(&self) -> impl Iterator<Item = u8> + '_ {
+        let offset = self.sequence.target_seq.0;
+
+        AlignmentIterator::new(
+            self.sequence.cigar.iter(),
+            &self.sequence.target_seq.1[self.target_start - offset..=self.target_end - offset],
+            false,
+            |v| matches!(v, TargetGap(_)),
+        )
+    }
+
+    pub fn query_aligned_sequence(&self) -> impl Iterator<Item = u8> + '_ {
+        let is_rev = matches!(self.strand, Strand::Reverse);
+        let (start, end) = if is_rev {
+            (self.query_end, self.query_start)
+        } else {
+            (self.query_start, self.query_end)
+        };
+        let offset = self.sequence.query_seq.0;
+
+        AlignmentIterator::new(
+            self.sequence.cigar.iter(),
+            &self.sequence.target_seq.1[start - offset..=end - offset],
+            is_rev,
+            |v| matches!(v, QueryGap(_)),
+        )
     }
 
     /// Compute the kimura80 score for a slice of the consensus sequence.
@@ -119,10 +347,9 @@ impl Alignment {
         let mut prior_pair = (GAP_OPEN_DIGITAL, GAP_EXTEND_DIGITAL);
 
         let query_iter = self
-            .query_seq
-            .iter()
-            .zip(self.target_seq.iter())
-            .filter_map(|(&q, &t)| {
+            .query_aligned_sequence()
+            .zip(self.target_aligned_sequence())
+            .filter_map(|(q, t)| {
                 let old_query_offset = query_offset;
                 let old_prior_pair = prior_pair;
                 if matches!(q, A_DIGITAL | C_DIGITAL | T_DIGITAL | G_DIGITAL) {
@@ -244,15 +471,28 @@ impl fmt::Display for Alignment {
         writeln!(f, "#T {}..={}", self.target_start, self.target_end)?;
         writeln!(f, "#Q {}..={}", self.query_start, self.query_end)?;
         let mid_line: String = self
-            .target_seq
+            .sequence
+            .cigar
             .iter()
-            .zip(self.query_seq.iter())
-            .map(|(a, b)| if a == b { "|" } else { " " })
+            .map(|seg| match seg {
+                Aligned(v) => "|".repeat(v as usize),
+                TargetGap(v) | QueryGap(v) => " ".repeat(v as usize),
+            })
             .collect();
 
-        writeln!(f, "{}", self.target_seq.to_utf8_string())?;
+        writeln!(
+            f,
+            "{}",
+            self.target_aligned_sequence()
+                .collect_vec()
+                .to_utf8_string()
+        )?;
         writeln!(f, "{mid_line}")?;
-        writeln!(f, "{}", self.query_seq.to_utf8_string())
+        writeln!(
+            f,
+            "{}",
+            self.query_aligned_sequence().collect_vec().to_utf8_string()
+        )
     }
 }
 
@@ -273,155 +513,7 @@ impl Serialize for Alignment {
     }
 }
 
-pub fn caf_str_to_digital_nucleotides(caf_str: &str) -> (Vec<u8>, Vec<u8>) {
-    //  Robert's notes on the CAF format:
-    //
-    //      *** THE GENOME IS THE QUERY HERE ***
-    //      *** THE SUBJECT IS THE MODEL/TE  ***
-    //      Yet another Compressed Alignment Format (yaCAF or just CAF).
-    //      This format was developed for the use case where sequence databases
-    //      may not be available for either the query or the subject of an
-    //      alignment and where it's still desirable to communicate the alignment
-    //      in a semi-succinct fashion.
-    //
-    //      Three basic inline string operators are provided: "/" for substitutions,
-    //      "+" for insertions (relative to the query) and "-" for deletions.
-    //
-    //      For example the exact alignment:
-    //
-    //        Query: AATTGG
-    //        Subj : AATTGG
-    //
-    //      would not need any of these operators and would be encoded using
-    //      the single string "AATTGG".
-    //
-    //      Substitutions are encocoded as query_base/subj_base.  For example:
-    //        Query: AAGAA
-    //                 |
-    //        Subj : AACAA
-    //
-    //      would be encoded as: "AAG/CAA"
-    //
-    //      Finally gaps are encoded by surrounding the deleted sequence or the
-    //      inserted sequence (relative to the query) by either "+" or "-".  For
-    //      instance the following alignment:
-    //
-    //        Query: AAGCTA--A
-    //        Subj : AA--TAGGA
-    //
-    //      would be encoded as: "AA-GC-TA+GG+A"
-    #[derive(Copy, Clone, Debug)]
-    pub enum CafState {
-        Match,
-        TargetGap,
-        QueryGap,
-        Mutation,
-    }
 
-    let mut prev_state = CafState::Match;
-    let caf_str_bytes = caf_str.as_bytes();
-
-    let mut target_bytes_digital: Vec<u8> = vec![];
-    let mut query_bytes_digital: Vec<u8> = vec![];
-
-    let mut ali_idx = 0usize;
-    for &utf8_byte in caf_str_bytes {
-        let new_state = match utf8_byte {
-            b if NUCLEOTIDE_ALPHABET_UTF8.contains(&b) => match prev_state {
-                CafState::Mutation => CafState::Match,
-                other => other,
-            },
-            DASH_UTF8 => match prev_state {
-                CafState::TargetGap => CafState::Match,
-                _ => CafState::TargetGap,
-            },
-            PLUS_UTF8 => match prev_state {
-                CafState::QueryGap => CafState::Match,
-                _ => CafState::QueryGap,
-            },
-            FORWARD_SLASH_UTF8 => CafState::Mutation,
-            unknown => panic!(
-                "unknown byte: {}",
-                String::from_utf8(vec![unknown]).unwrap()
-            ),
-        };
-
-        let digital_byte = match UTF8_TO_DIGITAL_NUCLEOTIDE.get(&utf8_byte) {
-            Some(byte) => *byte,
-            None => 255,
-        };
-
-        match (prev_state, new_state) {
-            (CafState::Match, CafState::Match) => {
-                // AA-GC-TA
-                // ^^    ^^
-                // this will treat mutation starts as a match
-                // position, but we will retroactively fix it
-                // when we pop in out of the mutation state later
-                target_bytes_digital.push(digital_byte);
-                query_bytes_digital.push(digital_byte);
-                ali_idx += 1;
-            }
-            (CafState::Mutation, CafState::Match) => {
-                // A A G / C A A
-                //         ^
-                // we need to back up and fix the target sequence
-                // because it will have been erroneously set as if
-                // it were a match position a couple states back
-                query_bytes_digital[ali_idx - 1] = digital_byte;
-            }
-            (CafState::TargetGap, CafState::TargetGap) => {
-                // AA-GC-TA
-                //    ^^
-                target_bytes_digital.push(digital_byte);
-                match query_bytes_digital[ali_idx - 1] {
-                    GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
-                        query_bytes_digital.push(GAP_EXTEND_DIGITAL)
-                    }
-                    _ => query_bytes_digital.push(GAP_OPEN_DIGITAL),
-                }
-                ali_idx += 1;
-            }
-            (CafState::QueryGap, CafState::QueryGap) => {
-                // AA+GC+TA
-                //    ^^
-                match target_bytes_digital[ali_idx - 1] {
-                    GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
-                        target_bytes_digital.push(GAP_EXTEND_DIGITAL)
-                    }
-                    _ => target_bytes_digital.push(GAP_OPEN_DIGITAL),
-                }
-                query_bytes_digital.push(digital_byte);
-                ali_idx += 1;
-            }
-            // ----
-            // AA+GC+TA
-            //      ^
-            (CafState::QueryGap, CafState::Match) |
-            // AA-GC-TA
-            //      ^
-            (CafState::TargetGap, CafState::Match) |
-            // AA-GC-TA
-            //   ^
-            (CafState::Match, CafState::TargetGap) |
-            // AA+GC+TA
-            //   ^
-            (CafState::Match, CafState::QueryGap) |
-            // AAG/CAA
-            //    ^
-            (CafState::Match, CafState::Mutation) => {
-                // valid transitions that have no effect
-            }
-            // ----
-            (prev, new) => panic!("invalid CAF state transition: {:?} -> {:?}", prev, new),
-        }
-
-        prev_state = new_state;
-    }
-    target_bytes_digital.shrink_to_fit();
-    query_bytes_digital.shrink_to_fit();
-    (target_bytes_digital, query_bytes_digital)
-}
 
 #[derive(Debug, Default)]
 pub struct TandemRepeat {
@@ -431,23 +523,6 @@ pub struct TandemRepeat {
     pub consensus_pattern: String,
     pub period: usize,
     pub scores: Vec<f64>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct UltraJson {
-    pub repeats: Vec<UltraRecord>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct UltraRecord {
-    pub sequence_name: String,
-    pub start: usize,
-    pub length: usize,
-    pub consensus: String,
-    pub period: usize,
-    pub position_score_deltas: Vec<f64>,
 }
 
 /// A group of alignments that share
@@ -470,227 +545,17 @@ pub struct AlignmentData {
     pub query_name_map: VecMap<String>,
     pub query_lengths: HashMap<usize, usize>,
     pub substitution_matrices: VecMap<SubstitutionMatrix>,
+    pub target_sequences: SequenceIndex,
+    pub query_sequences: SequenceIndex,
 }
 
 impl AlignmentData {
-    pub fn from_caf_and_ultra_and_matrices<C: Read, U: Read, M: Read>(
-        caf: C,
-        ultra: Option<U>,
-        matrices: M,
-    ) -> Result<Self> {
-        // Robert's notes on CAF:
-        //   0: score - bit, raw, complexity adjusted or evalue.
-        //   1: Percent Substitution - Percent of mismatched non-gap characters in the alignment
-        //   2: Percent Deletion - Percent of deletion characters in alignment
-        //   3: Percent Insertion - Percent of insertion characters in alignment
-        //      *** THE GENOME IS THE QUERY HERE
-        //   4: Query Sequence ID
-        //   5: Query Start - 1-based, fully closed
-        //   6: Query End - 1-based, fully closed
-        //   7: Query Remaining - Remaining length of query sequence
-        //      *** THE SUBJECT IS THE MODEL/TE
-        //   8: Subject Sequence ID - Subject sequence is generally the TE family model for our use cases
-        //   9: Subject Classification - [optional] The Dfam/RepeatMasker classification for the TE family
-        //  10: Subject Start - 1 based, fully closed
-        //  11: Subject End - 1 based, fully closed
-        //  12: Subject Remaining - Remaining length of subject sequence
-        //  13: Orientation - 0=plus_strand, 1=negative_strand
-        //  14: Overlap - [optional] Overlapping annotations from RepeatMasker are flagged using this field
-        //  15: Linkage_ID - [optional] RepeatMasker linkage id
-        //  16: CAF encoded alignment string
-        //  17: Matrix - [optional] The matrix used in scoring the alignment encoded as ##p##g.matrix or simply ##p##g
-        //
-        //  example record:
-        //    0: 199
-        //    1: 12.12
-        //    2: 0.00
-        //    3: 0.00
-        //    4: 6
-        //    5: 18172245
-        //    6: 18172277
-        //    7: 58603
-        //    8: DF0000023
-        //    9: <empty>
-        //   10: 1
-        //   11: 33
-        //   12: 2673
-        //   13: 1
-        //   14: <empty>
-        //   15: <empty>
-        //   16: ACCT/GGA/TCT/CGTGGCCT/CGGGGGTTGGGGACCCCTG
-        //   17: 14p41g.matrix
-
-        let substitution_matrices = VecMap::from(SubstitutionMatrix::parse(matrices)?);
-
-        let mut target_groups: Vec<TargetGroup> = vec![];
-        let mut target_name_map: VecMap<String> = VecMap::new();
-        let mut query_name_map: VecMap<String> = VecMap::from(vec!["skip".into()]);
-        let mut query_lengths: HashMap<usize, usize> = HashMap::new();
-        query_lengths.insert(0, 0);
-
-        let caf_buffer = BufReader::new(caf);
-
-        read_non_empty_lines(caf_buffer).try_for_each(|line_unchecked| {
-            let (line_num, line) = line_unchecked?;
-
-            let error_msg =
-                |msg, col| move || format!("{} at line '{}', column '{}'", msg, line_num, col);
-
-            let error_msg_str = |msg: String, col: usize| {
-                move || format!("{} at line '{}', column '{}'", msg, line_num, col)
-            };
-
-            let tokens: Vec<&str> = line.split(',').collect();
-
-            if tokens.len() < 18 {
-                return Err(anyhow!(
-                    "line {} does not have at least 18 columns!",
-                    line_num
-                ));
-            }
-
-            let target_name = tokens[4].to_string();
-            let target_start = str::parse::<usize>(tokens[5])
-                .with_context(error_msg("failed to parse target start", 5))?;
-            let target_end = str::parse::<usize>(tokens[6])
-                .with_context(error_msg("failed to parse target end", 6))?;
-            let query_name = tokens[8].to_string();
-            let query_start = str::parse::<usize>(tokens[10])
-                .with_context(error_msg("failed to parse query start", 10))?;
-            let query_end = str::parse::<usize>(tokens[11])
-                .with_context(error_msg("failed to parse query end", 11))?;
-            let query_remaining = str::parse::<usize>(tokens[12])
-                .with_context(error_msg("failed to parse query remaining", 12))?;
-
-            let strand = match tokens[13] {
-                "0" => Ok(Strand::Forward),
-                "1" => Ok(Strand::Reverse),
-                v => Err(anyhow!(error_msg_str(
-                    format!("invalid strand value: '{}'", v),
-                    13
-                )())),
-            }?;
-
-            let (query_start, query_end) = match strand {
-                Strand::Forward => (query_start, query_end),
-                Strand::Reverse => (query_end, query_start),
-                _ => unreachable!(),
-            };
-
-            let (target_seq, query_seq) = caf_str_to_digital_nucleotides(tokens[16]);
-            let substitution_matrix_name = tokens[17].to_string();
-
-            let target_id = target_name_map.insert(target_name);
-            let target_group = match target_groups.get_mut(target_id) {
-                Some(group) => group,
-                None => {
-                    target_groups.push(TargetGroup {
-                        target_id,
-                        target_start,
-                        target_end,
-                        alignments: vec![],
-                        tandem_repeats: vec![],
-                    });
-                    target_groups.last_mut().unwrap()
-                }
-            };
-
-            let query_id = query_name_map.insert(query_name);
-            match strand {
-                Strand::Forward => {
-                    query_lengths.insert(query_id, query_end + query_remaining);
-                }
-                Strand::Reverse => {
-                    query_lengths.insert(query_id, query_start + query_remaining);
-                }
-                Strand::Unset => panic!(),
-            }
-            let substitution_matrix_id = substitution_matrices
-                .values()
-                .enumerate()
-                .find(|(_, m)| m.name == substitution_matrix_name)
-                .with_context(error_msg_str(
-                    format!("unknown substitution matrix '{}'", substitution_matrix_name),
-                    17,
-                ))?
-                .0;
-
-            target_group.alignments.push(Alignment {
-                target_seq,
-                query_seq,
-                target_start,
-                target_end,
-                query_start,
-                query_end,
-                strand,
-                id: 0, // We fix this later, we don't know if these are sorted yet...
-                query_id,
-                substitution_matrix_id,
-            });
-
-            Ok(())
-        })?;
-
-        if let Some(buf) = ultra {
-            let buf_reader = BufReader::new(buf);
-            let ultra_json: UltraJson = serde_json::from_reader(buf_reader)
-                .context("Failed to load provided ultra file.")?;
-            ultra_json
-                .repeats
-                .into_iter()
-                .enumerate()
-                .for_each(|(idx, r)| {
-                    // TODO: fix the VecMap API to better handle this
-                    if !target_name_map.contains(&r.sequence_name) {
-                        target_name_map.insert(r.sequence_name.clone());
-                    }
-
-                    let target_id = target_name_map.key(&r.sequence_name);
-
-                    if let Some(group) = target_groups.get_mut(target_id) {
-                        group.tandem_repeats.push(TandemRepeat {
-                            // TODO: figure out if ultra uses 0- or 1-based indexing
-                            id: idx + 1,
-                            target_start: r.start,
-                            target_end: r.start + r.length - 1,
-                            consensus_pattern: r.consensus,
-                            period: r.period,
-                            scores: r.position_score_deltas,
-                        })
-                    }
-                });
-        }
-
-        // Sort all alignment entries...
-        let mut ali_id = 0;
-
-        target_groups.iter_mut().for_each(|g| {
-            g.alignments
-                .sort_by(|a, b| a.target_start.cmp(&b.target_start));
-
-            g.alignments.iter_mut().for_each(|v| {
-                v.id = ali_id;
-                ali_id += 1;
-            });
-        });
-
-        Ok(Self {
-            target_groups,
-            target_name_map,
-            query_name_map,
-            query_lengths,
-            substitution_matrices,
-        })
-    }
-
     #[allow(dead_code)]
     pub fn allocation_size(&self) -> usize {
         self.target_groups
             .iter()
             .flat_map(|g| &g.alignments)
-            .map(|a| {
-                a.target_seq.capacity() + a.query_seq.capacity() + std::mem::size_of::<Alignment>()
-            })
+            .map(|a| a.sequence.cigar.0 .0.capacity() + std::mem::size_of::<Alignment>())
             .sum::<usize>()
             + self.substitution_matrices.capacity() * std::mem::size_of::<SubstitutionMatrix>()
             + self.query_lengths.capacity() * std::mem::size_of::<usize>()
@@ -706,26 +571,14 @@ impl AlignmentData {
                 .values()
                 .map(|s| s.capacity())
                 .sum::<usize>()
+            + self.target_sequences.allocation_size()
+            + self.query_sequences.allocation_size()
     }
 }
 
 impl Alignment {
     #[allow(dead_code)]
     pub fn print(&self) {
-        self.target_seq
-            .iter()
-            .for_each(|&byte| print!("{}", ALIGNMENT_ALPHABET_STR[byte as usize]));
-        println!();
-
-        self.target_seq
-            .iter()
-            .zip(self.query_seq.iter())
-            .for_each(|(&t, &q)| if t == q { print!("|") } else { print!(" ") });
-        println!();
-
-        self.query_seq
-            .iter()
-            .for_each(|&byte| print!("{}", ALIGNMENT_ALPHABET_STR[byte as usize]));
-        println!();
+        println!("{}", self);
     }
 }

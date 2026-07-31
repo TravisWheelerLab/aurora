@@ -22,7 +22,7 @@ pub struct ProximityGroup<'a> {
     pub target_id: usize,
     pub target_start: usize,
     pub target_end: usize,
-    pub alignments: &'a [Alignment],
+    pub alignments: &'a [Alignment<'a>],
     pub tandem_repeats: &'a [TandemRepeat],
     pub line_start: usize,
     pub line_end: usize,
