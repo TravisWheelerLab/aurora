@@ -68,13 +68,12 @@ impl Alignment {
         let mut current_red_bytes: Vec<u8> = vec![];
         let mut target_gap_start = 0;
 
-        self.target_seq
-            .iter()
-            .zip(&self.query_seq)
+        self.target_aligned_sequence()
+            .zip(self.query_aligned_sequence())
             // .enumerate()
             // .map(move |(ali_idx, c)| (ali_idx + target_pos, c))
             // .for_each(|(t_idx, (&t, &q))| match t {
-            .for_each(|(&t, &q)| match t {
+            .for_each(|(t, q)| match t {
                 GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
                     if in_target_gap {
                         current_red_bytes.push(ALIGNMENT_ALPHABET_UTF8[q as usize]);

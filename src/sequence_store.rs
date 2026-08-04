@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, HashMap};
-use std::rc::Rc;
 use std::sync::Arc;
 
 pub struct SequenceStore {

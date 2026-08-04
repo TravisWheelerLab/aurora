@@ -1,28 +1,53 @@
-use crate::alignment::{Alignment, AlignmentData, Strand, TargetGroup};
+use crate::alignment::CigarSegment;
+use crate::alignment::{Alignment, AlignmentData, AlignmentSequence, Cigar, Strand, TargetGroup};
+use crate::alphabet::{
+    DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, NUCLEOTIDE_ALPHABET_UTF8,
+    PLUS_UTF8, UTF8_TO_DIGITAL_NUCLEOTIDE,
+};
 use crate::formats::{AlignmentFormat, FormatCheck, SeekableReader};
+use crate::sequence_store::SequenceStore;
 use crate::util::{read_non_empty_lines, VecMap};
 use anyhow::{anyhow, Context};
 use std::collections::HashMap;
+use std::mem;
+use std::sync::Arc;
 
-struct CAFFormat {}
+pub struct CAFFormat {}
 
 impl AlignmentFormat for CAFFormat {
     fn format_check(
-        primary_reader: impl SeekableReader,
-        secondary_reader: Option<impl SeekableReader>,
+        primary_reader: &mut impl SeekableReader,
+        secondary_reader: Option<&mut impl SeekableReader>,
     ) -> anyhow::Result<FormatCheck> {
         if secondary_reader.is_some() {
             return Ok(FormatCheck::Invalid(
                 "CAF format doesn't require a second file!".to_string(),
             ));
+        }
+
+        let first_line = read_non_empty_lines(primary_reader).next();
+
+        if let Some(Result::Ok((_line_num, line))) = first_line {
+            let tokens: Vec<&str> = line.split(',').collect();
+
+            if tokens.len() == 18 {
+                Ok(FormatCheck::Valid)
+            } else {
+                Ok(FormatCheck::Invalid(format!(
+                    "Has {} columns instead of 18",
+                    tokens.len()
+                )))
+            }
         } else {
-            Ok(FormatCheck::Valid)
+            Ok(FormatCheck::Invalid(
+                "Unable to read first line!".to_string(),
+            ))
         }
     }
 
     fn read(
-        primary_reader: impl SeekableReader,
-        secondary_reader: Option<impl SeekableReader>,
+        primary_reader: &mut impl SeekableReader,
+        _secondary_reader: Option<&mut impl SeekableReader>,
         substitution_matrices: VecMap<crate::substitution_matrix::SubstitutionMatrix>,
     ) -> anyhow::Result<crate::alignment::AlignmentData> {
         // Robert's notes on CAF:
@@ -71,6 +96,8 @@ impl AlignmentFormat for CAFFormat {
         let mut target_name_map: VecMap<String> = VecMap::new();
         let mut query_name_map: VecMap<String> = VecMap::from(vec!["skip".into()]);
         let mut query_lengths: HashMap<usize, usize> = HashMap::new();
+        let mut target_store: SequenceStore = SequenceStore::new();
+        let mut query_store: SequenceStore = SequenceStore::new();
         query_lengths.insert(0, 0);
 
         read_non_empty_lines(primary_reader).try_for_each(|line_unchecked| {
@@ -120,7 +147,13 @@ impl AlignmentFormat for CAFFormat {
                 _ => unreachable!(),
             };
 
-            let (target_seq, query_seq) = caf_str_to_digital_nucleotides(tokens[16]);
+            let (target_seq_gapped, query_seq_gapped) = caf_str_to_digital_nucleotides(tokens[16]);
+            let RawSequences {
+                target_seq,
+                query_seq,
+                cigar,
+            } = digital_nucleotides_to_cigar(target_seq_gapped, query_seq_gapped, strand);
+
             let substitution_matrix_name = tokens[17].to_string();
 
             let target_id = target_name_map.insert(target_name);
@@ -158,9 +191,23 @@ impl AlignmentFormat for CAFFormat {
                 ))?
                 .0;
 
+            target_store.add_sequence(target_id, target_start, &target_seq);
+            query_store.add_sequence(
+                query_id,
+                if matches!(strand, Strand::Reverse) {
+                    query_end
+                } else {
+                    query_start
+                },
+                &query_seq,
+            );
+
             target_group.alignments.push(Alignment {
-                target_seq,
-                query_seq,
+                sequence: AlignmentSequence {
+                    target_seq: Arc::default(),
+                    query_seq: Arc::default(),
+                    cigar,
+                }, // Run a second loop to resolve this...
                 target_start,
                 target_end,
                 query_start,
@@ -174,12 +221,35 @@ impl AlignmentFormat for CAFFormat {
             Ok(())
         })?;
 
+        // Convert stores to indexes for lookup...
+        let target_sequences = target_store.into_index();
+        let query_sequences = query_store.into_index();
+
+        // Get alignment references for every sequence...
+        for group in target_groups.iter_mut() {
+            let target_id = group.target_id;
+            for al in group.alignments.iter_mut() {
+                let (q_start, q_end) = al.ordered_query_range();
+                let t_start = al.target_start;
+                let t_end = al.target_end;
+
+                al.sequence.target_seq = target_sequences
+                    .find(target_id, t_start, t_end)
+                    .ok_or(anyhow!("Unable to find needed target sequence!"))?;
+                al.sequence.query_seq = query_sequences
+                    .find(al.query_id, q_start, q_end)
+                    .ok_or(anyhow!("Unable to find needed query sequence!"))?;
+            }
+        }
+
         Ok(AlignmentData {
             target_groups,
             target_name_map,
             query_name_map,
             query_lengths,
             substitution_matrices,
+            target_sequences,
+            query_sequences,
         })
     }
 
@@ -336,4 +406,63 @@ pub fn caf_str_to_digital_nucleotides(caf_str: &str) -> (Vec<u8>, Vec<u8>) {
     target_bytes_digital.shrink_to_fit();
     query_bytes_digital.shrink_to_fit();
     (target_bytes_digital, query_bytes_digital)
+}
+
+pub struct RawSequences {
+    target_seq: Vec<u8>,
+    query_seq: Vec<u8>,
+    cigar: Cigar,
+}
+
+fn digital_nucleotides_to_cigar(
+    target_gapped_seq: Vec<u8>,
+    query_gapped_seq: Vec<u8>,
+    strand: Strand,
+) -> RawSequences {
+    let mut target_seq = Vec::new();
+    let mut query_seq = Vec::new();
+    let mut cigar = Vec::new();
+
+    for (target_val, query_val) in target_gapped_seq.iter().zip(query_gapped_seq.iter()) {
+        let next_val = match (*target_val, *query_val) {
+            (GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL) => {
+                panic!("Gaps in both sequences!")
+            }
+            (GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL, q_val) => {
+                query_seq.push(q_val);
+                CigarSegment::TargetGap(1)
+            }
+            (t_val, GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL) => {
+                target_seq.push(t_val);
+                CigarSegment::QueryGap(1)
+            }
+            (t_val, q_val) => {
+                target_seq.push(t_val);
+                query_seq.push(q_val);
+                CigarSegment::Aligned(1)
+            }
+        };
+
+        if let Some(prior_val) = cigar.last_mut() {
+            if mem::discriminant(prior_val) == mem::discriminant(&next_val) {
+                let count = prior_val.count_mut();
+                *count += *next_val.count();
+                continue;
+            }
+        }
+        cigar.push(next_val);
+    }
+
+    if matches!(strand, Strand::Reverse) {
+        query_seq.reverse();
+    }
+
+    query_seq.shrink_to_fit();
+    target_seq.shrink_to_fit();
+
+    RawSequences {
+        target_seq,
+        query_seq,
+        cigar: cigar.into_iter().collect(),
+    }
 }

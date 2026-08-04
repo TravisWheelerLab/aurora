@@ -1,4 +1,5 @@
 use anyhow::Context;
+use itertools::Itertools;
 use thiserror::Error;
 
 use crate::alignment::{Alignment, TandemRepeat};
@@ -17,17 +18,16 @@ pub fn build_target_seq_from_alignments(
     let mut target_seq = vec![PAD_DIGITAL; target_length];
 
     alignments.iter().for_each(|ali| {
-        ali.target_seq
-            .iter()
+        ali.target_aligned_sequence()
             // skip all of the target gaps
-            .filter(|&&b| b != GAP_OPEN_DIGITAL && b != GAP_EXTEND_DIGITAL)
+            .filter(|&b| b != GAP_OPEN_DIGITAL && b != GAP_EXTEND_DIGITAL)
             // then if we enumerate, we get indices
             // relative to the target sequence
             .enumerate()
             // then we can do a little math to place those indicies
             // relative to the target byte vector we're building
             .map(|(idx, b)| (idx + ali.target_start - target_start, b))
-            .for_each(|(idx, &byte)| target_seq[idx] = byte);
+            .for_each(|(idx, byte)| target_seq[idx] = byte);
     });
 
     target_seq
@@ -181,13 +181,16 @@ fn locate_target_gaps(alignment: &Alignment) -> anyhow::Result<Vec<f64>> {
     let error_context = || {
         format!(
             "target seq: {}",
-            alignment.target_seq.to_debug_utf8_string()
+            alignment
+                .target_aligned_sequence()
+                .collect_vec()
+                .to_debug_utf8_string()
         )
     };
 
-    let first_target_char = *alignment
-        .target_seq
-        .first()
+    let first_target_char = alignment
+        .target_aligned_sequence()
+        .next()
         .ok_or(GapError::ZeroLengthSequence)?;
 
     if first_target_char == GAP_OPEN_DIGITAL || first_target_char == GAP_EXTEND_DIGITAL {
@@ -200,10 +203,9 @@ fn locate_target_gaps(alignment: &Alignment) -> anyhow::Result<Vec<f64>> {
     let mut gap_start: Option<usize> = None;
 
     alignment
-        .target_seq
-        .iter()
+        .target_aligned_sequence()
         .enumerate()
-        .try_for_each(|(ali_pos, &target_byte)| {
+        .try_for_each(|(ali_pos, target_byte)| {
             match (gap_start, target_byte) {
                 (None, GAP_OPEN_DIGITAL) => {
                     gap_start = Some(ali_pos);
@@ -234,11 +236,19 @@ fn locate_target_gaps(alignment: &Alignment) -> anyhow::Result<Vec<f64>> {
 }
 
 fn locate_query_gaps(alignment: &Alignment) -> anyhow::Result<Vec<f64>> {
-    let error_context = || format!("query seq: {}", alignment.target_seq.to_debug_utf8_string());
+    let error_context = || {
+        format!(
+            "query seq: {}",
+            alignment
+                .target_aligned_sequence()
+                .collect_vec()
+                .to_debug_utf8_string()
+        )
+    };
 
-    let first_query_char = *alignment
-        .query_seq
-        .first()
+    let first_query_char = alignment
+        .query_aligned_sequence()
+        .next()
         .ok_or(GapError::ZeroLengthSequence)?;
 
     if first_query_char == GAP_OPEN_DIGITAL || first_query_char == GAP_EXTEND_DIGITAL {
@@ -249,14 +259,13 @@ fn locate_query_gaps(alignment: &Alignment) -> anyhow::Result<Vec<f64>> {
     let mut gaps = vec![0.0; target_length];
     let mut gap_start: Option<usize> = None;
     alignment
-        .query_seq
-        .iter()
-        .zip(&alignment.target_seq)
-        .filter(|(_, &target_byte)| {
+        .query_aligned_sequence()
+        .zip(alignment.target_aligned_sequence())
+        .filter(|&(_, target_byte)| {
             target_byte != GAP_OPEN_DIGITAL && target_byte != GAP_EXTEND_DIGITAL
         })
         .enumerate()
-        .try_for_each(|(target_pos, (&query_byte, _))| {
+        .try_for_each(|(target_pos, (query_byte, _))| {
             match (gap_start, query_byte) {
                 (None, GAP_OPEN_DIGITAL) => {
                     gap_start = Some(target_pos);
@@ -414,12 +423,11 @@ fn windowed_score_alignment(
     query_gaps.iter_mut().for_each(|g| *g = query_gap_fn(g));
 
     let scores_without_gaps: Vec<f64> = alignment
-        .target_seq
-        .iter()
-        .zip(&alignment.query_seq)
-        .filter(|(&t, _)| t != GAP_OPEN_DIGITAL && t != GAP_EXTEND_DIGITAL)
+        .target_aligned_sequence()
+        .zip(alignment.query_aligned_sequence())
+        .filter(|&(t, _)| t != GAP_OPEN_DIGITAL && t != GAP_EXTEND_DIGITAL)
         .enumerate()
-        .map(|(target_idx, (&t, &q))| {
+        .map(|(target_idx, (t, q))| {
             let target_pos = target_idx + alignment.target_start;
             let frequencies = background.frequencies_at(target_pos);
             match q {

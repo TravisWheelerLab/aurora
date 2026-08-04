@@ -118,7 +118,10 @@ impl MatrixDef {
                     }
                 }
 
-                for (&target_char, &query_char) in ali.target_seq.iter().zip(ali.query_seq.iter()) {
+                for (target_char, query_char) in ali
+                    .target_aligned_sequence()
+                    .zip(ali.query_aligned_sequence())
+                {
                     match target_char {
                         GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
                             // if the target character is a gap, we advance the

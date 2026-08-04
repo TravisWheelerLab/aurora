@@ -42,7 +42,6 @@ use std::{
     path::PathBuf,
 };
 
-use alignment::AlignmentData;
 use chunks::ProximityGroup;
 
 use anyhow::{Context, Ok, Result};
@@ -56,6 +55,7 @@ use viz::VizConstraint;
 use crate::{
     annotation::AmbiguousAnnotation,
     chunks::validate_groups,
+    formats::load_alignments,
     join_estimation::{BayesianJoinEstimator, BayesianJoinStatistics},
     pipeline::{run_history_trace, run_naive_trace, NaiveTraceResults},
     trace_statistics::{trace_statistics, OccuranceCountingMode, TraceStatistics},
@@ -80,6 +80,10 @@ pub struct AuroraArgs {
     /// The path to substitution matrices
     #[arg()]
     matrices: String,
+
+    /// The path to FASTA formatted sequences, only required for BPAF format.
+    #[arg()]
+    fasta: Option<String>,
 
     #[command(flatten)]
     #[clap(next_help_heading = "Annotation options")]
@@ -340,23 +344,12 @@ fn main() -> Result<()> {
     let mut args = AuroraArgs::parse();
     let viz_args = &mut args.visualization_args;
 
-    let alignments_file = File::open(&args.alignments).context(format!(
-        "failed to open alignments file: '{}'",
-        args.alignments
-    ))?;
-    let matrices_file = File::open(&args.matrices)
-        .context(format!("failed to open matrices file: '{}'", args.matrices))?;
-
-    let ultra_file = match args.ultra_args.ultra_file_path {
-        Some(ref path) => Some(File::open(path).context(format!(
-            "failed to open ultra file: '{}'",
-            path.to_str().unwrap_or("?")
-        ))?),
-        None => None,
-    };
-
-    let alignment_data =
-        AlignmentData::from_caf_and_ultra_and_matrices(alignments_file, ultra_file, matrices_file)?;
+    let alignment_data = load_alignments(
+        &args.alignments,
+        args.fasta.as_ref(),
+        &args.matrices,
+        args.ultra_args.ultra_file_path.as_ref(),
+    )?;
 
     let proximity_groups = ProximityGroup::from_alignment_data(
         &alignment_data,

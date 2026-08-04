@@ -1,8 +1,6 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 use itertools::Itertools;
-use serde::Deserialize;
 use std::collections::HashMap;
-use std::io::{BufReader, Read};
 use std::sync::Arc;
 use std::{fmt, hash};
 
@@ -10,9 +8,8 @@ use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::alignment::CigarSegment::{Aligned, QueryGap, TargetGap};
 use crate::alphabet::{
-    NucleotideAlignmentType, NucleotideByteUtils, ALIGNMENT_ALPHABET_STR, A_DIGITAL, C_DIGITAL,
-    DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, G_DIGITAL,
-    NUCLEOTIDE_ALPHABET_UTF8, PLUS_UTF8, T_DIGITAL, UTF8_TO_DIGITAL_NUCLEOTIDE,
+    NucleotideAlignmentType, NucleotideByteUtils, A_DIGITAL, C_DIGITAL, GAP_EXTEND_DIGITAL,
+    GAP_OPEN_DIGITAL, G_DIGITAL, T_DIGITAL,
 };
 use crate::sequence_store::SequenceIndex;
 use crate::substitution_matrix::SubstitutionMatrix;
@@ -130,6 +127,18 @@ pub enum CigarSegment {
     QueryGap(u64),
 }
 
+impl CigarSegment {
+    pub fn count(&self) -> &u64 {
+        let (Aligned(count) | TargetGap(count) | QueryGap(count)) = self;
+        return count;
+    }
+
+    pub fn count_mut(&mut self) -> &mut u64 {
+        let (Aligned(count) | TargetGap(count) | QueryGap(count)) = self;
+        return count;
+    }
+}
+
 impl From<CigarSegment> for i64 {
     fn from(value: CigarSegment) -> Self {
         match value {
@@ -148,14 +157,14 @@ impl Cigar {
     }
 }
 
-impl<T: Iterator<Item = i64>> From<T> for Cigar {
-    fn from(values: T) -> Self {
+impl FromIterator<i64> for Cigar {
+    fn from_iter<T: IntoIterator<Item = i64>>(iter: T) -> Self {
         let cigar = Cigar(
-            values
+            iter.into_iter()
                 .enumerate()
                 .map(|(i, v)| {
                     if i & 1 == 0 {
-                        (v as u64)
+                        v as u64
                     } else {
                         zig_zag_encode(v)
                     }
@@ -164,6 +173,12 @@ impl<T: Iterator<Item = i64>> From<T> for Cigar {
         );
         assert!(cigar.0 .0.len() > 0 && cigar.0 .0.len() % 2 == 1);
         cigar
+    }
+}
+
+impl FromIterator<CigarSegment> for Cigar {
+    fn from_iter<T: IntoIterator<Item = CigarSegment>>(iter: T) -> Self {
+        iter.into_iter().map(|v| i64::from(v)).collect()
     }
 }
 
@@ -201,9 +216,19 @@ impl Iterator for CigarIterator<'_> {
 }
 
 pub struct AlignmentSequence {
-    target_seq: Arc<(usize, Vec<u8>)>,
-    query_seq: Arc<(usize, Vec<u8>)>,
-    cigar: Cigar,
+    pub target_seq: Arc<(usize, Vec<u8>)>,
+    pub query_seq: Arc<(usize, Vec<u8>)>,
+    pub cigar: Cigar,
+}
+
+impl Default for AlignmentSequence {
+    fn default() -> Self {
+        Self {
+            target_seq: Arc::default(),
+            query_seq: Arc::default(),
+            cigar: Cigar(ULEBS(Vec::default())),
+        }
+    }
 }
 
 impl PartialEq for AlignmentSequence {
@@ -214,7 +239,7 @@ impl PartialEq for AlignmentSequence {
 
 impl Eq for AlignmentSequence {}
 
-#[derive(Eq)]
+#[derive(Default, Eq)]
 pub struct Alignment {
     pub sequence: AlignmentSequence,
     pub target_start: usize,
@@ -441,6 +466,14 @@ impl Alignment {
 
         (-50.0 * ((1.0 - 2.0 * p - q) * (1.0 - 2.0 * q).sqrt()).ln()).abs()
     }
+
+    pub fn ordered_query_range(&self) -> (usize, usize) {
+        if matches!(self.strand, Strand::Reverse) {
+            (self.query_end, self.query_start)
+        } else {
+            (self.query_start, self.query_end)
+        }
+    }
 }
 
 impl PartialEq for Alignment {
@@ -512,8 +545,6 @@ impl Serialize for Alignment {
         state.end()
     }
 }
-
-
 
 #[derive(Debug, Default)]
 pub struct TandemRepeat {
