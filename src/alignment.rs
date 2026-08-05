@@ -7,13 +7,13 @@ use std::{fmt, hash};
 
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
-use crate::alignment::CigarSegment::{Aligned, QueryGap, TargetGap};
 use crate::alphabet::{
     NucleotideAlignmentType, NucleotideByteUtils, A_DIGITAL, C_DIGITAL, GAP_EXTEND_DIGITAL,
     GAP_OPEN_DIGITAL, G_DIGITAL, T_DIGITAL,
 };
 use crate::sequence_store::SequenceIndex;
 use crate::substitution_matrix::SubstitutionMatrix;
+use crate::uleb::{Cigar, CigarSegment};
 use crate::util::{StrSliceExt, VecMap};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,184 +53,6 @@ impl fmt::Display for Strand {
     }
 }
 
-pub struct ULEBS(Vec<u8>);
-
-impl ULEBS {
-    #[allow(dead_code)]
-    fn iter(&self) -> ULEBIterator<'_> {
-        return ULEBIterator {
-            ints: &self.0,
-            offset: 0,
-        };
-    }
-}
-
-impl FromIterator<u64> for ULEBS {
-    fn from_iter<T: IntoIterator<Item = u64>>(iter: T) -> Self {
-        let mut data: Vec<u8> = Vec::new();
-
-        for value in iter {
-            let mut value = value;
-            while value >= 0b1000_0000 {
-                data.push((value & 0b0111_1111) as u8 | 0b1000_0000);
-                value = value >> 7;
-            }
-            data.push((value & 0b0111_1111) as u8);
-        }
-
-        ULEBS(data)
-    }
-}
-
-pub struct ULEBIterator<'a> {
-    ints: &'a [u8],
-    offset: usize,
-}
-
-fn decode_next_uleb(arr: &[u8], mut offset: usize) -> Result<(u64, usize), (u64, usize)> {
-    let mut result_int: u64 = 0;
-    let mut shift: u8 = 0;
-
-    let move_by = (arr.len() - offset).min(10);
-
-    for _ in 0..move_by {
-        let b = arr[offset];
-        offset += 1;
-        result_int |= ((b & 0b0111_1111) as u64) << shift;
-        if (b & 0b1000_0000) == 0 {
-            return Result::Ok((result_int, offset));
-        }
-        shift += 7;
-    }
-
-    Result::Err((result_int, offset))
-}
-
-impl Iterator for ULEBIterator<'_> {
-    type Item = u64;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.offset >= self.ints.len() {
-            return None;
-        }
-
-        let (val, next_offset) = decode_next_uleb(self.ints, self.offset).unwrap();
-        self.offset = next_offset;
-        Some(val)
-    }
-}
-
-pub struct Cigar(ULEBS);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum CigarSegment {
-    Aligned(u64),
-    TargetGap(u64),
-    QueryGap(u64),
-}
-
-impl CigarSegment {
-    pub fn count(&self) -> &u64 {
-        let (Aligned(count) | TargetGap(count) | QueryGap(count)) = self;
-        return count;
-    }
-
-    pub fn count_mut(&mut self) -> &mut u64 {
-        let (Aligned(count) | TargetGap(count) | QueryGap(count)) = self;
-        return count;
-    }
-}
-
-impl From<CigarSegment> for i64 {
-    fn from(value: CigarSegment) -> Self {
-        match value {
-            Aligned(val) | QueryGap(val) => val as i64,
-            TargetGap(val) => -(val as i64),
-        }
-    }
-}
-
-impl Cigar {
-    pub fn iter(&self) -> CigarIterator<'_> {
-        CigarIterator {
-            inner_iter: ULEBIterator {
-                ints: &self.0 .0,
-                offset: 0,
-            },
-            return_count: 0,
-        }
-    }
-}
-
-impl FromIterator<i64> for Cigar {
-    fn from_iter<T: IntoIterator<Item = i64>>(iter: T) -> Self {
-        let mut count = 0;
-
-        let cigar = Cigar(
-            iter.into_iter()
-                .enumerate()
-                .map(|(i, v)| {
-                    count += 1;
-                    if i % 2 == 0 {
-                        v.abs() as u64
-                    } else {
-                        zig_zag_encode(v)
-                    }
-                })
-                .collect(),
-        );
-        assert!(count > 0 && count % 2 == 1);
-        cigar
-    }
-}
-
-impl FromIterator<CigarSegment> for Cigar {
-    fn from_iter<T: IntoIterator<Item = CigarSegment>>(iter: T) -> Self {
-        iter.into_iter().map(|v| i64::from(v)).collect()
-    }
-}
-
-#[inline]
-fn zig_zag_decode(num: u64) -> i64 {
-    let is_neg = num & 1;
-    let msk = !(is_neg.wrapping_sub(1));
-    ((num >> 1) ^ msk) as i64
-}
-
-#[inline]
-fn zig_zag_encode(num: i64) -> u64 {
-    let is_neg = (num < 0) as u64;
-    let msk = !(is_neg.wrapping_sub(1));
-    (((num as u64) ^ msk) << 1) + is_neg
-}
-
-pub struct CigarIterator<'a> {
-    inner_iter: ULEBIterator<'a>,
-    return_count: usize,
-}
-
-impl Iterator for CigarIterator<'_> {
-    type Item = CigarSegment;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let next_val = self.inner_iter.next().map(|v| {
-            if self.return_count % 2 == 0 {
-                Aligned(v)
-            } else {
-                let z = zig_zag_decode(v);
-                let z_abs = z.abs() as u64;
-                if z >= 0 {
-                    QueryGap(z_abs)
-                } else {
-                    TargetGap(z_abs)
-                }
-            }
-        });
-        self.return_count += 1;
-        next_val
-    }
-}
-
 pub struct AlignmentSequence {
     pub target_seq: Arc<(usize, Vec<u8>)>,
     pub query_seq: Arc<(usize, Vec<u8>)>,
@@ -242,7 +64,7 @@ impl Default for AlignmentSequence {
         Self {
             target_seq: Arc::default(),
             query_seq: Arc::default(),
-            cigar: Cigar(ULEBS(Vec::default())),
+            cigar: Cigar::default(),
         }
     }
 }
@@ -306,16 +128,15 @@ impl<I: Iterator<Item = CigarSegment>, F: Fn(CigarSegment) -> bool> Iterator
             return None;
         }
 
-        if self.cigar_remaining == 0 {
+        while self.cigar_remaining == 0 {
             if let Some(next_val) = self.cigar_seq.next() {
                 let gap: i64 = next_val.into();
                 self.cigar_remaining = gap.abs() as usize;
                 self.is_gap = (self.gap_check)(next_val);
                 self.cigar_steps = 0;
+            } else {
+                return None;
             }
-        }
-        if self.cigar_remaining == 0 {
-            return None;
         }
 
         let char = if self.is_gap {
@@ -383,6 +204,20 @@ pub fn digital_nucleotides_to_original_sequences(
                 continue;
             }
         }
+
+        // Add filler value if value will land in wrong slot in cigar string.
+        // Note this can happen if there is a query gap followed immediately by a target gap
+        // Alignment case should never happen but this will guarantee the encoded cigar is valid...
+        match (cigar.len() % 2, next_val) {
+            (1, CigarSegment::Aligned(_)) => {
+                cigar.push(CigarSegment::QueryGap(0));
+            }
+            (0, CigarSegment::QueryGap(_) | CigarSegment::TargetGap(_)) => {
+                cigar.push(CigarSegment::Aligned(0));
+            }
+            _ => {}
+        }
+
         cigar.push(next_val);
     }
 
@@ -392,7 +227,6 @@ pub fn digital_nucleotides_to_original_sequences(
 
     query_seq.shrink_to_fit();
     target_seq.shrink_to_fit();
-    println!("Pre-Save: {:?}", cigar);
 
     RawSequences {
         target_seq,
@@ -421,14 +255,6 @@ impl Alignment {
             Strand::Forward,
         );
 
-        println!("{}", str);
-        println!(
-            "{:?}, {:?}, {:?}",
-            seqs.target_seq.to_debug_utf8_string(),
-            seqs.query_seq.to_debug_utf8_string(),
-            seqs.cigar.iter().collect_vec()
-        );
-
         let target_len = seqs.target_seq.len();
         let query_len = seqs.query_seq.len();
 
@@ -452,19 +278,11 @@ impl Alignment {
     pub fn target_aligned_sequence(&self) -> impl Iterator<Item = u8> + '_ {
         let offset = self.sequence.target_seq.0;
 
-        println!(
-            "{} {} {}, {:?}",
-            self.target_start,
-            self.target_end,
-            self.sequence.target_seq.0,
-            self.sequence.target_seq.1
-        );
-
         AlignmentIterator::new(
             self.sequence.cigar.iter(),
             &self.sequence.target_seq.1[self.target_start - offset..=self.target_end - offset],
             false,
-            |v| matches!(v, TargetGap(_)),
+            |v| matches!(v, CigarSegment::TargetGap(_)),
         )
     }
 
@@ -481,7 +299,7 @@ impl Alignment {
             self.sequence.cigar.iter(),
             &self.sequence.query_seq.1[start - offset..=end - offset],
             is_rev,
-            |v| matches!(v, QueryGap(_)),
+            |v| matches!(v, CigarSegment::QueryGap(_)),
         )
     }
 
@@ -493,55 +311,42 @@ impl Alignment {
             Strand::Unset => panic!("Strand is not set!"),
         };
 
+        let query_skip_count = if is_forward {
+            query_start.saturating_sub(self.query_start)
+        } else {
+            self.query_end.saturating_sub(query_end)
+        };
+        let query_count = if is_forward {
+            query_end - query_start + 1
+        } else {
+            query_start - query_end + 1
+        };
+
         let mut aligned_positions: u64 = 0;
 
         // Count the CpG weighted transitions and transversions...
         let mut transitions10x: u64 = 0;
         let mut transversions: u64 = 0;
 
-        let mut query_offset: usize = self.query_start;
         let mut prior_pair = (GAP_OPEN_DIGITAL, GAP_EXTEND_DIGITAL);
 
-        let query_iter = self
+        let valid_pair_iter = self
             .query_aligned_sequence()
             .zip(self.target_aligned_sequence())
-            .filter_map(|(q, t)| {
-                let old_query_offset = query_offset;
-                let old_prior_pair = prior_pair;
-                if matches!(q, A_DIGITAL | C_DIGITAL | T_DIGITAL | G_DIGITAL) {
-                    prior_pair = (q, t);
-                }
-                if matches!(q, GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL) {
-                    return None;
-                }
-
-                if is_forward {
-                    query_offset += 1;
-                } else {
-                    query_offset -= 1;
-                }
-
-                let past_start = if is_forward {
-                    old_query_offset >= query_start
-                } else {
-                    old_query_offset <= query_start
-                };
-
-                if past_start {
-                    Some((old_query_offset, old_prior_pair.0, old_prior_pair.1, q, t))
-                } else {
-                    None
-                }
+            .filter(|&(q, _t)| !matches!(q, GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL))
+            .skip(query_skip_count)
+            .take(query_count)
+            .map(|(q, t)| {
+                let old_prior_pair = prior_pair.clone();
+                prior_pair = (q, t);
+                (old_prior_pair.0, old_prior_pair.1, q, t)
             })
-            .take_while(|&val| {
-                if is_forward {
-                    val.0 <= query_end
-                } else {
-                    val.0 >= query_end
-                }
+            .filter(|&(_q_prior, _t_prior, q, t)| {
+                matches!(q, A_DIGITAL | C_DIGITAL | T_DIGITAL | G_DIGITAL)
+                    && matches!(t, A_DIGITAL | C_DIGITAL | T_DIGITAL | G_DIGITAL)
             });
 
-        for (_i, q_p, t_p, q_c, t_c) in query_iter {
+        for (q_p, t_p, q_c, t_c) in valid_pair_iter {
             let is_cpg_group = q_p == C_DIGITAL && q_c == G_DIGITAL;
             let current_state = NucleotideAlignmentType::from_pair(q_c, t_c);
             let prior_state = NucleotideAlignmentType::from_pair(q_p, t_p);
@@ -639,8 +444,8 @@ impl fmt::Display for Alignment {
             .cigar
             .iter()
             .map(|seg| match seg {
-                Aligned(v) => "|".repeat(v as usize),
-                TargetGap(v) | QueryGap(v) => " ".repeat(v as usize),
+                CigarSegment::Aligned(v) => "|".repeat(v as usize),
+                CigarSegment::TargetGap(v) | CigarSegment::QueryGap(v) => " ".repeat(v as usize),
             })
             .collect();
 
@@ -717,7 +522,7 @@ impl AlignmentData {
         self.target_groups
             .iter()
             .flat_map(|g| &g.alignments)
-            .map(|a| a.sequence.cigar.0 .0.capacity() + std::mem::size_of::<Alignment>())
+            .map(|a| a.sequence.cigar.capacity() + std::mem::size_of::<Alignment>())
             .sum::<usize>()
             + self.substitution_matrices.capacity() * std::mem::size_of::<SubstitutionMatrix>()
             + self.query_lengths.capacity() * std::mem::size_of::<usize>()
@@ -735,59 +540,5 @@ impl AlignmentData {
                 .sum::<usize>()
             + self.target_sequences.allocation_size()
             + self.query_sequences.allocation_size()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rand::{rngs::Xoshiro256PlusPlus, RngExt, SeedableRng};
-
-    #[test]
-    fn check_zig_zag_encoding() {
-        for i in -200..=200 {
-            assert_eq!(i, zig_zag_decode(zig_zag_encode(i)));
-            if i >= 0 {
-                assert_eq!((i.abs() as u64 * 2), zig_zag_encode(i));
-            } else {
-                assert_eq!((i.abs() as u64 * 2) - 1, zig_zag_encode(i));
-            }
-        }
-    }
-
-    #[test]
-    fn test_uleb_encoding() {
-        let mut rng = Xoshiro256PlusPlus::seed_from_u64(12345654321);
-
-        let vals = (0..1000)
-            .map(|_| rng.random_range(..=u64::MAX))
-            .collect_vec();
-
-        let ulebs: ULEBS = vals.clone().into_iter().collect();
-        let vals_decoded = ulebs.iter().collect_vec();
-
-        assert_eq!(vals, vals_decoded);
-    }
-
-    #[test]
-    fn test_cigar_encoding() {
-        let mut rng = Xoshiro256PlusPlus::seed_from_u64(12345654321);
-
-        let vals = (0..1001)
-            .map(|idx| {
-                let v = rng.random_range(i64::MIN..=i64::MAX);
-                if idx % 2 == 0 {
-                    v.abs()
-                } else {
-                    v
-                }
-            })
-            .collect_vec();
-
-        let cigar: Cigar = vals.clone().into_iter().collect();
-
-        let vals_decoded: Vec<i64> = cigar.iter().map(|v| v.into()).collect_vec();
-
-        assert_eq!(vals, vals_decoded);
     }
 }

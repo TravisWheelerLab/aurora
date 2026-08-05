@@ -197,15 +197,7 @@ impl AlignmentFormat for CAFFormat {
                 .0;
 
             target_store.add_sequence(target_id, target_start, &target_seq);
-            query_store.add_sequence(
-                query_id,
-                if matches!(strand, Strand::Reverse) {
-                    query_end
-                } else {
-                    query_start
-                },
-                &query_seq,
-            );
+            query_store.add_sequence(query_id, query_start.min(query_end), &query_seq);
 
             target_group.alignments.push(Alignment {
                 sequence: AlignmentSequence {

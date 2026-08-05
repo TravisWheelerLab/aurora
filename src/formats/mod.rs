@@ -1,4 +1,5 @@
 mod caf;
+mod fasta;
 mod ultra;
 
 use crate::{alignment::AlignmentData, substitution_matrix::SubstitutionMatrix, util::VecMap};

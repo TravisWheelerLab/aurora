@@ -29,20 +29,21 @@ impl SequenceStore {
         let mut overlaps: Vec<(usize, usize)> = entry
             .range(..=start)
             .next_back()
-            .filter(|v| v.0 + v.1.len() - 1 >= start)
             .map(|v| (*v.0, v.0 + v.1.len() - 1))
+            .filter(|v| v.1 >= start)
             .iter()
             .copied()
             .collect();
 
         overlaps.extend(
             entry
-                .range(start..=end)
+                .range((start + 1)..=end)
                 .map(|v| (*v.0, v.0 + v.1.len() - 1)),
         );
 
         let new_start = overlaps.first().map(|v| v.0).unwrap_or(start).min(start);
         let new_end = overlaps.last().map(|v| v.1).unwrap_or(end).max(end);
+
         let mut new_seq = vec![0_u8; new_end - new_start + 1];
 
         new_seq[start - new_start..=end - new_start].copy_from_slice(sequence);
@@ -53,7 +54,7 @@ impl SequenceStore {
             }
         }
 
-        entry.insert(start, new_seq);
+        entry.insert(new_start, new_seq);
     }
 
     pub fn into_index(self) -> SequenceIndex {

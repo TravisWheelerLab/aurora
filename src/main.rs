@@ -8,6 +8,7 @@ mod confidence;
 mod history_tracing;
 mod join_estimation;
 mod matrix;
+mod uleb;
 
 // Keeping around for enhanced parameter estimation work...
 #[allow(dead_code)]

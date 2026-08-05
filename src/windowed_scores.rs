@@ -240,7 +240,7 @@ fn locate_query_gaps(alignment: &Alignment) -> anyhow::Result<Vec<f64>> {
         format!(
             "query seq: {}",
             alignment
-                .target_aligned_sequence()
+                .query_aligned_sequence()
                 .collect_vec()
                 .to_debug_utf8_string()
         )
