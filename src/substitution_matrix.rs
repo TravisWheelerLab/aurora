@@ -585,25 +585,19 @@ mod tests {
         let matrix_vec = SubstitutionMatrix::parse(matrix_buf)?;
         let matrix = matrix_vec.first().unwrap();
 
-        let mut ali: Vec<Alignment> = [
+        let ali: Vec<Alignment> = [
             format!("{}\n{}", "AAAAA", "ACGTA"),
             format!("{}\n{}", "CCCCC", "ACGTA"),
             format!("{}\n{}", "GGGGG", "ACGTA"),
             format!("{}\n{}", "TTTTT", "ACGTA"),
         ]
         .iter()
-        .map(|v| Alignment::from_str(v))
+        .zip([10, 15, 20, 25].iter())
+        .map(|(v, &start)| Alignment::from_str_with_target_offset(v, start))
         .collect();
 
-        let starts = [10, 15, 20, 25];
-        let ends = [14, 19, 24, 29];
-        (0..4).for_each(|i| {
-            ali[i].target_start = starts[i];
-            ali[i].target_end = ends[i];
-        });
-
-        let target_start = starts[0] - 5;
-        let target_end = ends.last().unwrap() + 5;
+        let target_start = ali.first().unwrap().target_start - 5;
+        let target_end = ali.last().unwrap().target_end + 5;
         let target_length = target_end - target_start + 1;
 
         let target_seq = build_target_seq_from_alignments(&ali, target_start, target_length);
@@ -621,12 +615,11 @@ mod tests {
         ];
 
         ali.iter().enumerate().for_each(|(ali_idx, ali)| {
-            ali.target_seq
-                .iter()
-                .zip(&ali.query_seq)
+            ali.target_aligned_sequence()
+                .zip(ali.query_aligned_sequence())
                 .enumerate()
                 .map(|(idx, bytes)| (idx, idx + ali.target_start, bytes))
-                .for_each(|(ali_pos, target_pos, (&target_char, &query_char))| {
+                .for_each(|(ali_pos, target_pos, (target_char, query_char))| {
                     println!(
                         "{target_pos}: {} - {}",
                         target_char.to_utf8_string(),

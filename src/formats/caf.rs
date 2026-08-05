@@ -1,5 +1,7 @@
-use crate::alignment::CigarSegment;
-use crate::alignment::{Alignment, AlignmentData, AlignmentSequence, Cigar, Strand, TargetGroup};
+use crate::alignment::{
+    digital_nucleotides_to_original_sequences, Alignment, AlignmentData, AlignmentSequence,
+    RawSequences, Strand, TargetGroup,
+};
 use crate::alphabet::{
     DASH_UTF8, FORWARD_SLASH_UTF8, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, NUCLEOTIDE_ALPHABET_UTF8,
     PLUS_UTF8, UTF8_TO_DIGITAL_NUCLEOTIDE,
@@ -9,7 +11,6 @@ use crate::sequence_store::SequenceStore;
 use crate::util::{read_non_empty_lines, VecMap};
 use anyhow::{anyhow, Context};
 use std::collections::HashMap;
-use std::mem;
 use std::sync::Arc;
 
 pub struct CAFFormat {}
@@ -152,7 +153,11 @@ impl AlignmentFormat for CAFFormat {
                 target_seq,
                 query_seq,
                 cigar,
-            } = digital_nucleotides_to_cigar(target_seq_gapped, query_seq_gapped, strand);
+            } = digital_nucleotides_to_original_sequences(
+                target_seq_gapped,
+                query_seq_gapped,
+                strand,
+            );
 
             let substitution_matrix_name = tokens[17].to_string();
 
@@ -406,63 +411,4 @@ pub fn caf_str_to_digital_nucleotides(caf_str: &str) -> (Vec<u8>, Vec<u8>) {
     target_bytes_digital.shrink_to_fit();
     query_bytes_digital.shrink_to_fit();
     (target_bytes_digital, query_bytes_digital)
-}
-
-pub struct RawSequences {
-    target_seq: Vec<u8>,
-    query_seq: Vec<u8>,
-    cigar: Cigar,
-}
-
-fn digital_nucleotides_to_cigar(
-    target_gapped_seq: Vec<u8>,
-    query_gapped_seq: Vec<u8>,
-    strand: Strand,
-) -> RawSequences {
-    let mut target_seq = Vec::new();
-    let mut query_seq = Vec::new();
-    let mut cigar = Vec::new();
-
-    for (target_val, query_val) in target_gapped_seq.iter().zip(query_gapped_seq.iter()) {
-        let next_val = match (*target_val, *query_val) {
-            (GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL) => {
-                panic!("Gaps in both sequences!")
-            }
-            (GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL, q_val) => {
-                query_seq.push(q_val);
-                CigarSegment::TargetGap(1)
-            }
-            (t_val, GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL) => {
-                target_seq.push(t_val);
-                CigarSegment::QueryGap(1)
-            }
-            (t_val, q_val) => {
-                target_seq.push(t_val);
-                query_seq.push(q_val);
-                CigarSegment::Aligned(1)
-            }
-        };
-
-        if let Some(prior_val) = cigar.last_mut() {
-            if mem::discriminant(prior_val) == mem::discriminant(&next_val) {
-                let count = prior_val.count_mut();
-                *count += *next_val.count();
-                continue;
-            }
-        }
-        cigar.push(next_val);
-    }
-
-    if matches!(strand, Strand::Reverse) {
-        query_seq.reverse();
-    }
-
-    query_seq.shrink_to_fit();
-    target_seq.shrink_to_fit();
-
-    RawSequences {
-        target_seq,
-        query_seq,
-        cigar: cigar.into_iter().collect(),
-    }
 }

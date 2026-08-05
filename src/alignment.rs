@@ -1,6 +1,7 @@
 use anyhow::Result;
 use itertools::Itertools;
 use std::collections::HashMap;
+use std::mem;
 use std::sync::Arc;
 use std::{fmt, hash};
 
@@ -13,7 +14,7 @@ use crate::alphabet::{
 };
 use crate::sequence_store::SequenceIndex;
 use crate::substitution_matrix::SubstitutionMatrix;
-use crate::util::VecMap;
+use crate::util::{StrSliceExt, VecMap};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Strand {
@@ -55,6 +56,7 @@ impl fmt::Display for Strand {
 pub struct ULEBS(Vec<u8>);
 
 impl ULEBS {
+    #[allow(dead_code)]
     fn iter(&self) -> ULEBIterator<'_> {
         return ULEBIterator {
             ints: &self.0,
@@ -63,17 +65,17 @@ impl ULEBS {
     }
 }
 
-impl<T: Iterator<Item = u64>> From<T> for ULEBS {
-    fn from(values: T) -> Self {
+impl FromIterator<u64> for ULEBS {
+    fn from_iter<T: IntoIterator<Item = u64>>(iter: T) -> Self {
         let mut data: Vec<u8> = Vec::new();
 
-        for value in values {
+        for value in iter {
             let mut value = value;
-            while value > 0x80 {
-                data.push((value & 0x7F) as u8 | 0x80);
+            while value >= 0b1000_0000 {
+                data.push((value & 0b0111_1111) as u8 | 0b1000_0000);
                 value = value >> 7;
             }
-            data.push((value & 0x7F) as u8);
+            data.push((value & 0b0111_1111) as u8);
         }
 
         ULEBS(data)
@@ -89,13 +91,13 @@ fn decode_next_uleb(arr: &[u8], mut offset: usize) -> Result<(u64, usize), (u64,
     let mut result_int: u64 = 0;
     let mut shift: u8 = 0;
 
-    let move_by = (arr.len() - offset).min(9);
+    let move_by = (arr.len() - offset).min(10);
 
     for _ in 0..move_by {
         let b = arr[offset];
         offset += 1;
-        result_int |= (b as u64 & 0b01111111) << shift;
-        if (b & 0x80) == 0 {
+        result_int |= ((b & 0b0111_1111) as u64) << shift;
+        if (b & 0b1000_0000) == 0 {
             return Result::Ok((result_int, offset));
         }
         shift += 7;
@@ -150,28 +152,34 @@ impl From<CigarSegment> for i64 {
 
 impl Cigar {
     pub fn iter(&self) -> CigarIterator<'_> {
-        CigarIterator(ULEBIterator {
-            ints: &self.0 .0,
-            offset: 0,
-        })
+        CigarIterator {
+            inner_iter: ULEBIterator {
+                ints: &self.0 .0,
+                offset: 0,
+            },
+            return_count: 0,
+        }
     }
 }
 
 impl FromIterator<i64> for Cigar {
     fn from_iter<T: IntoIterator<Item = i64>>(iter: T) -> Self {
+        let mut count = 0;
+
         let cigar = Cigar(
             iter.into_iter()
                 .enumerate()
                 .map(|(i, v)| {
-                    if i & 1 == 0 {
-                        v as u64
+                    count += 1;
+                    if i % 2 == 0 {
+                        v.abs() as u64
                     } else {
                         zig_zag_encode(v)
                     }
                 })
-                .into(),
+                .collect(),
         );
-        assert!(cigar.0 .0.len() > 0 && cigar.0 .0.len() % 2 == 1);
+        assert!(count > 0 && count % 2 == 1);
         cigar
     }
 }
@@ -182,36 +190,44 @@ impl FromIterator<CigarSegment> for Cigar {
     }
 }
 
+#[inline]
 fn zig_zag_decode(num: u64) -> i64 {
-    (num >> 1) as i64 ^ -((num & 1) as i64)
+    let is_neg = num & 1;
+    let msk = !(is_neg.wrapping_sub(1));
+    ((num >> 1) ^ msk) as i64
 }
 
+#[inline]
 fn zig_zag_encode(num: i64) -> u64 {
-    if num >= 0 {
-        (num as u64) << 1
-    } else {
-        ((-num as u64) << 1) - 1
-    }
+    let is_neg = (num < 0) as u64;
+    let msk = !(is_neg.wrapping_sub(1));
+    (((num as u64) ^ msk) << 1) + is_neg
 }
 
-pub struct CigarIterator<'a>(ULEBIterator<'a>);
+pub struct CigarIterator<'a> {
+    inner_iter: ULEBIterator<'a>,
+    return_count: usize,
+}
 
 impl Iterator for CigarIterator<'_> {
     type Item = CigarSegment;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.0.offset & 1 == 0 {
-            self.0.next().map(|v| Aligned(v))
-        } else {
-            self.0.next().map(|v| {
+        let next_val = self.inner_iter.next().map(|v| {
+            if self.return_count % 2 == 0 {
+                Aligned(v)
+            } else {
                 let z = zig_zag_decode(v);
+                let z_abs = z.abs() as u64;
                 if z >= 0 {
-                    QueryGap(v)
+                    QueryGap(z_abs)
                 } else {
-                    TargetGap(v)
+                    TargetGap(z_abs)
                 }
-            })
-        }
+            }
+        });
+        self.return_count += 1;
+        next_val
     }
 }
 
@@ -325,9 +341,124 @@ impl<I: Iterator<Item = CigarSegment>, F: Fn(CigarSegment) -> bool> Iterator
     }
 }
 
+pub struct RawSequences {
+    pub target_seq: Vec<u8>,
+    pub query_seq: Vec<u8>,
+    pub cigar: Cigar,
+}
+
+pub fn digital_nucleotides_to_original_sequences(
+    target_gapped_seq: Vec<u8>,
+    query_gapped_seq: Vec<u8>,
+    strand: Strand,
+) -> RawSequences {
+    let mut target_seq = Vec::new();
+    let mut query_seq = Vec::new();
+    let mut cigar = Vec::new();
+
+    for (target_val, query_val) in target_gapped_seq.iter().zip(query_gapped_seq.iter()) {
+        let next_val = match (*target_val, *query_val) {
+            (GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL) => {
+                panic!("Gaps in both sequences!")
+            }
+            (GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL, q_val) => {
+                query_seq.push(q_val);
+                CigarSegment::TargetGap(1)
+            }
+            (t_val, GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL) => {
+                target_seq.push(t_val);
+                CigarSegment::QueryGap(1)
+            }
+            (t_val, q_val) => {
+                target_seq.push(t_val);
+                query_seq.push(q_val);
+                CigarSegment::Aligned(1)
+            }
+        };
+
+        if let Some(prior_val) = cigar.last_mut() {
+            if mem::discriminant(prior_val) == mem::discriminant(&next_val) {
+                let count = prior_val.count_mut();
+                *count += *next_val.count();
+                continue;
+            }
+        }
+        cigar.push(next_val);
+    }
+
+    if matches!(strand, Strand::Reverse) {
+        query_seq.reverse();
+    }
+
+    query_seq.shrink_to_fit();
+    target_seq.shrink_to_fit();
+    println!("Pre-Save: {:?}", cigar);
+
+    RawSequences {
+        target_seq,
+        query_seq,
+        cigar: cigar.into_iter().collect(),
+    }
+}
+
 impl Alignment {
+    #[allow(dead_code)]
+    pub fn from_str(str: &str) -> Self {
+        Self::from_str_with_target_offset(str, 1)
+    }
+
+    #[allow(dead_code)]
+    pub fn from_str_with_target_offset(str: &str, target_start: usize) -> Self {
+        let tokens: Vec<&str> = str.split('\n').collect();
+
+        let target = tokens[0];
+        let query = tokens[1];
+        assert_eq!(target.len(), query.len());
+
+        let seqs = digital_nucleotides_to_original_sequences(
+            target.to_digital_nucleotides(),
+            query.to_digital_nucleotides(),
+            Strand::Forward,
+        );
+
+        println!("{}", str);
+        println!(
+            "{:?}, {:?}, {:?}",
+            seqs.target_seq.to_debug_utf8_string(),
+            seqs.query_seq.to_debug_utf8_string(),
+            seqs.cigar.iter().collect_vec()
+        );
+
+        let target_len = seqs.target_seq.len();
+        let query_len = seqs.query_seq.len();
+
+        Self {
+            sequence: AlignmentSequence {
+                target_seq: Arc::new((target_start, seqs.target_seq)),
+                query_seq: Arc::new((1, seqs.query_seq)),
+                cigar: seqs.cigar,
+            },
+            target_start: target_start,
+            target_end: target_start + target_len - 1,
+            query_start: 1,
+            query_end: query_len,
+            strand: Strand::Forward,
+            id: 0,
+            query_id: 0,
+            substitution_matrix_id: 0,
+        }
+    }
+
     pub fn target_aligned_sequence(&self) -> impl Iterator<Item = u8> + '_ {
         let offset = self.sequence.target_seq.0;
+
+        println!(
+            "{} {} {}, {:?}",
+            self.target_start,
+            self.target_end,
+            self.sequence.target_seq.0,
+            self.sequence.target_seq.1
+        );
 
         AlignmentIterator::new(
             self.sequence.cigar.iter(),
@@ -348,7 +479,7 @@ impl Alignment {
 
         AlignmentIterator::new(
             self.sequence.cigar.iter(),
-            &self.sequence.target_seq.1[start - offset..=end - offset],
+            &self.sequence.query_seq.1[start - offset..=end - offset],
             is_rev,
             |v| matches!(v, QueryGap(_)),
         )
@@ -607,9 +738,56 @@ impl AlignmentData {
     }
 }
 
-impl Alignment {
-    #[allow(dead_code)]
-    pub fn print(&self) {
-        println!("{}", self);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::{rngs::Xoshiro256PlusPlus, RngExt, SeedableRng};
+
+    #[test]
+    fn check_zig_zag_encoding() {
+        for i in -200..=200 {
+            assert_eq!(i, zig_zag_decode(zig_zag_encode(i)));
+            if i >= 0 {
+                assert_eq!((i.abs() as u64 * 2), zig_zag_encode(i));
+            } else {
+                assert_eq!((i.abs() as u64 * 2) - 1, zig_zag_encode(i));
+            }
+        }
+    }
+
+    #[test]
+    fn test_uleb_encoding() {
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(12345654321);
+
+        let vals = (0..1000)
+            .map(|_| rng.random_range(..=u64::MAX))
+            .collect_vec();
+
+        let ulebs: ULEBS = vals.clone().into_iter().collect();
+        let vals_decoded = ulebs.iter().collect_vec();
+
+        assert_eq!(vals, vals_decoded);
+    }
+
+    #[test]
+    fn test_cigar_encoding() {
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(12345654321);
+
+        let vals = (0..1001)
+            .map(|idx| {
+                let v = rng.random_range(i64::MIN..=i64::MAX);
+                if idx % 2 == 0 {
+                    v.abs()
+                } else {
+                    v
+                }
+            })
+            .collect_vec();
+
+        let cigar: Cigar = vals.clone().into_iter().collect();
+
+        let vals_decoded: Vec<i64> = cigar.iter().map(|v| v.into()).collect_vec();
+
+        assert_eq!(vals, vals_decoded);
     }
 }

@@ -529,25 +529,20 @@ mod tests {
 
     #[test]
     pub fn test_build_target_seq_from_alignments() {
-        let mut ali: Vec<Alignment> = [
+        let starts = [10, 20, 30, 40];
+        let ali: Vec<Alignment> = [
             format!("{}\n{}", "AAAAA", "AAAAA"),
             format!("{}\n{}", "CCCCC", "CCCCC"),
             format!("{}\n{}", "GGGGG", "GGGGG"),
             format!("{}\n{}", "TTTTT", "TTTTT"),
         ]
         .iter()
-        .map(|v| Alignment::from_str(v))
+        .zip(starts.iter())
+        .map(|(v, &start)| Alignment::from_str_with_target_offset(v, start))
         .collect();
 
-        let starts = [10, 20, 30, 40];
-        let ends = [14, 24, 34, 44];
-        (0..4).for_each(|i| {
-            ali[i].target_start = starts[i];
-            ali[i].target_end = ends[i];
-        });
-
-        let target_start = starts[0];
-        let target_end = ends.last().unwrap();
+        let target_start = ali.first().unwrap().target_start;
+        let target_end = ali.last().unwrap().target_end;
         let target_length = target_end - target_start + 1;
         let seq = build_target_seq_from_alignments(&ali, target_start, target_length);
 
@@ -585,25 +580,19 @@ mod tests {
 
     #[test]
     pub fn test_background() -> anyhow::Result<()> {
-        let mut ali: Vec<Alignment> = [
+        let ali: Vec<Alignment> = [
             format!("{}\n{}", "AAAAA", "AAAAA"),
             format!("{}\n{}", "CCCCC", "CCCCC"),
             format!("{}\n{}", "GGGGG", "GGGGG"),
             format!("{}\n{}", "TTTTT", "TTTTT"),
         ]
         .iter()
-        .map(|v| Alignment::from_str(v))
+        .zip([10, 15, 20, 25].iter())
+        .map(|(v, &start)| Alignment::from_str_with_target_offset(v, start))
         .collect();
 
-        let starts = [10, 15, 20, 25];
-        let ends = [14, 19, 24, 29];
-        (0..4).for_each(|i| {
-            ali[i].target_start = starts[i];
-            ali[i].target_end = ends[i];
-        });
-
-        let target_start = starts[0] - 5;
-        let target_end = ends.last().unwrap() + 5;
+        let target_start = ali.first().unwrap().target_start - 5;
+        let target_end = ali.last().unwrap().target_end + 5;
         let target_length = target_end - target_start + 1;
 
         let target_seq = build_target_seq_from_alignments(&ali, target_start, target_length);
