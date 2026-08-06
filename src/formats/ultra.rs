@@ -30,14 +30,9 @@ pub fn load_ultra_file(alignment_data: &mut AlignmentData, ultra_file: impl Read
         .into_iter()
         .enumerate()
         .for_each(|(idx, r)| {
-            // TODO: fix the VecMap API to better handle this
-            if !alignment_data.target_name_map.contains(&r.sequence_name) {
-                alignment_data
-                    .target_name_map
-                    .insert(r.sequence_name.clone());
-            }
-
-            let target_id = alignment_data.target_name_map.key(&r.sequence_name);
+            let target_id = alignment_data
+                .target_name_map
+                .insert(r.sequence_name.clone());
 
             if let Some(group) = alignment_data.target_groups.get_mut(target_id) {
                 group.tandem_repeats.push(TandemRepeat {

@@ -250,8 +250,8 @@ impl Alignment {
         assert_eq!(target.len(), query.len());
 
         let seqs = digital_nucleotides_to_original_sequences(
-            target.to_digital_nucleotides(),
-            query.to_digital_nucleotides(),
+            target.try_to_digital_nucleotides().expect("invalid bytes!"),
+            query.try_to_digital_nucleotides().expect("invalid bytes!"),
             Strand::Forward,
         );
 

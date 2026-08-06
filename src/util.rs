@@ -1,22 +1,36 @@
 use std::io::{self};
 
 use itertools::Itertools;
+use thiserror::Error;
 
-use crate::alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE;
+use crate::{
+    alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE,
+    balanced_tree::{AVLIndexSet, SetInsert},
+};
 
 /// A simple Vec-based map that facilitates mapping
 /// between usize keys and type <T> values
-pub struct VecMap<T: std::cmp::PartialEq> {
+/// use avl index tree for O(n log n) value based lookup.
+/// key lookup is constant.
+pub struct VecMap<T: std::cmp::Ord> {
     values: Vec<T>,
+    tree: AVLIndexSet<usize>,
 }
 
-impl<T: std::cmp::PartialEq> VecMap<T> {
+impl<T: std::cmp::Ord> VecMap<T> {
     pub fn new() -> Self {
-        Self { values: vec![] }
+        Self {
+            values: vec![],
+            tree: AVLIndexSet::new(),
+        }
     }
 
     pub fn from(values: Vec<T>) -> Self {
-        Self { values }
+        let mut new_self = VecMap::new();
+        for val in values {
+            new_self.insert(val);
+        }
+        new_self
     }
 
     pub fn values(&self) -> std::slice::Iter<'_, T> {
@@ -26,11 +40,11 @@ impl<T: std::cmp::PartialEq> VecMap<T> {
     /// Inserts the value and returns the key. If the
     /// value was already in the VecMap, return the key.
     pub fn insert(&mut self, value: T) -> usize {
-        match self.contains(&value) {
-            true => self.key(&value),
-            false => {
+        match self.tree.add(|idx| self.values[idx].cmp(&value)).unwrap() {
+            SetInsert::Found(idx) => idx,
+            SetInsert::New(new_idx) => {
                 self.values.push(value);
-                self.values.len() - 1
+                new_idx
             }
         }
     }
@@ -40,8 +54,9 @@ impl<T: std::cmp::PartialEq> VecMap<T> {
         &self.values[key]
     }
 
+    #[allow(dead_code)]
     pub fn contains(&self, value: &T) -> bool {
-        self.values.contains(value)
+        self.key(value).is_some()
     }
 
     pub fn size(&self) -> usize {
@@ -53,18 +68,12 @@ impl<T: std::cmp::PartialEq> VecMap<T> {
     }
 
     /// Get the key associated with the value.
-    /// This panics if the value is not in the VecMap.
-    pub fn key(&self, value: &T) -> usize {
-        self.values
-            .iter()
-            .enumerate()
-            .find(|(_, n)| *n == value)
-            .expect("key not found")
-            .0
+    pub fn key(&self, value: &T) -> Option<usize> {
+        self.tree.search(|idx| self.values[idx].cmp(value))
     }
 }
 
-impl<T: std::cmp::PartialEq + std::fmt::Debug> std::fmt::Debug for VecMap<T> {
+impl<T: std::cmp::Ord + std::fmt::Debug> std::fmt::Debug for VecMap<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         (0..self.size()).for_each(|key| {
             writeln!(f, "{key}: {:?}", self.values[key]).unwrap();
@@ -73,18 +82,23 @@ impl<T: std::cmp::PartialEq + std::fmt::Debug> std::fmt::Debug for VecMap<T> {
     }
 }
 
+#[derive(Error, Debug)]
+#[error("unknown byte: {0}")]
+pub struct InvalidByte(u8);
+
 pub trait StrSliceExt {
-    fn to_digital_nucleotides(self) -> Vec<u8>;
+    fn try_to_digital_nucleotides(self) -> Result<Vec<u8>, InvalidByte>;
 }
 
 impl StrSliceExt for &str {
-    fn to_digital_nucleotides(self) -> Vec<u8> {
+    fn try_to_digital_nucleotides(self) -> Result<Vec<u8>, InvalidByte> {
         self.as_bytes()
             .iter()
             .map(|byte| {
-                *UTF8_TO_DIGITAL_NUCLEOTIDE
+                UTF8_TO_DIGITAL_NUCLEOTIDE
                     .get(byte)
-                    .unwrap_or_else(|| panic!("unknown byte: {byte}"))
+                    .copied()
+                    .ok_or_else(|| InvalidByte(*byte))
             })
             .collect()
     }
