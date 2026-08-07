@@ -28,12 +28,8 @@ enum BPAFError {
     InvalidULEB(u64),
     #[error("invalid field, expected size: {0}, actual size: {1}")]
     InvalidField(u64, u64),
-}
-
-struct BPAFReader<R: SeekableReader> {
-    reader: R,
-    header: BPAFHeader,
-    footer: BPAFFooter,
+    #[error("invalid cigar string, expected length is {0}, but computed length is {1}")]
+    InvalidCigar(u64, u64),
 }
 
 #[derive(Debug)]
@@ -229,10 +225,38 @@ fn parse_bpaf_record(entry: ULEBEntry) -> Result<BPAFRecord, BPAFError> {
 
     let cigar_length = cigar_pair_count * 2 + 1;
 
+    let mut target_count = 0;
+    let mut query_count = 0;
+
     let cigar_iter: Result<Cigar, CigarSegment> =
         CigarIterator::new(data[byte_offset..].iter().copied())
             .take(cigar_length as usize)
+            .map(|r| {
+                if let Ok(v) = r {
+                    match v {
+                        CigarSegment::Aligned(c) => {
+                            target_count += c;
+                            query_count += c;
+                        }
+                        CigarSegment::QueryGap(c) => {
+                            target_count += c;
+                        }
+                        CigarSegment::TargetGap(c) => {
+                            query_count += c;
+                        }
+                    }
+                }
+                r
+            })
             .collect();
+    let cigar = cigar_iter.map_err(|e| BPAFError::InvalidULEB(i64::from(e) as u64))?;
+
+    if target_count != first_ulebs[5] {
+        return Err(BPAFError::InvalidCigar(first_ulebs[5], target_count));
+    }
+    if query_count != first_ulebs[3] {
+        return Err(BPAFError::InvalidCigar(first_ulebs[3], query_count));
+    }
 
     Ok(BPAFRecord {
         query_id: first_ulebs[0],
@@ -247,8 +271,15 @@ fn parse_bpaf_record(entry: ULEBEntry) -> Result<BPAFRecord, BPAFError> {
         e_value,
         divergence,
         bit_score,
-        cigar: cigar_iter.map_err(|e| BPAFError::InvalidULEB(i64::from(e) as u64))?,
+        cigar,
     })
+}
+
+struct BPAFReader<R: SeekableReader> {
+    reader: R,
+    header: BPAFHeader,
+    footer: BPAFFooter,
+    file_offset: u64,
 }
 
 impl<R: SeekableReader> BPAFReader<R> {
@@ -296,6 +327,7 @@ impl<R: SeekableReader> BPAFReader<R> {
     }
 
     pub fn new(mut reader: R) -> Result<Self, BPAFError> {
+        let file_offset = reader.stream_position()?;
         let header = Self::check_header(&mut reader)?;
         let footer = Self::check_footer(&mut reader)?;
 
@@ -303,13 +335,21 @@ impl<R: SeekableReader> BPAFReader<R> {
             reader: reader,
             header,
             footer,
+            file_offset,
         })
     }
 
     pub fn read_records(&mut self) -> impl Iterator<Item = Result<BPAFRecord, BPAFError>> + '_ {
+        let seek_err: Option<Result<BPAFRecord, BPAFError>> = self
+            .reader
+            .seek(io::SeekFrom::Start(self.file_offset + 7))
+            .err()
+            .map(|v| Err(v.into()));
         let bytes_taken = self.footer.table_offset - 7;
 
-        ULEBEntryIterator::new(&mut self.reader, Some(bytes_taken))
-            .map(|r| r.map(parse_bpaf_record).flatten())
+        seek_err.into_iter().chain(
+            ULEBEntryIterator::new(&mut self.reader, Some(bytes_taken))
+                .map(|r| r.map(parse_bpaf_record).flatten()),
+        )
     }
 }
