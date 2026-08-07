@@ -32,7 +32,15 @@ pub struct ULEBIterator<T: Iterator<Item = u8>> {
     ints: T,
 }
 
-fn decode_next_uleb(bytes: &mut impl Iterator<Item = u8>) -> Result<(u64, usize), (u64, usize)> {
+impl<T: Iterator<Item = u8>> ULEBIterator<T> {
+    pub fn new(iter: T) -> Self {
+        Self { ints: iter }
+    }
+}
+
+pub fn decode_next_uleb(
+    bytes: &mut impl Iterator<Item = u8>,
+) -> Result<(u64, usize), (u64, usize)> {
     let mut result_int: u64 = 0;
     let mut shift: u8 = 0;
     let mut bytes_taken = 0;
@@ -170,6 +178,15 @@ pub fn zig_zag_encode(num: i64) -> u64 {
 pub struct CigarIterator<T: Iterator<Item = Result<u64, u64>>> {
     inner_iter: T,
     return_count: usize,
+}
+
+impl<T: Iterator<Item = u8>> CigarIterator<ULEBIterator<T>> {
+    pub fn new(iter: T) -> Self {
+        Self {
+            inner_iter: ULEBIterator::new(iter),
+            return_count: 0,
+        }
+    }
 }
 
 impl<T: Iterator<Item = Result<u64, u64>>> Iterator for CigarIterator<T> {

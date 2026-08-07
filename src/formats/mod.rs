@@ -1,3 +1,4 @@
+mod bpaf;
 mod caf;
 mod fasta;
 mod ultra;
@@ -5,7 +6,7 @@ mod ultra;
 use crate::{alignment::AlignmentData, substitution_matrix::SubstitutionMatrix, util::VecMap};
 use anyhow::{self, Context};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 pub enum FormatCheck {
@@ -13,8 +14,8 @@ pub enum FormatCheck {
     Invalid(String),
 }
 
-pub trait SeekableReader: BufRead + Seek {}
-impl<T: BufRead + Seek> SeekableReader for T {}
+pub trait SeekableReader: BufRead + Read + Seek {}
+impl<T: BufRead + Seek + Read> SeekableReader for T {}
 
 pub trait AlignmentFormat {
     fn format_check(

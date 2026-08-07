@@ -1,5 +1,7 @@
 use std::io::BufRead;
 
+use itertools::Itertools;
+
 use crate::util::{read_non_empty_lines, StrSliceExt};
 use crate::{sequence_store::SequenceStore, util::VecMap};
 
@@ -39,7 +41,12 @@ pub fn parse_fasta_file(
                 return Err(anyhow::anyhow!("FASTA invalid, no name before sequence!"));
             }
 
-            current_sequence.append(&mut line_clean.try_to_digital_nucleotides()?);
+            current_sequence.append(
+                &mut line_clean
+                    .split_whitespace()
+                    .join("")
+                    .try_to_digital_nucleotides()?,
+            );
         }
 
         try_add_prior(current_sequence_name.as_ref(), &current_sequence);
