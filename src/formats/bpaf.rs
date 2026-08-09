@@ -1,19 +1,17 @@
 use crate::{
     alignment::Strand,
     formats::SeekableReader,
-    uleb::{self, Cigar, CigarIterator, CigarSegment, ULEBIterator},
+    uleb::{self, Cigar, CigarIterator, CigarSegment},
 };
-use itertools::Itertools;
 use std::{f32, slice};
 use std::{
-    fmt::Display,
-    io::{self, BufRead},
-    net::Shutdown::Read,
+    io::{self, SeekFrom},
+    string::FromUtf8Error,
 };
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-enum BPAFError {
+pub enum BPAFError {
     #[error("io error while reading file.")]
     IOError(#[from] io::Error),
     #[error("file of size {0} is too small to be a valid BPAF")]
@@ -30,6 +28,8 @@ enum BPAFError {
     InvalidField(u64, u64),
     #[error("invalid cigar string, expected length is {0}, but computed length is {1}")]
     InvalidCigar(u64, u64),
+    #[error("failed to decode string entry due to: {0}")]
+    UTF8Error(#[from] FromUtf8Error),
 }
 
 #[derive(Debug)]
@@ -43,6 +43,7 @@ pub struct BPAFHeader {
 pub struct BPAFFooter {
     pub table_offset: u64,
     pub magic: [u8; 5],
+    pub footer_offset: u64,
 }
 
 struct ULEBEntry {
@@ -178,7 +179,7 @@ macro_rules! read_le_from_array {
             let end = $offset + SIZE;
             let arr_bytes: [u8; SIZE] = $array[$offset..end]
                 .try_into()
-                .map_err(|e| BPAFError::InvalidField($array.len() as u64, end as u64))?;
+                .map_err(|_e| BPAFError::InvalidField($array.len() as u64, end as u64))?;
             $offset += SIZE;
             Ok(<$int_type>::from_le_bytes(arr_bytes))
         }()
@@ -275,11 +276,16 @@ fn parse_bpaf_record(entry: ULEBEntry) -> Result<BPAFRecord, BPAFError> {
     })
 }
 
+fn parse_string_table_record(entry: ULEBEntry) -> Result<String, BPAFError> {
+    String::from_utf8(entry.data).map_err(|e| e.into())
+}
+
 struct BPAFReader<R: SeekableReader> {
     reader: R,
     header: BPAFHeader,
     footer: BPAFFooter,
     file_offset: u64,
+    table_offsets: Vec<u64>,
 }
 
 impl<R: SeekableReader> BPAFReader<R> {
@@ -317,6 +323,7 @@ impl<R: SeekableReader> BPAFReader<R> {
         let footer = BPAFFooter {
             table_offset: u64::from_le_bytes(footer_bytes[..8].try_into().unwrap()),
             magic: footer_bytes[8..].try_into().unwrap(),
+            footer_offset: into_file,
         };
 
         if footer.magic != Self::BPAF_MAGIC {
@@ -331,12 +338,115 @@ impl<R: SeekableReader> BPAFReader<R> {
         let header = Self::check_header(&mut reader)?;
         let footer = Self::check_footer(&mut reader)?;
 
+        let first_table_offset = footer.table_offset;
+
         Ok(Self {
             reader: reader,
             header,
             footer,
             file_offset,
+            table_offsets: vec![first_table_offset],
         })
+    }
+
+    fn skip_table(&mut self, offset: &mut u64) -> Result<(), BPAFError> {
+        let entries = io_decode_next_uleb(
+            &mut self.reader,
+            Some(self.footer.footer_offset - *offset),
+            offset,
+        )
+        .unwrap_or(Err(BPAFError::InvalidField(1, 0)))?;
+
+        for _ in 0..entries {
+            let entry_size = io_decode_next_uleb(
+                &mut self.reader,
+                Some(self.footer.footer_offset - *offset),
+                offset,
+            )
+            .unwrap_or(Err(BPAFError::InvalidULEB(0)))?;
+
+            if *offset + entry_size > self.footer.footer_offset {
+                return Err(BPAFError::InvalidField(
+                    entry_size,
+                    self.footer.footer_offset - *offset,
+                ));
+            }
+            self.reader.seek(SeekFrom::Current(entry_size as i64))?;
+            *offset += entry_size;
+        }
+
+        Ok(())
+    }
+
+    fn load_table_offsets(&mut self, up_to: usize) -> Result<u64, BPAFError> {
+        let mut offset = *self
+            .table_offsets
+            .last()
+            .unwrap_or(&self.footer.table_offset);
+        let start_idx = self.table_offsets.len();
+
+        self.reader.seek(io::SeekFrom::Start(offset))?;
+
+        for _ in start_idx..=up_to {
+            self.skip_table(&mut offset);
+            self.table_offsets.push(offset);
+        }
+
+        Ok(offset)
+    }
+
+    fn seek_to_table(&mut self, table_idx: usize) -> Result<(u64, u64), BPAFError> {
+        let mut offset = if let Some(&val) = self.table_offsets.get(table_idx) {
+            self.reader.seek(SeekFrom::Start(val))?;
+            val
+        } else {
+            self.load_table_offsets(table_idx)?
+        };
+
+        let entries = io_decode_next_uleb(
+            &mut self.reader,
+            Some(self.footer.footer_offset - offset),
+            &mut offset,
+        )
+        .unwrap_or(Err(BPAFError::InvalidField(1, 0)))?;
+
+        Ok((entries, offset))
+    }
+
+    fn read_table(
+        &mut self,
+        offset: usize,
+    ) -> impl Iterator<Item = Result<ULEBEntry, BPAFError>> + '_ {
+        let res = self.seek_to_table(offset);
+        let (entries, bytes_allowed) = res
+            .as_ref()
+            .map(|v| (v.0, self.footer.footer_offset - v.1))
+            .unwrap_or((0, 0));
+
+        // TODO: Add way of recording next table offset if iterator is fully consumed...
+        res.err()
+            .map(|v| Err(v.into()))
+            .into_iter()
+            .chain(
+                ULEBEntryIterator::new(&mut self.reader, Some(bytes_allowed))
+                    .take(entries as usize),
+            )
+            .take_while(|v| v.is_ok())
+    }
+
+    pub fn read_query_names(&mut self) -> impl Iterator<Item = Result<String, BPAFError>> + '_ {
+        self.read_table(0)
+            .map(|r| r.map(parse_string_table_record).flatten())
+    }
+
+    pub fn read_target_names(&mut self) -> impl Iterator<Item = Result<String, BPAFError>> + '_ {
+        self.read_table(1)
+            .map(|r| r.map(parse_string_table_record).flatten())
+    }
+
+    pub fn read_matrix_names(&mut self) -> impl Iterator<Item = Result<String, BPAFError>> + '_ {
+        self.read_table(2)
+            .map(|r| r.map(parse_string_table_record).flatten())
     }
 
     pub fn read_records(&mut self) -> impl Iterator<Item = Result<BPAFRecord, BPAFError>> + '_ {
@@ -347,9 +457,12 @@ impl<R: SeekableReader> BPAFReader<R> {
             .map(|v| Err(v.into()));
         let bytes_taken = self.footer.table_offset - 7;
 
-        seek_err.into_iter().chain(
-            ULEBEntryIterator::new(&mut self.reader, Some(bytes_taken))
-                .map(|r| r.map(parse_bpaf_record).flatten()),
-        )
+        seek_err
+            .into_iter()
+            .chain(
+                ULEBEntryIterator::new(&mut self.reader, Some(bytes_taken))
+                    .map(|r| r.map(parse_bpaf_record).flatten()),
+            )
+            .take_while(|r| r.is_ok())
     }
 }
