@@ -57,6 +57,10 @@ impl SequenceStore {
         entry.insert(new_start, new_seq);
     }
 
+    pub fn sequence_count(&self) -> usize {
+        self.sequences.len()
+    }
+
     pub fn into_index(self) -> SequenceIndex {
         SequenceIndex {
             sequences: self

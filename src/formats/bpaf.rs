@@ -1,8 +1,13 @@
 use crate::{
     alignment::Strand,
-    formats::SeekableReader,
+    alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE,
+    formats::{AlignmentFormat, FormatCheck, SeekableReader},
+    sequence_store::SequenceStore,
+    substitution_matrix::SubstitutionMatrix,
     uleb::{self, Cigar, CigarIterator, CigarSegment},
+    util::VecMap,
 };
+use anyhow::anyhow;
 use std::{f32, slice};
 use std::{
     io::{self, SeekFrom},
@@ -30,6 +35,8 @@ pub enum BPAFError {
     InvalidCigar(u64, u64),
     #[error("failed to decode string entry due to: {0}")]
     UTF8Error(#[from] FromUtf8Error),
+    #[error("found invalid nucleotide code in sequence: {0}")]
+    InvalidNucleotide(char),
 }
 
 #[derive(Debug)]
@@ -156,6 +163,11 @@ mod bpaf_record_flags {
     pub const RESERVED: u8 = 0xE0;
 }
 
+mod bpaf_feature_flags {
+    pub const INCLUDES_SEQUENCES: u8 = 0x01;
+    pub const INCLUDES_MATRICIES: u8 = 0x02;
+}
+
 pub struct BPAFRecord {
     query_id: u64,
     target_id: u64,
@@ -186,17 +198,26 @@ macro_rules! read_le_from_array {
     };
 }
 
-fn parse_bpaf_record(entry: ULEBEntry) -> Result<BPAFRecord, BPAFError> {
+fn parse_ulebs<const NUM: usize>(
+    data: &mut impl Iterator<Item = u8>,
+) -> Result<([u64; NUM], usize), BPAFError> {
+    let mut first_ulebs = [0u64; NUM];
     let mut byte_offset = 0;
-    let mut first_ulebs = [0u64, 7];
-    let data = entry.data;
 
     for i in 0..first_ulebs.len() {
-        let (val, bytes_taken) = uleb::decode_next_uleb(&mut data[byte_offset..].iter().copied())
-            .map_err(|e| BPAFError::InvalidULEB(e.0))?;
+        let (val, bytes_taken) =
+            uleb::decode_next_uleb(data).map_err(|e| BPAFError::InvalidULEB(e.0))?;
         first_ulebs[i] = val;
         byte_offset += bytes_taken;
     }
+
+    Ok((first_ulebs, byte_offset))
+}
+
+fn parse_bpaf_record(entry: ULEBEntry) -> Result<BPAFRecord, BPAFError> {
+    let data = entry.data;
+
+    let (first_ulebs, mut byte_offset) = parse_ulebs::<7>(&mut data.iter().copied())?;
 
     let flags = read_le_from_array!(data, byte_offset, u8)?;
 
@@ -280,6 +301,33 @@ fn parse_string_table_record(entry: ULEBEntry) -> Result<String, BPAFError> {
     String::from_utf8(entry.data).map_err(|e| e.into())
 }
 
+pub struct SequenceEntry {
+    pub sequence_id: u64,
+    pub start: u64,
+    pub sequence: Vec<u8>,
+}
+
+fn parse_sequence_record(entry: ULEBEntry) -> Result<SequenceEntry, BPAFError> {
+    let ([sequence_id, start], bytes_read) = parse_ulebs(&mut entry.data.iter().copied())?;
+    let sequence: Result<Vec<u8>, BPAFError> = entry.data[bytes_read..]
+        .iter()
+        .map(|byte| {
+            UTF8_TO_DIGITAL_NUCLEOTIDE
+                .get(byte)
+                .copied()
+                .ok_or_else(|| BPAFError::InvalidNucleotide(*byte as char))
+        })
+        .collect();
+
+    Ok(SequenceEntry {
+        sequence_id,
+        start,
+        sequence: sequence?,
+    })
+}
+
+const BPAF_MAGIC: &'static [u8] = b"BPAF\x01";
+
 struct BPAFReader<R: SeekableReader> {
     reader: R,
     header: BPAFHeader,
@@ -289,8 +337,6 @@ struct BPAFReader<R: SeekableReader> {
 }
 
 impl<R: SeekableReader> BPAFReader<R> {
-    const BPAF_MAGIC: &'static [u8] = b"BPAF\x01";
-
     pub fn check_header(reader: &mut R) -> Result<BPAFHeader, BPAFError> {
         let mut header_bytes = [0u8; 7];
         reader.read_exact(&mut header_bytes)?;
@@ -301,7 +347,7 @@ impl<R: SeekableReader> BPAFReader<R> {
             flags: header_bytes[6],
         };
 
-        if header.magic != Self::BPAF_MAGIC {
+        if header.magic != BPAF_MAGIC {
             Err(BPAFError::InvalidHeader(header))
         } else if header.version != 0 {
             Err(BPAFError::UnsupportedHeader(header))
@@ -326,7 +372,7 @@ impl<R: SeekableReader> BPAFReader<R> {
             footer_offset: into_file,
         };
 
-        if footer.magic != Self::BPAF_MAGIC {
+        if footer.magic != BPAF_MAGIC {
             Err(BPAFError::InvalidFooter(footer))
         } else {
             Ok(footer)
@@ -449,6 +495,24 @@ impl<R: SeekableReader> BPAFReader<R> {
             .map(|r| r.map(parse_string_table_record).flatten())
     }
 
+    pub fn read_query_sequences(
+        &mut self,
+    ) -> Option<impl Iterator<Item = Result<SequenceEntry, BPAFError>> + '_> {
+        (self.header.flags & bpaf_feature_flags::INCLUDES_SEQUENCES != 0).then(|| {
+            self.read_table(3)
+                .map(|r| r.map(parse_sequence_record).flatten())
+        })
+    }
+
+    pub fn read_target_sequences(
+        &mut self,
+    ) -> Option<impl Iterator<Item = Result<SequenceEntry, BPAFError>> + '_> {
+        (self.header.flags & bpaf_feature_flags::INCLUDES_SEQUENCES != 0).then(|| {
+            self.read_table(4)
+                .map(|r| r.map(parse_sequence_record).flatten())
+        })
+    }
+
     pub fn read_records(&mut self) -> impl Iterator<Item = Result<BPAFRecord, BPAFError>> + '_ {
         let seek_err: Option<Result<BPAFRecord, BPAFError>> = self
             .reader
@@ -464,5 +528,88 @@ impl<R: SeekableReader> BPAFReader<R> {
                     .map(|r| r.map(parse_bpaf_record).flatten()),
             )
             .take_while(|r| r.is_ok())
+    }
+}
+
+impl FromIterator<SequenceEntry> for SequenceStore {
+    fn from_iter<T: IntoIterator<Item = SequenceEntry>>(iter: T) -> Self {
+        let mut seq_store = SequenceStore::new();
+
+        for entry in iter {
+            seq_store.add_sequence(
+                entry.sequence_id as usize,
+                entry.start as usize,
+                &entry.sequence,
+            );
+        }
+
+        seq_store
+    }
+}
+
+struct BPAFFormat {}
+
+impl AlignmentFormat for BPAFFormat {
+    fn format_check(
+        primary_reader: &mut impl SeekableReader,
+        _secondary_reader: Option<&mut impl SeekableReader>,
+    ) -> anyhow::Result<FormatCheck> {
+        let header = BPAFReader::check_header(primary_reader);
+        match header {
+            Ok(_) => Ok(FormatCheck::Valid),
+            Err(e @ BPAFError::InvalidHeader(_)) => Ok(FormatCheck::Invalid(e.to_string())),
+            Err(e @ BPAFError::UnsupportedHeader(_)) => Ok(FormatCheck::Invalid(e.to_string())),
+            Err(v) => Err(v.into()),
+        }
+    }
+
+    fn read(
+        primary_reader: &mut impl SeekableReader,
+        secondary_reader: Option<&mut impl SeekableReader>,
+        substitution_matrices: VecMap<crate::substitution_matrix::SubstitutionMatrix>,
+    ) -> anyhow::Result<crate::alignment::AlignmentData> {
+        let reader = BPAFReader::new(primary_reader)?;
+
+        let queries: Vec<String> = reader.read_query_names().collect()?;
+        let targets: Vec<String> = reader.read_target_names().collect()?;
+        let sub_matrix_names: Vec<String> = reader.read_matrix_names().collect()?;
+
+        let mut dummy_lookup_matrix = SubstitutionMatrix::dummy_with_name("");
+
+        let sub_matrix_map: Result<Vec<usize>, anyhow::Error> = sub_matrix_names
+            .iter()
+            .map(|v| {
+                dummy_lookup_matrix.name = v.clone();
+                substitution_matrices
+                    .key(&dummy_lookup_matrix)
+                    .ok_or_else(|| anyhow!("Could not find substitute matrix with name: {}", v))
+            })
+            .collect();
+
+        let query_store = match reader.read_query_sequences() {
+            Some(iter) => Result::<SequenceStore, BPAFError>::from_iter(iter)?,
+            None => SequenceStore::new(),
+        };
+        let target_store = match reader.read_target_sequences() {
+            Some(iter) => Result::<SequenceStore, BPAFError>::from_iter(iter)?,
+            None => SequenceStore::new(),
+        };
+
+        match secondary_reader {
+            Some(path) => {
+                
+            }
+            None => {
+                if target_store.sequence_count() == 0 || query_store.sequence_count() == 0 {
+                    return Err(anyhow!("BPAF contains no sequences, please provide a fasta file!"))
+                }
+            }
+        }
+
+        crate::alignment::AlignmentData {}
+    }
+
+    fn name() -> &'static str {
+        "BPAF"
     }
 }
