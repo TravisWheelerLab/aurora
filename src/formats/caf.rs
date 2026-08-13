@@ -31,11 +31,11 @@ impl AlignmentFormat for CAFFormat {
         if let Some(Result::Ok((_line_num, line))) = first_line {
             let tokens: Vec<&str> = line.split(',').collect();
 
-            if tokens.len() == 18 {
+            if tokens.len() >= 18 {
                 Ok(FormatCheck::Valid)
             } else {
                 Ok(FormatCheck::Invalid(format!(
-                    "Has {} columns instead of 18",
+                    "Has {} columns instead of minimum required of 18",
                     tokens.len()
                 )))
             }
