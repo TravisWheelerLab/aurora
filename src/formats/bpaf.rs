@@ -777,22 +777,42 @@ mod test {
     }
 
     #[test]
-    fn test_bpaf() -> anyhow::Result<()> {
+    fn test_table_reading() -> anyhow::Result<()> {
         let mut reader = BPAFReader::new(Cursor::new(BPAF_FILE))?;
 
-        println!(
-            "{:?}",
-            Result::<Vec<_>, BPAFError>::from_iter(reader.read_query_names())?
+        let query_names =
+            Result::<Vec<_>, BPAFError>::from_iter(reader.read_query_names().take(10))?;
+        assert_eq!(
+            query_names,
+            [
+                "DF0000001",
+                "DF0000002",
+                "DF0000003",
+                "DF0000004",
+                "DF0000005",
+                "DF0000007",
+                "DF0000016",
+                "DF0000017",
+                "DF0000023",
+                "DF0000024"
+            ]
         );
 
-        println!(
-            "{:?}",
-            Result::<Vec<_>, BPAFError>::from_iter(reader.read_target_names())?
-        );
+        let target_names = Result::<Vec<_>, BPAFError>::from_iter(reader.read_target_names())?;
+        assert_eq!(target_names, ["Human"]);
 
-        println!(
-            "{:?}",
-            Result::<Vec<_>, BPAFError>::from_iter(reader.read_matrix_names())?
+        let matrix_names = Result::<Vec<_>, BPAFError>::from_iter(reader.read_matrix_names())?;
+        assert_eq!(
+            matrix_names,
+            [
+                "20p41g.matrix",
+                "20p49g.matrix",
+                "20p51g.matrix",
+                "20p53g.matrix",
+                "20p45g.matrix",
+                "20p43g.matrix",
+                "20p39g.matrix"
+            ]
         );
 
         Ok(())
