@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::io::BufRead;
 
-use itertools::Itertools;
-
-use crate::util::{read_non_empty_lines, StrSliceExt};
-use crate::{sequence_store::SequenceStore, util::VecMap};
+use crate::util::read_non_empty_lines;
+use crate::{
+    alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE, formats::bpaf::Timer, sequence_store::SequenceStore,
+    util::VecMap,
+};
 
 pub fn parse_fasta_file(
     reader: &mut impl BufRead,
@@ -14,6 +15,8 @@ pub fn parse_fasta_file(
     query_sequences: &mut SequenceStore,
     mut query_lengths: Option<&mut HashMap<usize, usize>>,
 ) -> anyhow::Result<()> {
+    let mut timer = Timer::new();
+
     let mut current_sequence_name = None;
     let mut current_sequence = Vec::new();
 
@@ -38,13 +41,16 @@ pub fn parse_fasta_file(
         let line_clean = line.trim();
 
         if let Some(new_full_name) = line_clean.strip_prefix(">") {
+            timer.segment(format!("Read sequence {current_sequence_name:?}").as_ref());
             let new_name = new_full_name.split_whitespace().next().unwrap();
+            timer.segment(format!("Header for sequence {new_name}").as_ref());
 
             try_add_prior(
                 current_sequence_name.as_ref(),
                 &current_sequence,
                 &mut query_lengths,
             );
+            timer.segment(format!("Add sequence {current_sequence_name:?} to index").as_ref());
 
             current_sequence.clear();
             current_sequence_name = Some(new_name.to_string());
@@ -53,11 +59,11 @@ pub fn parse_fasta_file(
                 return Err(anyhow::anyhow!("FASTA invalid, no name before sequence!"));
             }
 
-            current_sequence.append(
-                &mut line_clean
-                    .split_whitespace()
-                    .join("")
-                    .try_to_digital_nucleotides()?,
+            current_sequence.extend(
+                line.into_bytes()
+                    .iter()
+                    .filter(|&&v| v == b'-' || v == b'+')
+                    .filter_map(|v| UTF8_TO_DIGITAL_NUCLEOTIDE.get(v)),
             );
         }
 

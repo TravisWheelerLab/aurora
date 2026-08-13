@@ -568,13 +568,13 @@ impl FromIterator<SequenceEntry> for SequenceStore {
     }
 }
 
-struct Timer {
+pub struct Timer {
     start: Instant,
     last_duration: Duration,
 }
 
 impl Timer {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let inst = Instant::now();
         Self {
             start: inst,
@@ -582,7 +582,7 @@ impl Timer {
         }
     }
 
-    fn segment(&mut self, msg: &str) {
+    pub fn segment(&mut self, msg: &str) {
         let new_dur = self.start.elapsed();
         eprintln!("{}: {}s", msg, (new_dur - self.last_duration).as_secs_f64());
         self.last_duration = new_dur;
