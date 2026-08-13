@@ -744,7 +744,7 @@ impl AlignmentFormat for BPAFFormat {
                         query_start.min(query_end),
                         query_end.max(query_start),
                     )
-                    .ok_or_else(|| error("No target sequence for record!"))?,
+                    .ok_or_else(|| error("No query sequence for record!"))?,
                 target_seq: target_sequences
                     .find(target_id, target_start, target_end)
                     .ok_or_else(|| error("No target sequence for record!"))?,

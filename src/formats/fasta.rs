@@ -62,7 +62,7 @@ pub fn parse_fasta_file(
             current_sequence.extend(
                 line.into_bytes()
                     .iter()
-                    .filter(|&&v| v == b'-' || v == b'+')
+                    .filter(|&&v| v != b'-' && v != b'+')
                     .filter_map(|v| UTF8_TO_DIGITAL_NUCLEOTIDE.get(v)),
             );
         }
