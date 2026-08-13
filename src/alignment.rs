@@ -210,7 +210,7 @@ pub fn digital_nucleotides_to_original_sequences(
         // Alignment case should never happen but this will guarantee the encoded cigar is valid...
         match (cigar.len() % 2, next_val) {
             (1, CigarSegment::Aligned(_)) => {
-                cigar.push(CigarSegment::QueryGap(0));
+                cigar.push(CigarSegment::TargetGap(0));
             }
             (0, CigarSegment::QueryGap(_) | CigarSegment::TargetGap(_)) => {
                 cigar.push(CigarSegment::Aligned(0));

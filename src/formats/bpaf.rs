@@ -1,14 +1,14 @@
 use crate::{
-    alignment::Strand,
+    alignment::{Alignment, AlignmentSequence, Strand, TargetGroup},
     alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE,
-    formats::{AlignmentFormat, FormatCheck, SeekableReader},
+    formats::{fasta, AlignmentFormat, FormatCheck, SeekableReader},
     sequence_store::SequenceStore,
     substitution_matrix::SubstitutionMatrix,
     uleb::{self, Cigar, CigarIterator, CigarSegment},
     util::VecMap,
 };
 use anyhow::anyhow;
-use std::{f32, slice};
+use std::{collections::HashMap, f32, slice};
 use std::{
     io::{self, SeekFrom},
     string::FromUtf8Error,
@@ -31,6 +31,8 @@ pub enum BPAFError {
     InvalidULEB(u64),
     #[error("invalid field, expected size: {0}, actual size: {1}")]
     InvalidField(u64, u64),
+    #[error("Reserved bits were set for a record.")]
+    InvalidRecordFlags,
     #[error("invalid cigar string, expected length is {0}, but computed length is {1}")]
     InvalidCigar(u64, u64),
     #[error("failed to decode string entry due to: {0}")]
@@ -52,7 +54,7 @@ pub struct BPAFFooter {
     pub magic: [u8; 5],
     pub footer_offset: u64,
 }
-
+#[allow(unused)]
 struct ULEBEntry {
     size: u64,
     data: Vec<u8>,
@@ -165,9 +167,12 @@ mod bpaf_record_flags {
 
 mod bpaf_feature_flags {
     pub const INCLUDES_SEQUENCES: u8 = 0x01;
-    pub const INCLUDES_MATRICIES: u8 = 0x02;
+    // TODO: Possible proposal later...
+    //pub const INCLUDES_MATRICIES: u8 = 0x02;
 }
 
+#[allow(unused)]
+#[derive(Debug)]
 pub struct BPAFRecord {
     query_id: u64,
     target_id: u64,
@@ -214,10 +219,15 @@ fn parse_ulebs<const NUM: usize>(
     Ok((first_ulebs, byte_offset))
 }
 
+// Note: BPAF as specified in repeat masker identifies target as consensus sequences and queries as whole genomes.
+// In aurora we define them the exact opposite. This BPAF reader uses aurora definitions.
 fn parse_bpaf_record(entry: ULEBEntry) -> Result<BPAFRecord, BPAFError> {
     let data = entry.data;
 
-    let (first_ulebs, mut byte_offset) = parse_ulebs::<7>(&mut data.iter().copied())?;
+    let (
+        [target_id, query_id, target_start, target_length, query_start, query_length, matrix_id],
+        mut byte_offset,
+    ) = parse_ulebs(&mut data.iter().copied())?;
 
     let flags = read_le_from_array!(data, byte_offset, u8)?;
 
@@ -226,6 +236,10 @@ fn parse_bpaf_record(entry: ULEBEntry) -> Result<BPAFRecord, BPAFError> {
     } else {
         Strand::Reverse
     };
+
+    if (flags & bpaf_record_flags::RESERVED) != 0 {
+        return Err(BPAFError::InvalidRecordFlags);
+    }
 
     let score = ((flags & bpaf_record_flags::HAS_SCORE) != 0)
         .then(|| read_le_from_array!(data, byte_offset, f32))
@@ -273,21 +287,21 @@ fn parse_bpaf_record(entry: ULEBEntry) -> Result<BPAFRecord, BPAFError> {
             .collect();
     let cigar = cigar_iter.map_err(|e| BPAFError::InvalidULEB(i64::from(e) as u64))?;
 
-    if target_count != first_ulebs[5] {
-        return Err(BPAFError::InvalidCigar(first_ulebs[5], target_count));
+    if target_count != target_length {
+        return Err(BPAFError::InvalidCigar(target_length, target_count));
     }
-    if query_count != first_ulebs[3] {
-        return Err(BPAFError::InvalidCigar(first_ulebs[3], query_count));
+    if query_count != query_length {
+        return Err(BPAFError::InvalidCigar(query_length, query_count));
     }
 
     Ok(BPAFRecord {
-        query_id: first_ulebs[0],
-        target_id: first_ulebs[1],
-        query_start: first_ulebs[2],
-        query_length: first_ulebs[3],
-        target_start: first_ulebs[4],
-        target_length: first_ulebs[5],
-        matrix_id: first_ulebs[6],
+        query_id,
+        target_id,
+        query_start,
+        query_length,
+        target_start,
+        target_length,
+        matrix_id,
         strand,
         score,
         e_value,
@@ -304,11 +318,13 @@ fn parse_string_table_record(entry: ULEBEntry) -> Result<String, BPAFError> {
 pub struct SequenceEntry {
     pub sequence_id: u64,
     pub start: u64,
+    pub remaining: u64,
     pub sequence: Vec<u8>,
 }
 
 fn parse_sequence_record(entry: ULEBEntry) -> Result<SequenceEntry, BPAFError> {
-    let ([sequence_id, start], bytes_read) = parse_ulebs(&mut entry.data.iter().copied())?;
+    let ([sequence_id, start, remaining], bytes_read) =
+        parse_ulebs(&mut entry.data.iter().copied())?;
     let sequence: Result<Vec<u8>, BPAFError> = entry.data[bytes_read..]
         .iter()
         .map(|byte| {
@@ -322,6 +338,7 @@ fn parse_sequence_record(entry: ULEBEntry) -> Result<SequenceEntry, BPAFError> {
     Ok(SequenceEntry {
         sequence_id,
         start,
+        remaining,
         sequence: sequence?,
     })
 }
@@ -434,7 +451,7 @@ impl<R: SeekableReader> BPAFReader<R> {
         self.reader.seek(io::SeekFrom::Start(offset))?;
 
         for _ in start_idx..=up_to {
-            self.skip_table(&mut offset);
+            self.skip_table(&mut offset)?;
             self.table_offsets.push(offset);
         }
 
@@ -480,12 +497,12 @@ impl<R: SeekableReader> BPAFReader<R> {
             .take_while(|v| v.is_ok())
     }
 
-    pub fn read_query_names(&mut self) -> impl Iterator<Item = Result<String, BPAFError>> + '_ {
+    pub fn read_target_names(&mut self) -> impl Iterator<Item = Result<String, BPAFError>> + '_ {
         self.read_table(0)
             .map(|r| r.map(parse_string_table_record).flatten())
     }
 
-    pub fn read_target_names(&mut self) -> impl Iterator<Item = Result<String, BPAFError>> + '_ {
+    pub fn read_query_names(&mut self) -> impl Iterator<Item = Result<String, BPAFError>> + '_ {
         self.read_table(1)
             .map(|r| r.map(parse_string_table_record).flatten())
     }
@@ -495,7 +512,7 @@ impl<R: SeekableReader> BPAFReader<R> {
             .map(|r| r.map(parse_string_table_record).flatten())
     }
 
-    pub fn read_query_sequences(
+    pub fn read_target_sequences(
         &mut self,
     ) -> Option<impl Iterator<Item = Result<SequenceEntry, BPAFError>> + '_> {
         (self.header.flags & bpaf_feature_flags::INCLUDES_SEQUENCES != 0).then(|| {
@@ -504,7 +521,7 @@ impl<R: SeekableReader> BPAFReader<R> {
         })
     }
 
-    pub fn read_target_sequences(
+    pub fn read_query_sequences(
         &mut self,
     ) -> Option<impl Iterator<Item = Result<SequenceEntry, BPAFError>> + '_> {
         (self.header.flags & bpaf_feature_flags::INCLUDES_SEQUENCES != 0).then(|| {
@@ -547,7 +564,7 @@ impl FromIterator<SequenceEntry> for SequenceStore {
     }
 }
 
-struct BPAFFormat {}
+pub struct BPAFFormat {}
 
 impl AlignmentFormat for BPAFFormat {
     fn format_check(
@@ -568,48 +585,216 @@ impl AlignmentFormat for BPAFFormat {
         secondary_reader: Option<&mut impl SeekableReader>,
         substitution_matrices: VecMap<crate::substitution_matrix::SubstitutionMatrix>,
     ) -> anyhow::Result<crate::alignment::AlignmentData> {
-        let reader = BPAFReader::new(primary_reader)?;
+        let mut reader = BPAFReader::new(primary_reader)?;
 
-        let queries: Vec<String> = reader.read_query_names().collect()?;
-        let targets: Vec<String> = reader.read_target_names().collect()?;
-        let sub_matrix_names: Vec<String> = reader.read_matrix_names().collect()?;
+        let queries = VecMap::from_vec_raw(Result::<Vec<String>, BPAFError>::from_iter(
+            reader.read_query_names(),
+        )?);
+        let targets = VecMap::from_vec_raw(Result::<Vec<String>, BPAFError>::from_iter(
+            reader.read_target_names(),
+        )?);
+        let sub_matrix_names: Vec<String> =
+            Result::<Vec<String>, BPAFError>::from_iter(reader.read_matrix_names())?;
+
+        let mut query_lengths: HashMap<usize, usize> = HashMap::new();
 
         let mut dummy_lookup_matrix = SubstitutionMatrix::dummy_with_name("");
 
-        let sub_matrix_map: Result<Vec<usize>, anyhow::Error> = sub_matrix_names
-            .iter()
-            .map(|v| {
+        let sub_matrix_map: Vec<usize> =
+            Result::<Vec<_>, anyhow::Error>::from_iter(sub_matrix_names.iter().map(|v| {
                 dummy_lookup_matrix.name = v.clone();
                 substitution_matrices
                     .key(&dummy_lookup_matrix)
                     .ok_or_else(|| anyhow!("Could not find substitute matrix with name: {}", v))
-            })
-            .collect();
+            }))?;
 
-        let query_store = match reader.read_query_sequences() {
-            Some(iter) => Result::<SequenceStore, BPAFError>::from_iter(iter)?,
+        let mut query_store = match reader.read_query_sequences() {
+            Some(iter) => Result::<SequenceStore, BPAFError>::from_iter(iter.map(|r| {
+                if let Ok(v) = r.as_ref() {
+                    query_lengths.insert(
+                        v.sequence_id as usize,
+                        (v.start.saturating_sub(1)) as usize
+                            + v.sequence.len()
+                            + v.remaining as usize,
+                    );
+                }
+                r
+            }))?,
             None => SequenceStore::new(),
         };
-        let target_store = match reader.read_target_sequences() {
+        let mut target_store = match reader.read_target_sequences() {
             Some(iter) => Result::<SequenceStore, BPAFError>::from_iter(iter)?,
             None => SequenceStore::new(),
         };
 
         match secondary_reader {
             Some(path) => {
-                
+                if target_store.sequence_count() > 0 || query_store.sequence_count() > 0 {
+                    eprintln!("BPAF already contains sequence data, extending with FASTA data...")
+                }
+
+                fasta::parse_fasta_file(
+                    path,
+                    &targets,
+                    &queries,
+                    &mut target_store,
+                    &mut query_store,
+                    Some(&mut query_lengths),
+                )?;
             }
             None => {
                 if target_store.sequence_count() == 0 || query_store.sequence_count() == 0 {
-                    return Err(anyhow!("BPAF contains no sequences, please provide a fasta file!"))
+                    return Err(anyhow!(
+                        "BPAF contains no sequences, please provide a fasta file!"
+                    ));
                 }
             }
         }
 
-        crate::alignment::AlignmentData {}
+        let query_sequences = query_store.into_index();
+        let target_sequences = target_store.into_index();
+
+        let mut target_groups: Vec<Option<TargetGroup>> = Vec::with_capacity(targets.size());
+        target_groups.resize_with(targets.size(), || None);
+
+        // Iterate actual records now...
+        for (idx, record_or_error) in reader.read_records().enumerate() {
+            let error = |e| anyhow!("Record {}: {}", idx + 1, e);
+            let record = record_or_error?;
+
+            if record.target_id as usize >= targets.size() {
+                return Err(error("Target id out of bounds."));
+            }
+            if record.query_id as usize >= queries.size() {
+                return Err(error("Query id out of bounds."));
+            }
+            if record.matrix_id as usize >= sub_matrix_map.len() {
+                return Err(error("Matrix id out of bounds."));
+            }
+
+            let target_group_opt = target_groups
+                .get_mut(record.target_id as usize)
+                .ok_or_else(|| error("Invalid target group index!"))?;
+
+            let target_start = record.target_start as usize;
+            let target_end = (record.target_start + record.target_length - 1) as usize;
+
+            let (query_start, query_end) = match record.strand {
+                Strand::Forward => (
+                    record.query_start as usize,
+                    (record.query_start + record.query_length - 1) as usize,
+                ),
+                Strand::Reverse => (
+                    (record.query_start + record.query_length - 1) as usize,
+                    record.query_start as usize,
+                ),
+                _ => return Err(error("Invalid strand value!")),
+            };
+
+            let target_id = record.target_id as usize;
+            let query_id = record.query_id as usize;
+
+            let target_group = target_group_opt.get_or_insert_with(|| TargetGroup {
+                target_id,
+                target_start: target_start,
+                target_end: target_end,
+                alignments: vec![],
+                tandem_repeats: vec![],
+            });
+
+            let sequence = AlignmentSequence {
+                query_seq: query_sequences
+                    .find(query_id, query_start, query_end)
+                    .ok_or_else(|| error("No target sequence for record!"))?,
+                target_seq: target_sequences
+                    .find(target_id, target_start, target_end)
+                    .ok_or_else(|| error("No target sequence for record!"))?,
+                cigar: record.cigar,
+            };
+
+            target_group.alignments.push(Alignment {
+                sequence,
+                query_id,
+                target_start,
+                target_end,
+                query_start,
+                query_end,
+                strand: record.strand,
+                // Set later...
+                id: 0,
+                substitution_matrix_id: sub_matrix_map[record.matrix_id as usize],
+            });
+        }
+
+        Ok(crate::alignment::AlignmentData {
+            target_groups: target_groups.into_iter().filter_map(|v| v).collect(),
+            target_name_map: targets,
+            query_name_map: queries,
+            substitution_matrices,
+            target_sequences,
+            query_sequences,
+            query_lengths,
+        })
     }
 
     fn name() -> &'static str {
         "BPAF"
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use itertools::Itertools;
+
+    use super::*;
+    use std::io::Cursor;
+
+    const BPAF_FILE: &'static [u8] = include_bytes!("../../fixtures/test/human-1mb.bpaf");
+
+    #[test]
+    fn minimal_empty_file_bytes() -> anyhow::Result<()> {
+        #[rustfmt::skip]
+        let expected: Vec<u8> = vec![
+            b'B', b'P', b'A', b'F', 0x01,   // header MAGIC
+            0x00,                           // version
+            0x00,                           // extensions
+            0x00,                           // qids count = 0
+            0x00,                           // tids count = 0
+            0x00,                           // mats count = 0
+            0x07, 0, 0, 0, 0, 0, 0, 0,      // tables_start = 7
+            b'B', b'P', b'A', b'F', 0x01,   // footer MAGIC
+        ];
+
+        let mut r = BPAFReader::new(Cursor::new(expected))?;
+        assert_eq!(r.read_records().collect_vec().len(), 0);
+        assert_eq!(r.read_query_names().collect_vec().len(), 0);
+        assert_eq!(r.read_target_names().collect_vec().len(), 0);
+        assert_eq!(r.read_matrix_names().collect_vec().len(), 0);
+        assert!(r.read_query_sequences().is_none());
+        assert!(r.read_target_sequences().is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_bpaf() -> anyhow::Result<()> {
+        let mut reader = BPAFReader::new(Cursor::new(BPAF_FILE))?;
+
+        println!(
+            "{:?}",
+            Result::<Vec<_>, BPAFError>::from_iter(reader.read_query_names())?
+        );
+
+        println!(
+            "{:?}",
+            Result::<Vec<_>, BPAFError>::from_iter(reader.read_target_names())?
+        );
+
+        println!(
+            "{:?}",
+            Result::<Vec<_>, BPAFError>::from_iter(reader.read_matrix_names())?
+        );
+
+        Ok(())
     }
 }

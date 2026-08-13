@@ -102,18 +102,19 @@ pub fn load_alignments(
         None
     };
 
-    let substitution_matrices = VecMap::from(SubstitutionMatrix::parse(
-        File::open(matrices.as_ref()).context(format!(
+    let substitution_matrices: VecMap<SubstitutionMatrix> =
+        SubstitutionMatrix::parse(File::open(matrices.as_ref()).context(format!(
             "failed to load substitution matricies file: '{}'",
             matrices.as_ref().to_str().unwrap_or("?")
-        ))?,
-    )?);
+        ))?)?
+        .into_iter()
+        .collect();
 
     let mut alignment_data = try_formats!(
         primary_reader,
         secondary_reader,
         substitution_matrices,
-        [caf::CAFFormat]
+        [bpaf::BPAFFormat, caf::CAFFormat]
     )?;
 
     if let Some(ultra_file) = ultra_file {

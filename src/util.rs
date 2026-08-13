@@ -1,4 +1,7 @@
-use std::io::{self};
+use std::{
+    collections::HashMap,
+    io::{self},
+};
 
 use itertools::Itertools;
 use thiserror::Error;
@@ -17,20 +20,46 @@ pub struct VecMap<T: std::cmp::Ord> {
     tree: AVLIndexSet<usize>,
 }
 
+impl VecMap<String> {
+    // Maintains all seqeunces from vector in-order instead
+    // appending an index to the end of duplicate entries.
+    pub fn from_vec_raw(values: Vec<String>) -> Self {
+        let mut new_self = VecMap::new();
+        let mut counts: HashMap<&String, usize> = HashMap::new();
+
+        for val in values.iter() {
+            let entry = counts.entry(val).or_insert(0);
+            new_self.insert(format!(
+                "{}{}",
+                val,
+                if *entry == 0 {
+                    "".to_string()
+                } else {
+                    entry.to_string()
+                }
+            ));
+            *entry += 1;
+        }
+        new_self
+    }
+}
+
+impl<I: std::cmp::Ord> FromIterator<I> for VecMap<I> {
+    fn from_iter<T: IntoIterator<Item = I>>(iter: T) -> Self {
+        let mut new_self = VecMap::new();
+        for val in iter {
+            new_self.insert(val);
+        }
+        new_self
+    }
+}
+
 impl<T: std::cmp::Ord> VecMap<T> {
     pub fn new() -> Self {
         Self {
             values: vec![],
             tree: AVLIndexSet::new(),
         }
-    }
-
-    pub fn from(values: Vec<T>) -> Self {
-        let mut new_self = VecMap::new();
-        for val in values {
-            new_self.insert(val);
-        }
-        new_self
     }
 
     pub fn values(&self) -> std::slice::Iter<'_, T> {

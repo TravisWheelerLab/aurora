@@ -95,7 +95,7 @@ impl AlignmentFormat for CAFFormat {
 
         let mut target_groups: Vec<TargetGroup> = vec![];
         let mut target_name_map: VecMap<String> = VecMap::new();
-        let mut query_name_map: VecMap<String> = VecMap::from(vec!["skip".into()]);
+        let mut query_name_map: VecMap<String> = vec!["skip".to_string()].into_iter().collect();
         let mut query_lengths: HashMap<usize, usize> = HashMap::new();
         let mut target_store: SequenceStore = SequenceStore::new();
         let mut query_store: SequenceStore = SequenceStore::new();
@@ -199,6 +199,8 @@ impl AlignmentFormat for CAFFormat {
             target_store.add_sequence(target_id, target_start, &target_seq);
             query_store.add_sequence(query_id, query_start.min(query_end), &query_seq);
 
+            target_group.target_start = target_group.target_start.min(target_start);
+            target_group.target_end = target_group.target_end.max(target_end);
             target_group.alignments.push(Alignment {
                 sequence: AlignmentSequence {
                     target_seq: Arc::default(),

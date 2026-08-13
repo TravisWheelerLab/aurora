@@ -1,5 +1,13 @@
+use std::fmt::Debug;
+
 #[derive(Default)]
 pub struct ULEBS(Vec<u8>);
+
+impl Debug for ULEBS {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
 
 impl ULEBS {
     #[allow(dead_code)]
@@ -81,6 +89,12 @@ impl<T: Iterator<Item = u8>> Iterator for ULEBIterator<T> {
 #[derive(Default)]
 pub struct Cigar(ULEBS);
 
+impl Debug for Cigar {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CigarSegment {
     Aligned(u64),
@@ -103,8 +117,8 @@ impl CigarSegment {
 impl From<CigarSegment> for i64 {
     fn from(value: CigarSegment) -> Self {
         match value {
-            CigarSegment::Aligned(val) | CigarSegment::QueryGap(val) => val as i64,
-            CigarSegment::TargetGap(val) => -(val as i64),
+            CigarSegment::Aligned(val) | CigarSegment::TargetGap(val) => val as i64,
+            CigarSegment::QueryGap(val) => -(val as i64),
         }
     }
 }
@@ -199,7 +213,7 @@ impl<T: Iterator<Item = Result<u64, u64>>> Iterator for CigarIterator<T> {
             } else {
                 let z = zig_zag_decode(v);
                 let z_abs = z.abs() as u64;
-                if z >= 0 {
+                if z <= 0 {
                     CigarSegment::QueryGap(z_abs)
                 } else {
                     CigarSegment::TargetGap(z_abs)
