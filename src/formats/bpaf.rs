@@ -8,7 +8,11 @@ use crate::{
     util::VecMap,
 };
 use anyhow::anyhow;
-use std::{collections::HashMap, f32, slice};
+use std::{
+    collections::HashMap,
+    f32, slice,
+    time::{Duration, Instant},
+};
 use std::{
     io::{self, SeekFrom},
     string::FromUtf8Error,
@@ -564,6 +568,27 @@ impl FromIterator<SequenceEntry> for SequenceStore {
     }
 }
 
+struct Timer {
+    start: Instant,
+    last_duration: Duration,
+}
+
+impl Timer {
+    fn new() -> Self {
+        let inst = Instant::now();
+        Self {
+            start: inst,
+            last_duration: inst.elapsed(),
+        }
+    }
+
+    fn segment(&mut self, msg: &str) {
+        let new_dur = self.start.elapsed();
+        eprintln!("{}: {}s", msg, (new_dur - self.last_duration).as_secs_f64());
+        self.last_duration = new_dur;
+    }
+}
+
 pub struct BPAFFormat {}
 
 impl AlignmentFormat for BPAFFormat {
@@ -585,14 +610,18 @@ impl AlignmentFormat for BPAFFormat {
         secondary_reader: Option<&mut impl SeekableReader>,
         substitution_matrices: VecMap<crate::substitution_matrix::SubstitutionMatrix>,
     ) -> anyhow::Result<crate::alignment::AlignmentData> {
+        let mut timer = Timer::new();
         let mut reader = BPAFReader::new(primary_reader)?;
+        timer.segment("Make BPAFReader");
 
         let queries = VecMap::from_vec_raw(Result::<Vec<String>, BPAFError>::from_iter(
             reader.read_query_names(),
         )?);
+        timer.segment("Load Query Names");
         let targets = VecMap::from_vec_raw(Result::<Vec<String>, BPAFError>::from_iter(
             reader.read_target_names(),
         )?);
+        timer.segment("Load Target Names");
         let sub_matrix_names: Vec<String> =
             Result::<Vec<String>, BPAFError>::from_iter(reader.read_matrix_names())?;
 
@@ -607,6 +636,7 @@ impl AlignmentFormat for BPAFFormat {
                     .key(&dummy_lookup_matrix)
                     .ok_or_else(|| anyhow!("Could not find substitute matrix with name: {}", v))
             }))?;
+        timer.segment("Load Matrix Names");
 
         let mut query_store = match reader.read_query_sequences() {
             Some(iter) => Result::<SequenceStore, BPAFError>::from_iter(iter.map(|r| {
@@ -622,25 +652,29 @@ impl AlignmentFormat for BPAFFormat {
             }))?,
             None => SequenceStore::new(),
         };
+        timer.segment("Load Query Sequences from BPAF");
+
         let mut target_store = match reader.read_target_sequences() {
             Some(iter) => Result::<SequenceStore, BPAFError>::from_iter(iter)?,
             None => SequenceStore::new(),
         };
+        timer.segment("Load Target Sequences from BPAF");
 
         match secondary_reader {
-            Some(path) => {
+            Some(second_reader) => {
                 if target_store.sequence_count() > 0 || query_store.sequence_count() > 0 {
-                    eprintln!("BPAF already contains sequence data, extending with FASTA data...")
+                    eprintln!("BPAF already contains sequence data, extending with FASTA data...");
                 }
 
                 fasta::parse_fasta_file(
-                    path,
+                    second_reader,
                     &targets,
                     &queries,
                     &mut target_store,
                     &mut query_store,
                     Some(&mut query_lengths),
                 )?;
+                timer.segment("Load FASTA Sequences");
             }
             None => {
                 if target_store.sequence_count() == 0 || query_store.sequence_count() == 0 {
@@ -653,6 +687,7 @@ impl AlignmentFormat for BPAFFormat {
 
         let query_sequences = query_store.into_index();
         let target_sequences = target_store.into_index();
+        timer.segment("Convert into segment query structures.");
 
         let mut target_groups: Vec<Option<TargetGroup>> = Vec::with_capacity(targets.size());
         target_groups.resize_with(targets.size(), || None);
@@ -704,7 +739,11 @@ impl AlignmentFormat for BPAFFormat {
 
             let sequence = AlignmentSequence {
                 query_seq: query_sequences
-                    .find(query_id, query_start, query_end)
+                    .find(
+                        query_id,
+                        query_start.min(query_end),
+                        query_end.max(query_start),
+                    )
                     .ok_or_else(|| error("No target sequence for record!"))?,
                 target_seq: target_sequences
                     .find(target_id, target_start, target_end)
@@ -725,6 +764,7 @@ impl AlignmentFormat for BPAFFormat {
                 substitution_matrix_id: sub_matrix_map[record.matrix_id as usize],
             });
         }
+        timer.segment("Load records");
 
         Ok(crate::alignment::AlignmentData {
             target_groups: target_groups.into_iter().filter_map(|v| v).collect(),
