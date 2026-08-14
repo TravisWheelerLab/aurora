@@ -1,6 +1,6 @@
 use crate::{
     alignment::{Alignment, AlignmentSequence, Strand, TargetGroup},
-    alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE,
+    alphabet::{GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, UTF8_TO_DIGITAL_NUCLEOTIDE},
     formats::{fasta, AlignmentFormat, FormatCheck, SeekableReader},
     sequence_store::SequenceStore,
     substitution_matrix::SubstitutionMatrix,
@@ -358,6 +358,7 @@ fn parse_sequence_record(entry: ULEBEntry) -> Result<SequenceEntry, BPAFError> {
             UTF8_TO_DIGITAL_NUCLEOTIDE
                 .get(byte)
                 .copied()
+                .filter(|&v| !matches!(v, GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL))
                 .ok_or_else(|| BPAFError::InvalidNucleotide(*byte as char))
         })
         .collect();
