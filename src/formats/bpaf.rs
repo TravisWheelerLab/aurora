@@ -8,7 +8,7 @@ use crate::{
     util::VecMap,
 };
 use anyhow::anyhow;
-use std::{collections::HashMap, f32, slice};
+use std::{collections::HashMap, f32, fmt::Display, slice};
 use std::{
     io::{self, SeekFrom},
     string::FromUtf8Error,
@@ -174,19 +174,46 @@ mod bpaf_feature_flags {
 #[allow(unused)]
 #[derive(Debug)]
 pub struct BPAFRecord {
-    query_id: u64,
-    target_id: u64,
-    query_start: u64,
-    query_length: u64,
-    target_start: u64,
-    target_length: u64,
-    matrix_id: u64,
-    strand: Strand,
-    score: Option<f32>,
-    e_value: Option<f64>,
-    divergence: Option<u16>,
-    bit_score: Option<f32>,
-    cigar: Cigar,
+    pub query_id: u64,
+    pub target_id: u64,
+    pub query_start: u64,
+    pub query_length: u64,
+    pub target_start: u64,
+    pub target_length: u64,
+    pub matrix_id: u64,
+    pub strand: Strand,
+    pub score: Option<f32>,
+    pub e_value: Option<f64>,
+    pub divergence: Option<u16>,
+    pub bit_score: Option<f32>,
+    pub cigar: Cigar,
+}
+
+impl Display for BPAFRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{},{},{},{},{},{},{},{},{},{},{},{}",
+            self.query_id,
+            self.target_id,
+            self.query_start,
+            self.query_length,
+            self.target_start,
+            self.target_length,
+            self.matrix_id,
+            self.strand.to_string(),
+            self.score.map(|v| v.to_string()).unwrap_or("".to_string()),
+            self.e_value
+                .map(|v| v.to_string())
+                .unwrap_or("".to_string()),
+            self.divergence
+                .map(|v| v.to_string())
+                .unwrap_or("".to_string()),
+            self.bit_score
+                .map(|v| v.to_string())
+                .unwrap_or("".to_string()),
+        )
+    }
 }
 
 macro_rules! read_le_from_array {
@@ -817,6 +844,25 @@ mod test {
                 "20p45g.matrix",
                 "20p43g.matrix",
                 "20p39g.matrix"
+            ]
+        );
+
+        assert_eq!(
+            Result::<Vec<_>, BPAFError>::from_iter(reader.read_records().take(10))?
+                .iter()
+                .map(|v| v.to_string())
+                .collect_vec(),
+            [
+                "0,0,14,135,1802,130,0,+,493,0.00000000000000037196267569848027,,80.22068",
+                "0,0,22,166,2496,160,0,-,420,0.0000000000010478045375488144,,68.76076",
+                "0,0,183,74,3970,74,0,-,283,0.0000031226739722775843,,47.253777",
+                "0,0,18,103,5332,103,0,-,338,0.000000007859169247470169,,55.887966",
+                "0,0,108,152,17834,146,0,-,588,0.000000000000000000012051981341223158,,95.134285",
+                "0,0,84,61,30825,59,0,+,239,0.00037484061777854835,,40.346428",
+                "0,0,65,122,33206,106,0,+,282,0.0000034816404241435072,,47.096794",
+                "0,0,29,193,62693,182,1,+,441,0.000000000000007411720003251736,,75.904106",
+                "0,0,113,149,82975,134,1,-,460,0.000000000000000833618593949468,,79.05645",
+                "0,0,4,222,90191,211,1,+,584,0.0000000000000000000005343299388178203,,99.62968"
             ]
         );
 
