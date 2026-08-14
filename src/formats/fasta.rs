@@ -103,6 +103,9 @@ pub fn parse_fasta_file(
         current_sequence_name = next_name;
     }
 
+    eprintln!("Queries: {:?}", query_names);
+    eprintln!("Targets: {:?}", target_names);
+
     Ok(())
 }
 
