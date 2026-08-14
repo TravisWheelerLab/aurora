@@ -33,6 +33,7 @@ pub fn parse_fasta_file(
                 .collect_vec();
 
             if let Some(prior_name) = prior_sequence_name {
+                eprintln!("Sequence '{}' length: {}", prior_name, seq.len());
                 if let Some(target_id) = target_names.key(prior_name) {
                     target_sequences.add_sequence(target_id, 1, &seq);
                 } else if let Some(query_id) = query_names.key(prior_name) {
