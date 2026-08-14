@@ -3,10 +3,7 @@ use std::io::BufRead;
 
 use itertools::Itertools;
 
-use crate::{
-    alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE, formats::bpaf::Timer, sequence_store::SequenceStore,
-    util::VecMap,
-};
+use crate::{alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE, sequence_store::SequenceStore, util::VecMap};
 
 pub fn parse_fasta_file(
     reader: &mut impl BufRead,
@@ -16,8 +13,6 @@ pub fn parse_fasta_file(
     query_sequences: &mut SequenceStore,
     mut query_lengths: Option<&mut HashMap<usize, usize>>,
 ) -> anyhow::Result<()> {
-    let mut timer = Timer::new();
-
     let mut current_sequence_name = None;
     let mut current_sequence = Vec::new();
 
@@ -33,7 +28,6 @@ pub fn parse_fasta_file(
                 .collect_vec();
 
             if let Some(prior_name) = prior_sequence_name {
-                eprintln!("Sequence '{}' length: {}", prior_name, seq.len());
                 if let Some(target_id) = target_names.key(prior_name) {
                     target_sequences.add_sequence(target_id, 1, &seq);
                 } else if let Some(query_id) = query_names.key(prior_name) {
@@ -45,10 +39,7 @@ pub fn parse_fasta_file(
             }
         };
 
-    timer.segment("Start reading FASTA");
-
     while reader.read_until(b'>', &mut current_sequence)? != 0 {
-        timer.segment("Read till next '>'");
         let idx = if current_sequence_name.is_none() {
             0
         } else {
@@ -63,8 +54,6 @@ pub fn parse_fasta_file(
         };
         let line_start = String::from_utf8(current_sequence.split_off(idx))?;
         let bracket_no_ws = line_start.trim_start();
-
-        println!("{:?}", bracket_no_ws);
 
         let next_name = match bracket_no_ws {
             ">" => {
@@ -90,7 +79,6 @@ pub fn parse_fasta_file(
                 return Err(anyhow::anyhow!("Invalid characters before '>' in FASTA!"));
             }
         };
-        timer.segment(format!("Read next sequence name '{next_name:?}'").as_str());
 
         try_add_prior(
             current_sequence_name.as_ref(),
@@ -98,13 +86,8 @@ pub fn parse_fasta_file(
             &mut query_lengths,
         );
 
-        timer.segment(format!("Added prior sequence '{current_sequence_name:?}'",).as_str());
-
         current_sequence_name = next_name;
     }
-
-    eprintln!("Queries: {:?}", query_names);
-    eprintln!("Targets: {:?}", target_names);
 
     Ok(())
 }
