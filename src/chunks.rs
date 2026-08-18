@@ -46,7 +46,7 @@ impl<'a> ProximityGroup<'a> {
         join_distance: usize,
     ) -> Vec<ProximityGroup<'a>> {
         alignment_data.target_groups.iter().for_each(|g| {
-            debug_assert!(g
+            assert!(g
                 .alignments
                 .windows(2)
                 .all(|w| w[0].target_start <= w[1].target_start));
@@ -206,6 +206,10 @@ pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool 
     for (group_idx, group) in groups.iter().enumerate() {
         for repeat in group.tandem_repeats {
             if repeat.target_start < group.target_start || repeat.target_end > group.target_end {
+                eprintln!(
+                    "Repeat falls outside group range! Repeat: {:?}, Group Range: ({}, {})",
+                    repeat, group.target_start, group.target_end
+                );
                 return false;
             }
         }
@@ -213,6 +217,10 @@ pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool 
         for ali in group.alignments {
             // check if any alignments are outside of the chunk boundaries
             if ali.target_start < group.target_start || ali.target_end > group.target_end {
+                eprintln!(
+                    "Alignment falls outside group range! Alignment: {:?}, Group Range: ({}, {})",
+                    ali, group.target_start, group.target_end
+                );
                 return false;
             }
 
@@ -237,6 +245,10 @@ pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool 
                     if ali.strand == other_ali.strand
                         && (ali.target_start - other_ali.target_end + 1) < join_distance
                     {
+                        eprintln!(
+                            "Alignments within join distance! Alignments:\n\t{}\n\t{}",
+                            ali, other_ali
+                        );
                         return false;
                     }
                 }
@@ -258,6 +270,7 @@ pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool 
                     if other_ali.strand == ali.strand
                         && (other_ali.target_start - ali.target_end + 1) < join_distance
                     {
+                        eprintln!("Alignment groups not in order!");
                         return false;
                     }
                 }
