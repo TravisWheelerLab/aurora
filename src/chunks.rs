@@ -231,6 +231,11 @@ pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool 
             for other_group_idx in 0..group_idx {
                 let other_group = &groups[other_group_idx];
 
+                // If groups have different targets, ignore...
+                if group.target_id != other_group.target_id {
+                    continue;
+                }
+
                 // if the other chunk is farther than the join distance
                 // away from this alignment, then there's nothing to check
                 if (ali.target_start - other_group.target_end + 1) > join_distance {
@@ -258,6 +263,10 @@ pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool 
             for other_group_idx in (group_idx..groups.len()).skip(1) {
                 let other_group = &groups[other_group_idx];
 
+                if group.target_id != other_group.target_id {
+                    continue;
+                }
+
                 if (other_group.target_start - ali.target_end + 1) > join_distance {
                     continue;
                 }
@@ -270,7 +279,10 @@ pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool 
                     if other_ali.strand == ali.strand
                         && (other_ali.target_start - ali.target_end + 1) < join_distance
                     {
-                        eprintln!("Alignment groups not in order!");
+                        eprintln!(
+                            "Alignment groups not in order! Offending alignments: \n\t{}\n\t{}",
+                            ali, other_ali
+                        );
                         return false;
                     }
                 }
