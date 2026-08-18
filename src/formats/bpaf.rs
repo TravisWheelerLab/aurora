@@ -775,6 +775,16 @@ impl AlignmentFormat for BPAFFormat {
             }
         }
 
+        // Check all query sequences have lengths...
+        for (idx, query) in queries_new.values().enumerate().skip(1) {
+            if !query_lengths.contains_key(&idx) {
+                return Err(anyhow!(
+                    "BPAF missing query length for sequence '{}'",
+                    query
+                ));
+            }
+        }
+
         let query_sequences = query_store.into_index();
         let target_sequences = target_store.into_index();
 
