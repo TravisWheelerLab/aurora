@@ -110,6 +110,48 @@ macro_rules! try_formats {
     };
 }
 
+fn validate_alignment_data(alignment_data: &AlignmentData) -> bool {
+    for t_grp in alignment_data.target_groups.iter() {
+        if t_grp
+            .alignments
+            .is_sorted_by(|a, b| a.target_start <= b.target_start)
+        {
+            eprintln!("Alignments are not sorted!");
+            return false;
+        }
+
+        if t_grp
+            .tandem_repeats
+            .is_sorted_by(|a, b| a.target_start <= b.target_start)
+        {
+            eprintln!("Tandem repeats are not sorted!");
+            return false;
+        }
+
+        for ali in t_grp.alignments.iter() {
+            if ali.target_start < t_grp.target_start || ali.target_end > t_grp.target_end {
+                eprintln!(
+                    "Alignment not within target group bounds! Alignment: {}, Target Range: ({}, {})",
+                    ali, t_grp.target_start, t_grp.target_end
+                );
+                return false;
+            }
+        }
+
+        for repeat in t_grp.tandem_repeats.iter() {
+            if repeat.target_start < t_grp.target_start || repeat.target_end > t_grp.target_end {
+                eprintln!(
+                    "Repeat not within target group bounds! Repeat: {:?}, Target Range: ({}, {})",
+                    repeat, t_grp.target_start, t_grp.target_end
+                );
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
 pub fn load_alignments(
     primary_file: &impl AsRef<Path>,
     secondary_file: Option<&impl AsRef<Path>>,
@@ -154,6 +196,8 @@ pub fn load_alignments(
         )?;
     }
     normalize_alignment_data(&mut alignment_data);
+
+    assert!(validate_alignment_data(&alignment_data));
 
     Ok(alignment_data)
 }
