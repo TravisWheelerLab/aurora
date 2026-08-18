@@ -745,6 +745,8 @@ impl AlignmentFormat for BPAFFormat {
                 cigar: record.cigar,
             };
 
+            target_group.target_start = target_group.target_start.min(target_start);
+            target_group.target_end = target_group.target_end.max(target_end);
             target_group.alignments.push(Alignment {
                 sequence,
                 query_id,
