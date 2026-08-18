@@ -112,7 +112,7 @@ macro_rules! try_formats {
 
 fn validate_alignment_data(alignment_data: &AlignmentData) -> bool {
     for t_grp in alignment_data.target_groups.iter() {
-        if t_grp
+        if !t_grp
             .alignments
             .is_sorted_by(|a, b| a.target_start <= b.target_start)
         {
@@ -120,7 +120,7 @@ fn validate_alignment_data(alignment_data: &AlignmentData) -> bool {
             return false;
         }
 
-        if t_grp
+        if !t_grp
             .tandem_repeats
             .is_sorted_by(|a, b| a.target_start <= b.target_start)
         {
