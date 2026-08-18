@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    io::{self},
-};
+use std::io::{self};
 
 use itertools::Itertools;
 use thiserror::Error;
@@ -9,6 +6,7 @@ use thiserror::Error;
 use crate::{
     alphabet::UTF8_TO_DIGITAL_NUCLEOTIDE,
     balanced_tree::{AVLIndexSet, SetInsert},
+    substitution_matrix::SubstitutionMatrix,
 };
 
 /// A simple Vec-based map that facilitates mapping
@@ -18,30 +16,6 @@ use crate::{
 pub struct VecMap<T: std::cmp::Ord> {
     values: Vec<T>,
     tree: AVLIndexSet<usize>,
-}
-
-impl VecMap<String> {
-    // Maintains all seqeunces from vector in-order instead
-    // appending an index to the end of duplicate entries.
-    pub fn from_vec_raw(values: Vec<String>) -> Self {
-        let mut new_self = VecMap::new();
-        let mut counts: HashMap<&String, usize> = HashMap::new();
-
-        for val in values.iter() {
-            let entry = counts.entry(val).or_insert(0);
-            new_self.insert(format!(
-                "{}{}",
-                val,
-                if *entry == 0 {
-                    "".to_string()
-                } else {
-                    entry.to_string()
-                }
-            ));
-            *entry += 1;
-        }
-        new_self
-    }
 }
 
 impl<I: std::cmp::Ord> FromIterator<I> for VecMap<I> {
@@ -99,6 +73,19 @@ impl<T: std::cmp::Ord> VecMap<T> {
     /// Get the key associated with the value.
     pub fn key(&self, value: &T) -> Option<usize> {
         self.tree.search(|idx| self.values[idx].cmp(value))
+    }
+}
+
+impl VecMap<SubstitutionMatrix> {
+    pub fn key_by_name(&self, name: &str) -> Option<usize> {
+        // This is valid because substitution matricies are only compared by name....
+        self.tree
+            .search(|idx| self.values[idx].name.as_str().cmp(name))
+    }
+
+    #[allow(dead_code)]
+    pub fn contains_by_name(&self, name: &str) -> bool {
+        self.key_by_name(name).is_some()
     }
 }
 

@@ -195,7 +195,7 @@ pub fn load_alignments(
     }
     normalize_alignment_data(&mut alignment_data);
 
-    assert!(validate_alignment_data(&alignment_data));
+    debug_assert!(validate_alignment_data(&alignment_data));
 
     Ok(alignment_data)
 }

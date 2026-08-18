@@ -26,23 +26,21 @@ pub fn load_ultra_file(alignment_data: &mut AlignmentData, ultra_file: impl Read
         serde_json::from_reader(buf_reader).context("Failed to load provided ultra file.")?;
 
     ultra_json.repeats.into_iter().for_each(|r| {
-        let target_id = alignment_data
-            .target_name_map
-            .insert(r.sequence_name.clone());
+        if let Some(target_id) = alignment_data.target_name_map.key(&r.sequence_name) {
+            if let Some(group) = alignment_data.target_groups.get_mut(target_id) {
+                group.tandem_repeats.push(TandemRepeat {
+                    // TODO: figure out if ultra uses 0- or 1-based indexing
+                    id: 0, // The id is set durring normalization...
+                    target_start: r.start,
+                    target_end: r.start + r.length - 1,
+                    consensus_pattern: r.consensus,
+                    period: r.period,
+                    scores: r.position_score_deltas,
+                });
 
-        if let Some(group) = alignment_data.target_groups.get_mut(target_id) {
-            group.tandem_repeats.push(TandemRepeat {
-                // TODO: figure out if ultra uses 0- or 1-based indexing
-                id: 0, // The id is set durring normalization...
-                target_start: r.start,
-                target_end: r.start + r.length - 1,
-                consensus_pattern: r.consensus,
-                period: r.period,
-                scores: r.position_score_deltas,
-            });
-
-            group.target_start = group.target_start.min(r.start);
-            group.target_end = group.target_end.max(r.start + r.length - 1);
+                group.target_start = group.target_start.min(r.start);
+                group.target_end = group.target_end.max(r.start + r.length - 1);
+            }
         }
     });
 

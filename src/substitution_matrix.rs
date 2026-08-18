@@ -169,16 +169,6 @@ impl AlignmentScore for SubstitutionMatrix {
 }
 
 impl SubstitutionMatrix {
-    pub fn dummy_with_name(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            gap_open_score: 0.0,
-            gap_extend_score: 0.0,
-            scores: [[0.0; 14]; 14],
-            core_ratios: [[0.0; 4]; 4],
-        }
-    }
-
     pub fn new(
         name: &str,
         lambda: f64,

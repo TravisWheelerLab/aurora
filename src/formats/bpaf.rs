@@ -3,12 +3,11 @@ use crate::{
     alphabet::{GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, UTF8_TO_DIGITAL_NUCLEOTIDE},
     formats::{fasta, AlignmentFormat, FormatCheck, SeekableReader},
     sequence_store::SequenceStore,
-    substitution_matrix::SubstitutionMatrix,
     uleb::{self, Cigar, CigarIterator, CigarSegment},
     util::VecMap,
 };
-use anyhow::anyhow;
-use std::{collections::HashMap, f32, fmt::Display, slice};
+use anyhow::{anyhow, Context};
+use std::{collections::HashMap, f32, fmt::Display, slice, sync::Arc};
 use std::{
     io::{self, SeekFrom},
     string::FromUtf8Error,
@@ -594,6 +593,32 @@ impl FromIterator<SequenceEntry> for SequenceStore {
 
 pub struct BPAFFormat {}
 
+fn map_entry_id(
+    new_map: &VecMap<String>,
+    old_map: &Vec<String>,
+    value: Result<SequenceEntry, BPAFError>,
+) -> Result<SequenceEntry, anyhow::Error> {
+    let unwrapped_value = value?;
+    let seq_name = old_map
+        .get(unwrapped_value.sequence_id as usize)
+        .with_context(|| {
+            format!(
+                "Sequence id: {} is out of bounds!",
+                unwrapped_value.sequence_id
+            )
+        })?;
+    let new_seq_id = new_map
+        .key(seq_name)
+        .with_context(|| format!("Can't find sequence '{}' in provided sequences!", seq_name))?;
+
+    Ok(SequenceEntry {
+        sequence_id: new_seq_id as u64,
+        start: unwrapped_value.start,
+        remaining: unwrapped_value.remaining,
+        sequence: unwrapped_value.sequence,
+    })
+}
+
 impl AlignmentFormat for BPAFFormat {
     fn format_check(
         primary_reader: &mut impl SeekableReader,
@@ -615,30 +640,98 @@ impl AlignmentFormat for BPAFFormat {
     ) -> anyhow::Result<crate::alignment::AlignmentData> {
         let mut reader = BPAFReader::new(primary_reader)?;
 
-        let queries = VecMap::from_vec_raw(Result::<Vec<String>, BPAFError>::from_iter(
-            reader.read_query_names(),
-        )?);
-        let targets = VecMap::from_vec_raw(Result::<Vec<String>, BPAFError>::from_iter(
-            reader.read_target_names(),
-        )?);
-        let sub_matrix_names: Vec<String> =
+        let queries_old = Result::<Vec<String>, BPAFError>::from_iter(reader.read_query_names())?;
+        let targets_old = Result::<Vec<String>, BPAFError>::from_iter(reader.read_target_names())?;
+        let sub_matrix_names_old: Vec<String> =
             Result::<Vec<String>, BPAFError>::from_iter(reader.read_matrix_names())?;
+
+        let mut queries_new = VecMap::new();
+        let mut targets_new = VecMap::new();
+        let mut target_groups = Vec::new();
+
+        // Iterate records to extract names actually used from the BPAF, we only keep those...
+        for (idx, record_or_error) in reader.read_records().enumerate() {
+            let error = |e| anyhow!("Record {}: {}", idx + 1, e);
+            let record = record_or_error?;
+
+            if record.target_id as usize >= targets_old.len() {
+                return Err(error("Target id out of bounds."));
+            }
+            if record.query_id as usize >= queries_old.len() {
+                return Err(error("Query id out of bounds."));
+            }
+            if record.matrix_id as usize >= sub_matrix_names_old.len() {
+                return Err(error("Matrix id out of bounds."));
+            }
+
+            let target_id = targets_new.insert(targets_old[record.target_id as usize].clone());
+            let query_id = queries_new.insert(queries_old[record.query_id as usize].clone());
+            let matrix_id = substitution_matrices
+                .key_by_name(&sub_matrix_names_old[record.matrix_id as usize])
+                .with_context(|| {
+                    format!(
+                        "No matrix with name: {}",
+                        sub_matrix_names_old[record.matrix_id as usize]
+                    )
+                })?;
+
+            let target_start = record.target_start as usize;
+            let target_end = (record.target_start + record.target_length - 1) as usize;
+
+            let target_group = match target_groups.get_mut(target_id) {
+                Some(group) => group,
+                None => {
+                    target_groups.push(TargetGroup {
+                        target_id,
+                        target_start,
+                        target_end,
+                        alignments: vec![],
+                        tandem_repeats: vec![],
+                    });
+                    target_groups.last_mut().unwrap()
+                }
+            };
+
+            let (query_start, query_end) = match record.strand {
+                Strand::Forward => (
+                    record.query_start as usize,
+                    (record.query_start + record.query_length - 1) as usize,
+                ),
+                Strand::Reverse => (
+                    (record.query_start + record.query_length - 1) as usize,
+                    record.query_start as usize,
+                ),
+                _ => return Err(error("Invalid strand value!")),
+            };
+
+            let sequence = AlignmentSequence {
+                query_seq: Arc::default(),
+                target_seq: Arc::default(),
+                cigar: record.cigar,
+            };
+
+            target_group.alignments.push(Alignment {
+                sequence,
+                query_id,
+                target_start,
+                target_end,
+                query_start,
+                query_end,
+                strand: record.strand,
+                // Set later...
+                id: 0,
+                substitution_matrix_id: matrix_id,
+            });
+            target_group.target_start = target_group.target_start.min(target_start);
+            target_group.target_end = target_group.target_end.max(target_end);
+        }
 
         let mut query_lengths: HashMap<usize, usize> = HashMap::new();
 
-        let mut dummy_lookup_matrix = SubstitutionMatrix::dummy_with_name("");
-
-        let sub_matrix_map: Vec<usize> =
-            Result::<Vec<_>, anyhow::Error>::from_iter(sub_matrix_names.iter().map(|v| {
-                dummy_lookup_matrix.name = v.clone();
-                substitution_matrices
-                    .key(&dummy_lookup_matrix)
-                    .ok_or_else(|| anyhow!("Could not find substitute matrix with name: {}", v))
-            }))?;
-
         let mut query_store = match reader.read_query_sequences() {
-            Some(iter) => Result::<SequenceStore, BPAFError>::from_iter(iter.map(|r| {
-                if let Ok(v) = r.as_ref() {
+            Some(iter) => Result::<SequenceStore, anyhow::Error>::from_iter(iter.map(|r| {
+                let r_new = map_entry_id(&queries_new, &queries_old, r);
+                if let Ok(v) = r_new.as_ref() {
                     query_lengths.insert(
                         v.sequence_id as usize,
                         (v.start.saturating_sub(1)) as usize
@@ -646,13 +739,15 @@ impl AlignmentFormat for BPAFFormat {
                             + v.remaining as usize,
                     );
                 }
-                r
+                r_new
             }))?,
             None => SequenceStore::new(),
         };
 
         let mut target_store = match reader.read_target_sequences() {
-            Some(iter) => Result::<SequenceStore, BPAFError>::from_iter(iter)?,
+            Some(iter) => Result::<SequenceStore, anyhow::Error>::from_iter(
+                iter.map(|v| map_entry_id(&targets_new, &targets_old, v)),
+            )?,
             None => SequenceStore::new(),
         };
 
@@ -664,8 +759,8 @@ impl AlignmentFormat for BPAFFormat {
 
                 fasta::parse_fasta_file(
                     second_reader,
-                    &targets,
-                    &queries,
+                    &targets_new,
+                    &queries_new,
                     &mut target_store,
                     &mut query_store,
                     Some(&mut query_lengths),
@@ -683,88 +778,27 @@ impl AlignmentFormat for BPAFFormat {
         let query_sequences = query_store.into_index();
         let target_sequences = target_store.into_index();
 
-        let mut target_groups: Vec<Option<TargetGroup>> = Vec::with_capacity(targets.size());
-        target_groups.resize_with(targets.size(), || None);
+        // Get alignment references for every sequence...
+        for group in target_groups.iter_mut() {
+            let target_id = group.target_id;
+            for al in group.alignments.iter_mut() {
+                let (q_start, q_end) = al.ordered_query_range();
+                let t_start = al.target_start;
+                let t_end = al.target_end;
 
-        // Iterate actual records now...
-        for (idx, record_or_error) in reader.read_records().enumerate() {
-            let error = |e| anyhow!("Record {}: {}", idx + 1, e);
-            let record = record_or_error?;
-
-            if record.target_id as usize >= targets.size() {
-                return Err(error("Target id out of bounds."));
+                al.sequence.target_seq = target_sequences
+                    .find(target_id, t_start, t_end)
+                    .ok_or(anyhow!("Unable to find needed target sequence!"))?;
+                al.sequence.query_seq = query_sequences
+                    .find(al.query_id, q_start, q_end)
+                    .ok_or(anyhow!("Unable to find needed query sequence!"))?;
             }
-            if record.query_id as usize >= queries.size() {
-                return Err(error("Query id out of bounds."));
-            }
-            if record.matrix_id as usize >= sub_matrix_map.len() {
-                return Err(error("Matrix id out of bounds."));
-            }
-
-            let target_group_opt = target_groups
-                .get_mut(record.target_id as usize)
-                .ok_or_else(|| error("Invalid target group index!"))?;
-
-            let target_start = record.target_start as usize;
-            let target_end = (record.target_start + record.target_length - 1) as usize;
-
-            let (query_start, query_end) = match record.strand {
-                Strand::Forward => (
-                    record.query_start as usize,
-                    (record.query_start + record.query_length - 1) as usize,
-                ),
-                Strand::Reverse => (
-                    (record.query_start + record.query_length - 1) as usize,
-                    record.query_start as usize,
-                ),
-                _ => return Err(error("Invalid strand value!")),
-            };
-
-            let target_id = record.target_id as usize;
-            let query_id = record.query_id as usize;
-
-            let target_group = target_group_opt.get_or_insert_with(|| TargetGroup {
-                target_id,
-                target_start,
-                target_end,
-                alignments: vec![],
-                tandem_repeats: vec![],
-            });
-
-            let sequence = AlignmentSequence {
-                query_seq: query_sequences
-                    .find(
-                        query_id,
-                        query_start.min(query_end),
-                        query_end.max(query_start),
-                    )
-                    .ok_or_else(|| error("No query sequence for record!"))?,
-                target_seq: target_sequences
-                    .find(target_id, target_start, target_end)
-                    .ok_or_else(|| error("No target sequence for record!"))?,
-                cigar: record.cigar,
-            };
-
-            target_group.alignments.push(Alignment {
-                sequence,
-                query_id,
-                target_start,
-                target_end,
-                query_start,
-                query_end,
-                strand: record.strand,
-                // Set later...
-                id: 0,
-                substitution_matrix_id: sub_matrix_map[record.matrix_id as usize],
-            });
-            target_group.target_start = target_group.target_start.min(target_start);
-            target_group.target_end = target_group.target_end.max(target_end);
         }
 
         Ok(crate::alignment::AlignmentData {
-            target_groups: target_groups.into_iter().filter_map(|v| v).collect(),
-            target_name_map: targets,
-            query_name_map: queries,
+            target_groups,
+            target_name_map: targets_new,
+            query_name_map: queries_new,
             substitution_matrices,
             target_sequences,
             query_sequences,

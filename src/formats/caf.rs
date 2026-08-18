@@ -187,14 +187,11 @@ impl AlignmentFormat for CAFFormat {
                 Strand::Unset => panic!(),
             }
             let substitution_matrix_id = substitution_matrices
-                .values()
-                .enumerate()
-                .find(|(_, m)| m.name == substitution_matrix_name)
+                .key_by_name(&substitution_matrix_name)
                 .with_context(error_msg_str(
                     format!("unknown substitution matrix '{}'", substitution_matrix_name),
                     17,
-                ))?
-                .0;
+                ))?;
 
             target_store.add_sequence(target_id, target_start, &target_seq);
             query_store.add_sequence(query_id, query_start.min(query_end), &query_seq);
