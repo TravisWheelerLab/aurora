@@ -43,7 +43,10 @@ pub fn load_ultra_file(alignment_data: &mut AlignmentData, ultra_file: impl Read
                     consensus_pattern: r.consensus,
                     period: r.period,
                     scores: r.position_score_deltas,
-                })
+                });
+
+                group.target_start = group.target_start.min(r.start);
+                group.target_end = group.target_end.max(r.start + r.length - 1);
             }
         });
 
