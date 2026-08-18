@@ -56,21 +56,19 @@ fn normalize_alignment_data(alignment_data: &mut AlignmentData) {
 
         g.target_start = g
             .alignments
-            .first()
             .iter()
             .map(|v| v.target_start)
-            .chain(g.tandem_repeats.first().iter().map(|v| v.target_start))
+            .chain(g.tandem_repeats.iter().map(|v| v.target_start))
             .min()
             .expect("Empty target group!");
 
         g.target_end = g
             .alignments
-            .last()
             .iter()
             .map(|v| v.target_end)
-            .chain(g.tandem_repeats.last().iter().map(|v| v.target_end))
+            .chain(g.tandem_repeats.iter().map(|v| v.target_end))
             .max()
-            .expect("Empty target group!");
+            .expect("Empty target group!")
     });
 }
 
