@@ -725,8 +725,8 @@ impl AlignmentFormat for BPAFFormat {
 
             let target_group = target_group_opt.get_or_insert_with(|| TargetGroup {
                 target_id,
-                target_start: target_start,
-                target_end: target_end,
+                target_start,
+                target_end,
                 alignments: vec![],
                 tandem_repeats: vec![],
             });
@@ -745,8 +745,6 @@ impl AlignmentFormat for BPAFFormat {
                 cigar: record.cigar,
             };
 
-            target_group.target_start = target_group.target_start.min(target_start);
-            target_group.target_end = target_group.target_end.max(target_end);
             target_group.alignments.push(Alignment {
                 sequence,
                 query_id,
@@ -759,10 +757,27 @@ impl AlignmentFormat for BPAFFormat {
                 id: 0,
                 substitution_matrix_id: sub_matrix_map[record.matrix_id as usize],
             });
+            target_group.target_start = target_group.target_start.min(target_start);
+            target_group.target_end = target_group.target_end.max(target_end);
         }
 
         Ok(crate::alignment::AlignmentData {
-            target_groups: target_groups.into_iter().filter_map(|v| v).collect(),
+            target_groups: target_groups
+                .into_iter()
+                .filter_map(|v| {
+                    if let Some(v_inner) = &v {
+                        assert_eq!(
+                            Some(v_inner.target_start),
+                            v_inner.alignments.iter().map(|a| a.target_start).min()
+                        );
+                        assert_eq!(
+                            Some(v_inner.target_end),
+                            v_inner.alignments.iter().map(|a| a.target_end).max()
+                        );
+                    }
+                    v
+                })
+                .collect(),
             target_name_map: targets,
             query_name_map: queries,
             substitution_matrices,
