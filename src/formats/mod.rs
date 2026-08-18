@@ -32,9 +32,10 @@ pub trait AlignmentFormat {
     fn name() -> &'static str;
 }
 
-fn assign_alignment_ids(alignment_data: &mut AlignmentData) {
+fn normalize_alignment_data(alignment_data: &mut AlignmentData) {
     // Sort all alignment entries...
     let mut ali_id = 0;
+    let mut tr_id = 1;
 
     alignment_data.target_groups.iter_mut().for_each(|g| {
         g.alignments
@@ -44,6 +45,32 @@ fn assign_alignment_ids(alignment_data: &mut AlignmentData) {
             v.id = ali_id;
             ali_id += 1;
         });
+
+        g.tandem_repeats
+            .sort_by(|a, b| a.target_start.cmp(&b.target_start));
+
+        g.tandem_repeats.iter_mut().for_each(|v| {
+            v.id = tr_id;
+            tr_id += 1;
+        });
+
+        g.target_start = g
+            .alignments
+            .first()
+            .iter()
+            .map(|v| v.target_start)
+            .chain(g.tandem_repeats.first().iter().map(|v| v.target_start))
+            .min()
+            .expect("Empty target group!");
+
+        g.target_end = g
+            .alignments
+            .last()
+            .iter()
+            .map(|v| v.target_end)
+            .chain(g.tandem_repeats.last().iter().map(|v| v.target_end))
+            .max()
+            .expect("Empty target group!");
     });
 }
 
@@ -126,7 +153,7 @@ pub fn load_alignments(
             ))?,
         )?;
     }
-    assign_alignment_ids(&mut alignment_data);
+    normalize_alignment_data(&mut alignment_data);
 
     Ok(alignment_data)
 }
