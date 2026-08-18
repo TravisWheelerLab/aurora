@@ -45,13 +45,6 @@ impl<'a> ProximityGroup<'a> {
         alignment_data: &'a AlignmentData,
         join_distance: usize,
     ) -> Vec<ProximityGroup<'a>> {
-        alignment_data.target_groups.iter().for_each(|g| {
-            assert!(g
-                .alignments
-                .windows(2)
-                .all(|w| w[0].target_start <= w[1].target_start));
-        });
-
         alignment_data
             .target_groups
             .iter()

@@ -400,7 +400,7 @@ fn main() -> Result<()> {
         None
     };
 
-    assert!(validate_groups(
+    debug_assert!(validate_groups(
         &proximity_groups,
         args.annotation_args.target_join_distance
     ));

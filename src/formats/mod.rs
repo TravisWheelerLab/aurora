@@ -33,7 +33,7 @@ pub trait AlignmentFormat {
 }
 
 fn normalize_alignment_data(alignment_data: &mut AlignmentData) {
-    // Sort all alignment entries...
+    // Sort all entries...
     let mut ali_id = 0;
     let mut tr_id = 1;
 
@@ -196,6 +196,8 @@ pub fn load_alignments(
     normalize_alignment_data(&mut alignment_data);
 
     debug_assert!(validate_alignment_data(&alignment_data));
+    // Check for valid skip state...
+    assert_eq!(alignment_data.query_name_map.get(0), "skip");
 
     Ok(alignment_data)
 }

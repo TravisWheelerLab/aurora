@@ -645,7 +645,7 @@ impl AlignmentFormat for BPAFFormat {
         let sub_matrix_names_old: Vec<String> =
             Result::<Vec<String>, BPAFError>::from_iter(reader.read_matrix_names())?;
 
-        let mut queries_new = VecMap::new();
+        let mut queries_new: VecMap<String> = vec!["skip".to_string()].into_iter().collect();
         let mut targets_new = VecMap::new();
         let mut target_groups = Vec::new();
 
