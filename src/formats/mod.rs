@@ -39,12 +39,6 @@ fn normalize_alignment_data(alignment_data: &mut AlignmentData) {
     let mut tr_id = 1;
 
     alignment_data.target_groups.iter_mut().for_each(|g| {
-        for al in g.alignments.iter() {
-            if matches!(al.strand, Strand::Reverse) {
-                eprintln!("{}", al);
-            }
-        }
-
         g.alignments
             .sort_by(|a, b| a.target_start.cmp(&b.target_start));
 
@@ -77,8 +71,6 @@ fn normalize_alignment_data(alignment_data: &mut AlignmentData) {
             .max()
             .expect("Empty target group!")
     });
-
-    panic!("Uh oh...")
 }
 
 macro_rules! _try_formats_helper {
