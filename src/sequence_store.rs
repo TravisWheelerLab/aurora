@@ -1,12 +1,41 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use crate::alphabet::NucleotideByteUtils;
+
 pub struct SequenceStore {
     sequences: HashMap<usize, BTreeMap<usize, Vec<u8>>>,
 }
 
 pub struct SequenceIndex {
     sequences: HashMap<usize, Vec<Arc<(usize, Vec<u8>)>>>,
+}
+
+fn debug_check_sequences_match(
+    s1: &[u8],
+    s1_start: usize,
+    s1_end: usize,
+    s2: &[u8],
+    s2_start: usize,
+    s2_end: usize,
+) -> bool {
+    let s_high = s1_start.max(s2_start);
+    let e_low = s1_end.min(s2_end);
+
+    if e_low <= s_high {
+        return true;
+    }
+
+    if s1[s_high - s1_start..=e_low - s1_start] == s2[s_high - s2_start..=e_low - s2_start] {
+        true
+    } else {
+        eprintln!(
+            "{}\n{}",
+            s1[s_high - s1_start..=e_low - s1_start].to_debug_utf8_string(),
+            s2[s_high - s2_start..=e_low - s2_start].to_debug_utf8_string()
+        );
+        false
+    }
 }
 
 impl SequenceStore {
@@ -48,9 +77,17 @@ impl SequenceStore {
 
         new_seq[start - new_start..=end - new_start].copy_from_slice(sequence);
 
-        for (start, end) in overlaps.iter() {
-            if let Some(seq) = entry.remove(start) {
-                new_seq[start - new_start..=end - new_start].copy_from_slice(&seq);
+        for (other_start, other_end) in overlaps.iter() {
+            if let Some(seq) = entry.remove(other_start) {
+                debug_assert!(debug_check_sequences_match(
+                    sequence,
+                    start,
+                    end,
+                    &seq,
+                    *other_start,
+                    *other_end
+                ));
+                new_seq[other_start - new_start..=other_end - new_start].copy_from_slice(&seq);
             }
         }
 

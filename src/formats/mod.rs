@@ -78,7 +78,7 @@ fn normalize_alignment_data(alignment_data: &mut AlignmentData) {
             .expect("Empty target group!")
     });
 
-    panic!("Intentional stop!")
+    panic!("Uh oh...")
 }
 
 macro_rules! _try_formats_helper {

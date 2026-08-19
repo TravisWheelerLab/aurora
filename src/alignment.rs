@@ -9,7 +9,7 @@ use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::alphabet::{
     NucleotideAlignmentType, NucleotideByteUtils, A_DIGITAL, C_DIGITAL, GAP_EXTEND_DIGITAL,
-    GAP_OPEN_DIGITAL, G_DIGITAL, T_DIGITAL,
+    GAP_OPEN_DIGITAL, G_DIGITAL, NUCLEOTIDE_TO_COMPLEMENT, T_DIGITAL,
 };
 use crate::sequence_store::SequenceIndex;
 use crate::substitution_matrix::SubstitutionMatrix;
@@ -147,7 +147,8 @@ impl<I: Iterator<Item = CigarSegment>, F: Fn(CigarSegment) -> bool> Iterator
             }
         } else {
             let c = if self.reverse {
-                self.seq[self.seq.len() - (self.offset + 1)]
+                // Return reverse complement and reverse.
+                NUCLEOTIDE_TO_COMPLEMENT[self.seq[self.seq.len() - (self.offset + 1)] as usize]
             } else {
                 self.seq[self.offset]
             };
@@ -221,8 +222,12 @@ pub fn digital_nucleotides_to_original_sequences(
         cigar.push(next_val);
     }
 
+    // If reverse, compute reverse complement...
     if matches!(strand, Strand::Reverse) {
         query_seq.reverse();
+        for code in query_seq.iter_mut() {
+            *code = NUCLEOTIDE_TO_COMPLEMENT[*code as usize]
+        }
     }
 
     query_seq.shrink_to_fit();

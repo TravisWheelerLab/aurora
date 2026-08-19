@@ -169,6 +169,21 @@ pub const NUCLEOTIDE_ALPHABET_UTF8: [u8; 12] = [
     "Y".as_bytes()[0],
 ];
 
+pub const NUCLEOTIDE_TO_COMPLEMENT: [u8; 12] = [
+    T_DIGITAL, // A -> T
+    G_DIGITAL, // C -> G
+    C_DIGITAL, // G -> C
+    A_DIGITAL, // T -> A
+    M_DIGITAL, // K (G | T) -> M (A | C)
+    K_DIGITAL, // M (A | C) -> K (G | T)
+    N_DIGITAL, // N (A | C | G | T) -> N
+    Y_DIGITAL, // R (A | G) -> Y (C | T)
+    S_DIGITAL, // S (C | G) -> S (C | G)
+    W_DIGITAL, // W (A | T) -> W (A | T)
+    X_DIGITAL, // X (masked) -> X
+    R_DIGITAL, // Y (C | T) -> R (A | G)
+];
+
 pub const PLUS_UTF8: u8 = "+".as_bytes()[0];
 pub const FORWARD_SLASH_UTF8: u8 = "/".as_bytes()[0];
 pub const DASH_UTF8: u8 = "-".as_bytes()[0];
