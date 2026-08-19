@@ -776,6 +776,7 @@ impl AlignmentFormat for BPAFFormat {
         }
 
         // Check all query sequences have lengths...
+        // skip(1) skips the skip state...
         for (idx, query) in queries_new.values().enumerate().skip(1) {
             if !query_lengths.contains_key(&idx) {
                 return Err(anyhow!(

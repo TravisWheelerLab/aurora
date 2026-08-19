@@ -119,21 +119,21 @@ impl BlockGroup {
         let visual_start = first
             .annotations
             .iter()
-            .map(|a| first_bounds.0.saturating_sub(a.query_start))
+            .map(|a| align_start.saturating_sub(a.query_start))
             .min()
-            .unwrap_or(first_bounds.0);
+            .unwrap_or(align_start);
         let visual_end = last
             .annotations
             .iter()
-            .filter_map(|a| {
+            .map(|a| {
                 if let Some(&query_length) = query_lengths.get(&a.query_id) {
-                    Some(a.target_end + query_length.saturating_sub(a.query_end))
+                    a.target_end + query_length.saturating_sub(a.query_end)
                 } else {
-                    None
+                    a.target_end
                 }
             })
             .max()
-            .expect("no query length found");
+            .unwrap_or(align_end);
 
         let left = Block {
             id: id_fn(),
