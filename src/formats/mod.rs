@@ -3,7 +3,6 @@ mod caf;
 mod fasta;
 mod ultra;
 
-use crate::alignment::Strand;
 use crate::{alignment::AlignmentData, substitution_matrix::SubstitutionMatrix, util::VecMap};
 use anyhow::{self, Context};
 use std::fs::File;
