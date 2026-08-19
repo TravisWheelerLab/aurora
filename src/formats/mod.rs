@@ -3,6 +3,7 @@ mod caf;
 mod fasta;
 mod ultra;
 
+use crate::alignment::Strand;
 use crate::{alignment::AlignmentData, substitution_matrix::SubstitutionMatrix, util::VecMap};
 use anyhow::{self, Context};
 use std::fs::File;
@@ -38,6 +39,12 @@ fn normalize_alignment_data(alignment_data: &mut AlignmentData) {
     let mut tr_id = 1;
 
     alignment_data.target_groups.iter_mut().for_each(|g| {
+        for al in g.alignments.iter() {
+            if matches!(al.strand, Strand::Reverse) {
+                eprintln!("{}", al);
+            }
+        }
+
         g.alignments
             .sort_by(|a, b| a.target_start.cmp(&b.target_start));
 
@@ -70,6 +77,8 @@ fn normalize_alignment_data(alignment_data: &mut AlignmentData) {
             .max()
             .expect("Empty target group!")
     });
+
+    panic!("Intentional stop!")
 }
 
 macro_rules! _try_formats_helper {

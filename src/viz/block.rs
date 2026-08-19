@@ -125,15 +125,21 @@ impl BlockGroup {
         let visual_end = last
             .annotations
             .iter()
-            .map(|a| {
+            .filter_map(|a| {
                 if let Some(&query_length) = query_lengths.get(&a.query_id) {
-                    a.target_end + query_length.saturating_sub(a.query_end)
+                    Some(a.target_end + query_length.saturating_sub(a.query_end))
                 } else {
-                    a.target_end
+                    None
                 }
             })
             .max()
-            .unwrap_or(align_end);
+            .expect(
+                format!(
+                    "No query length for provided sequences: {:?}",
+                    last.annotations,
+                )
+                .as_str(),
+            );
 
         let left = Block {
             id: id_fn(),
