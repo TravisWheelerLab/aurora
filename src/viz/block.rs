@@ -119,40 +119,50 @@ impl BlockGroup {
         let visual_start = first
             .annotations
             .iter()
-            .map(|a| align_start.saturating_sub(a.query_start))
+            .map(|a| {
+                let to_left = if matches!(a.strand, Strand::Reverse) {
+                    if let Some(&query_length) = query_lengths.get(&a.query_id) {
+                        query_length - a.query_start
+                    } else {
+                        0
+                    }
+                } else {
+                    a.query_start
+                };
+                align_start.saturating_sub(to_left)
+            })
             .min()
             .unwrap_or(align_start);
         let visual_end = last
             .annotations
             .iter()
-            .filter_map(|a| {
-                if let Some(&query_length) = query_lengths.get(&a.query_id) {
-                    Some(a.target_end + query_length.saturating_sub(a.query_end))
+            .map(|a| {
+                let to_right = if matches!(a.strand, Strand::Reverse) {
+                    a.query_end
                 } else {
-                    None
-                }
+                    if let Some(&query_length) = query_lengths.get(&a.query_id) {
+                        query_length - a.query_end
+                    } else {
+                        0
+                    }
+                };
+                align_end + to_right
             })
             .max()
-            .expect(
-                format!(
-                    "No query length for provided sequences: {:?}",
-                    last.annotations,
-                )
-                .as_str(),
-            );
+            .unwrap_or(align_end);
 
         let left = Block {
             id: id_fn(),
             start: visual_start,
-            end: first_bounds.0,
+            end: align_start,
             query_length: None,
         };
 
         let right = Block {
             id: id_fn(),
-            start: last_bounds.1,
+            start: align_end,
             // TODO: need model length information to get this
-            end: last_bounds.1,
+            end: visual_end,
             query_length: None,
         };
 
