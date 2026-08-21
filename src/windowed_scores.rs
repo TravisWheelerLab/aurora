@@ -547,8 +547,8 @@ mod tests {
         let seq = build_target_seq_from_alignments(&ali, target_start, target_length);
 
         let correct = [
-            0, 0, 0, 0, 0, 14, 14, 14, 14, 14, 1, 1, 1, 1, 1, 14, 14, 14, 14, 14, 2, 2, 2, 2, 2,
-            14, 14, 14, 14, 14, 3, 3, 3, 3, 3,
+            0, 0, 0, 0, 0, 18, 18, 18, 18, 18, 1, 1, 1, 1, 1, 18, 18, 18, 18, 18, 2, 2, 2, 2, 2,
+            18, 18, 18, 18, 18, 3, 3, 3, 3, 3,
         ];
         assert_eq!(seq, correct);
     }
