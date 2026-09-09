@@ -1,6 +1,6 @@
 use crate::{
     alignment::{Alignment, AlignmentSequence, Strand, TargetGroup},
-    alphabet::{GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, UTF8_TO_DIGITAL_NUCLEOTIDE},
+    alphabet::NUCLEOTIDE_ALPHABET_UTF8,
     formats::{fasta, AlignmentFormat, FormatCheck, SeekableReader},
     sequence_store::SequenceStore,
     uleb::{self, Cigar, CigarIterator, CigarSegment},
@@ -36,8 +36,6 @@ pub enum BPAFError {
     InvalidCigar(u64, u64),
     #[error("failed to decode string entry due to: {0}")]
     UTF8Error(#[from] FromUtf8Error),
-    #[error("found invalid nucleotide code in sequence: {0}")]
-    InvalidNucleotide(char),
 }
 
 #[derive(Debug)]
@@ -227,6 +225,16 @@ macro_rules! read_le_from_array {
             Ok(<$int_type>::from_le_bytes(arr_bytes))
         }()
     };
+    ($array:ident, $offset:expr, $int_type:ty) => {
+        || -> Result<$int_type, BPAFError> {
+            const SIZE: usize = size_of::<$int_type>();
+            let end = $offset + SIZE;
+            let arr_bytes: [u8; SIZE] = $array[$offset..end]
+                .try_into()
+                .map_err(|_e| BPAFError::InvalidField($array.len() as u64, end as u64))?;
+            Ok(<$int_type>::from_le_bytes(arr_bytes))
+        }()
+    };
 }
 
 fn parse_ulebs<const NUM: usize>(
@@ -342,31 +350,69 @@ fn parse_string_table_record(entry: ULEBEntry) -> Result<String, BPAFError> {
 }
 
 pub struct SequenceEntry {
-    pub sequence_id: u64,
-    pub start: u64,
-    pub remaining: u64,
+    pub sequence_id: usize,
     pub sequence: Vec<u8>,
 }
 
-fn parse_sequence_record(entry: ULEBEntry) -> Result<SequenceEntry, BPAFError> {
-    let ([sequence_id, start, remaining], bytes_read) =
-        parse_ulebs(&mut entry.data.iter().copied())?;
-    let sequence: Result<Vec<u8>, BPAFError> = entry.data[bytes_read..]
-        .iter()
-        .map(|byte| {
-            UTF8_TO_DIGITAL_NUCLEOTIDE
-                .get(byte)
-                .copied()
-                .filter(|&v| !matches!(v, GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL))
-                .ok_or_else(|| BPAFError::InvalidNucleotide(*byte as char))
-        })
-        .collect();
+fn parse_sequence_record(index: usize, entry: ULEBEntry) -> Result<SequenceEntry, BPAFError> {
+    let data = &entry.data;
+
+    let mut data_offset = 0;
+
+    let run_count = read_le_from_array!(data, data_offset, u32)?;
+    let dna_ends = (0..run_count as usize)
+        .map(|_v| read_le_from_array!(data, data_offset, u32))
+        .collect::<Result<Vec<u32>, BPAFError>>()?;
+    let data_ends = (0..run_count as usize)
+        .map(|_v| read_le_from_array!(data, data_offset, u32))
+        .collect::<Result<Vec<u32>, BPAFError>>()?;
+
+    // Skip masks, aurora doesn't care about them...
+    let mask_run_count = read_le_from_array!(data, data_offset, u32)?;
+    data_offset += mask_run_count as usize * 2 * size_of::<u32>();
+
+    let two_bit_length = dna_ends
+        .get(data_ends.len() & 0xFFFFFFFE)
+        .copied()
+        .unwrap_or(0) as usize;
+    let dna_length = dna_ends.last().copied().unwrap_or(0);
+
+    let two_bit_byte_length = two_bit_length / 4 + (two_bit_length % 4 > 0) as usize;
+    let two_bit_seq = &data[data_offset..data_offset + two_bit_byte_length];
+    let four_bit_seq = &data[data_offset + two_bit_byte_length..];
+
+    let mut run_offset = 0;
+    let mut data_offset_2 = 0;
+    let mut data_offset_4 = 0;
+    let mut sequence = vec![0u8; dna_length as usize];
+
+    for (i, (&run_end, &run_data_end)) in data_ends.iter().zip(data_ends.iter()).enumerate() {
+        if i % 2 == 0 {
+            let data_run_length = run_data_end - data_offset_2;
+
+            for offset in run_offset..run_data_end {
+                let idx = data_offset_2 + offset % data_run_length;
+                let bit = (two_bit_seq[(idx / 4) as usize] >> (6 - ((idx % 4) * 2))) & 0b11;
+                sequence[offset as usize] = NUCLEOTIDE_ALPHABET_UTF8[bit as usize];
+            }
+            run_offset = run_end;
+            data_offset_2 = run_data_end;
+        } else {
+            let data_run_length = run_data_end - data_offset_4;
+
+            for offset in run_offset..run_data_end {
+                let idx = data_offset_4 + offset % data_run_length;
+                let bit = (four_bit_seq[(idx / 2) as usize] >> (4 - ((idx % 2) * 4))) & 0b1111;
+                sequence[offset as usize] = NUCLEOTIDE_ALPHABET_UTF8[bit as usize];
+            }
+            run_offset = run_end;
+            data_offset_4 = run_data_end;
+        }
+    }
 
     Ok(SequenceEntry {
-        sequence_id,
-        start,
-        remaining,
-        sequence: sequence?,
+        sequence_id: index,
+        sequence,
     })
 }
 
@@ -544,7 +590,8 @@ impl<R: SeekableReader> BPAFReader<R> {
     ) -> Option<impl Iterator<Item = Result<SequenceEntry, BPAFError>> + '_> {
         (self.header.flags & bpaf_feature_flags::INCLUDES_SEQUENCES != 0).then(|| {
             self.read_table(3)
-                .map(|r| r.map(parse_sequence_record).flatten())
+                .enumerate()
+                .map(|(i, r)| r.map(|v| parse_sequence_record(i, v)).flatten())
         })
     }
 
@@ -553,7 +600,8 @@ impl<R: SeekableReader> BPAFReader<R> {
     ) -> Option<impl Iterator<Item = Result<SequenceEntry, BPAFError>> + '_> {
         (self.header.flags & bpaf_feature_flags::INCLUDES_SEQUENCES != 0).then(|| {
             self.read_table(4)
-                .map(|r| r.map(parse_sequence_record).flatten())
+                .enumerate()
+                .map(|(i, r)| r.map(|v| parse_sequence_record(i, v)).flatten())
         })
     }
 
@@ -579,12 +627,8 @@ impl FromIterator<SequenceEntry> for SequenceStore {
     fn from_iter<T: IntoIterator<Item = SequenceEntry>>(iter: T) -> Self {
         let mut seq_store = SequenceStore::new();
 
-        for entry in iter {
-            seq_store.add_sequence(
-                entry.sequence_id as usize,
-                entry.start as usize,
-                &entry.sequence,
-            );
+        for (seq_id, entry) in iter.into_iter().enumerate() {
+            seq_store.add_sequence(seq_id, 0, &entry.sequence);
         }
 
         seq_store
@@ -599,22 +643,18 @@ fn map_entry_id(
     value: Result<SequenceEntry, BPAFError>,
 ) -> Result<SequenceEntry, anyhow::Error> {
     let unwrapped_value = value?;
-    let seq_name = old_map
-        .get(unwrapped_value.sequence_id as usize)
-        .with_context(|| {
-            format!(
-                "Sequence id: {} is out of bounds!",
-                unwrapped_value.sequence_id
-            )
-        })?;
+    let seq_name = old_map.get(unwrapped_value.sequence_id).with_context(|| {
+        format!(
+            "Sequence id: {} is out of bounds!",
+            unwrapped_value.sequence_id
+        )
+    })?;
     let new_seq_id = new_map
         .key(seq_name)
         .with_context(|| format!("Can't find sequence '{}' in provided sequences!", seq_name))?;
 
     Ok(SequenceEntry {
-        sequence_id: new_seq_id as u64,
-        start: unwrapped_value.start,
-        remaining: unwrapped_value.remaining,
+        sequence_id: new_seq_id,
         sequence: unwrapped_value.sequence,
     })
 }
@@ -732,12 +772,7 @@ impl AlignmentFormat for BPAFFormat {
             Some(iter) => Result::<SequenceStore, anyhow::Error>::from_iter(iter.map(|r| {
                 let r_new = map_entry_id(&queries_new, &queries_old, r);
                 if let Ok(v) = r_new.as_ref() {
-                    query_lengths.insert(
-                        v.sequence_id as usize,
-                        (v.start.saturating_sub(1)) as usize
-                            + v.sequence.len()
-                            + v.remaining as usize,
-                    );
+                    query_lengths.insert(v.sequence_id, v.sequence.len());
                 }
                 r_new
             }))?,
