@@ -260,19 +260,19 @@ twobitplus format. Unlike the rest of the BPAF format, all indexes are **0-based
 ULEBs are not used to allow for fast random access while sequence is still on disk
 (without needing to load the index fields into memory):
 
-| Field          | Type                               | Meaning                                                                                                                                                                                  |
-| -------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `runCount`     | `uint32`                           | number of runs in this sequence (ascending). Starts with 2-bit, then alternates back and forth between 2 and 4 bit.                                                                      |
-| `runEnds`      | `runCount` × `uint32`              | end of each run (ascending). The next run starts at the current end index. The first run starts at 0.                                                                                    |
-| `runDataEnds`  | `runCount` × `uint32`              | end of the base data for this run (evens are ascending and from 2-bit sequence, odds are ascending 4-bit), Next run starts at the end of the prior run. Both first data runs start at 0. |
-| `maskCount`    | `uint32`                           | number of soft-mask (lower-case) runs.                                                                                                                                                   |
-| `maskStarts`   | `maskCount` × `uint32`             | start of each mask run (ascending).                                                                                                                                                      |
-| `maskSizes`    | `maskCount` × `uint32`             | length of each mask run.                                                                                                                                                                 |
-| `twoBitBases`  | ⌈`twoBitBaseCount` / 4⌉ × `uint8`  | 2 bits/base (§6.2.1).                                                                                                                                                                    |
-| `fourBitBases` | ⌈`fourBitBaseCount` / 2⌉ × `uint8` | 4 bits/base (§6.2.2).                                                                                                                                                                    |
+| Field          | Type                                         | Meaning                                                                                                                                                                                  |
+| -------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runCount`     | `uint32`                                     | number of runs in this sequence (ascending). Starts with 2-bit, then alternates back and forth between 2 and 4 bit.                                                                      |
+| `runEnds`      | `runCount` × `uint32`                        | end of each run (ascending). The next run starts at the current end index. The first run starts at 0.                                                                                    |
+| `runDataEnds`  | `runCount` × `uint32`                        | end of the base data for this run (evens are ascending and from 2-bit sequence, odds are ascending 4-bit), Next run starts at the end of the prior run. Both first data runs start at 0. |
+| `maskCount`    | `uint32`                                     | number of soft-mask (lower-case) runs.                                                                                                                                                   |
+| `maskStarts`   | `maskCount` × `uint32`                       | start of each mask run (ascending).                                                                                                                                                      |
+| `maskSizes`    | `maskCount` × `uint32`                       | length of each mask run.                                                                                                                                                                 |
+| `twoBitBases`  | ⌈`runDataEnds[lastEvenIndex]` / 4⌉ × `uint8` | 2 bits/base (§6.2.1).                                                                                                                                                                    |
+| `fourBitBases` | ⌈`runDataEnds[lastOddIndex]` / 2⌉ × `uint8`  | 4 bits/base (§6.2.2).                                                                                                                                                                    |
 
-The length of the data for a run (`runDataStarts[n+2] - runDataStarts[n]`) can be shorter than the actual run length (`runStarts[n+1] - runStarts[n]`), in which case the seqeunce should be repeated again from the start.
-Because of this, this format saves a large number of bytes for long sections with the same letter. We still store softmask areas seperately.
+The length of the data for a run (`runDataStarts[n] - runDataStarts[n-2]`) can be shorter than the actual run length (`runStarts[n] - runStarts[n-1]`), in which case the seqeunce should be repeated again from the start.
+Encoders should only use this feature to encode repeat runs of N's.
 
 #### 6.2.1 Two-bit Encoding
 
@@ -286,8 +286,7 @@ T = 11
 ```
 
 Positions covered by an IUPAC or 4-bit block are excluded. Each 2-bit run is stored contiguously after the other.
-Positions covered by a mask-block decode to lower case. The two bit data can be shorter than the provided run length.
-If so, the data should be repeated until the end of a run is reached.
+Positions covered by a mask-block decode to lower case.
 
 #### 6.2.2 Four-bit IUPAC Encoding
 
@@ -315,20 +314,12 @@ Y = 1111
 This only stores letters within the IUPAC runs. Each run is stored contiguously after
 the other in the 4-bit sequence.
 
-This should be applied to the original sequence by **overwriting** characters
-in the original 2-bit sequence.
+This should be applied to the original sequence by **inserting** characters
+after each 2-bit run.
 
 The IUPAC data for a run can be shorter than the actual length of the run. If this
 happens, then the run data should be repeated until the end of the run is reached.
-For example, if a run is 30 characters but the run data is `NKSY`, then the
-reconstructed sequence is:
-
-```
-NKSYNKSYNKSYNKSYNKSYNKSYNKSYNK
-```
-
-So, for example, to create an N-block of length 500, you can create an IUPAC run
-of length 500 with a single data character `N`.
+This technique should only be used for encoding sequences of all N's in IUPAC characters.
 
 ### 6.3 Footer (13 bytes)
 
