@@ -1,3 +1,4 @@
+mod blastxml;
 mod bpaf;
 mod caf;
 mod fasta;
@@ -181,7 +182,7 @@ pub fn load_alignments(
         primary_reader,
         secondary_reader,
         substitution_matrices,
-        [bpaf::BPAFFormat, caf::CAFFormat]
+        [bpaf::BPAFFormat, caf::CAFFormat, blastxml::BlastXMLFormat]
     )?;
 
     if let Some(ultra_file) = ultra_file {
