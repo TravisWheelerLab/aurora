@@ -1,25 +1,26 @@
-use std::fs;
+use std::fmt::Display;
 
 use itertools::Itertools;
 
 use crate::{
-    alignment::AlignmentData,
+    alignment::{AlignmentData, Strand},
     annotation::{AmbiguousAnnotation, SimpleAnnotation},
-    assembly::AssemblyGraph,
+    assembly::gather_join_statistics,
     chunks::ProximityGroup,
     confidence::confidence,
     history_tracing::{
-        backtrace_histories, history_viterbi_on_segments, AnnotatedRange, History,
-        RefinedTraceSegment,
+        backtrace_histories, history_viterbi_on_segments, History, RefinedTraceSegment,
     },
+    join_estimation::{JoinEstimator, JoinStatisticsCollector},
     matrix::{Matrix, MatrixDef},
     score_params::{approximate_ideal_skip_state_score, ScoreParams},
-    segments::segments_from_matrix_trace,
+    segments::{assemble_and_link_segments, segments_from_matrix_trace, InitialSegments},
     support::windowed_confidence,
-    viterbi::{trace_segments, traceback, viterbi_collapsed},
+    trace_statistics::TraceStatistics,
+    viterbi::{trace_segments, traceback, viterbi_collapsed, TraceSegment},
     viz::{
-        debug::{dump_debug_history_info, dump_final_trace_statistics, dump_history_scores},
-        AdjudicationSodaData, AdjudicationSodaDataArgs,
+        debug::{dump_debug_history_info, dump_final_trace_statistics},
+        AdjudicationSodaDataArgs, RegionAdjudicationSodaWriter,
     },
     windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
     AuroraArgs,
@@ -28,7 +29,6 @@ use crate::{
 pub fn to_annotations(
     proximity_group: &ProximityGroup,
     alignment_data: &AlignmentData,
-    confidence_matrix: &Matrix<f64>,
     trace_segments: &[RefinedTraceSegment],
     region_idx: usize,
 ) -> Vec<AmbiguousAnnotation> {
@@ -36,16 +36,7 @@ pub fn to_annotations(
         .iter()
         .filter(|v| v.annotated.iter().any(|a| a.row_idx != 0))
         .map(|s| {
-            let confidence = s
-                .annotated
-                .iter()
-                .map(|a| {
-                    (a.col_start..=a.col_end)
-                        .map(|col_idx| confidence_matrix.get(a.row_idx, col_idx))
-                        .sum::<f64>()
-                        / (a.col_end - a.col_start + 1) as f64
-                })
-                .sum::<f64>()
+            let confidence = s.annotated.iter().map(|a| a.avg_confidence).sum::<f64>()
                 / (s.annotated.len().max(1) as f64);
 
             AmbiguousAnnotation {
@@ -71,7 +62,7 @@ pub fn to_annotations(
                                         a.row_idx - proximity_group.alignments.len() - 1;
                                     let repeat = &proximity_group.tandem_repeats[tandem_repeat_idx];
                                     format!(
-                                        "({}:{})#tandem repeat",
+                                        "({}:{})#tandem-repeat",
                                         repeat.period, repeat.consensus_pattern,
                                     )
                                 }
@@ -80,17 +71,20 @@ pub fn to_annotations(
                                     .get(a.query_id.expect("Annotation has no query id!"))
                                     .clone(),
                             },
-                            query_start: confidence_matrix
-                                .consensus_position(a.row_idx, a.col_start),
-                            query_end: confidence_matrix.consensus_position(a.row_idx, a.col_end),
-                            strand: confidence_matrix.strand_of_row(a.row_idx),
+                            query_start: a.query_start,
+                            query_end: a.query_end,
+                            strand: if a.row_idx > 0
+                                && a.row_idx <= proximity_group.alignments.len()
+                            {
+                                proximity_group.alignments[a.row_idx - 1].strand
+                            } else {
+                                Strand::Forward
+                            },
                             kimura80: if a.row_idx > 0
                                 && a.row_idx <= proximity_group.alignments.len()
                             {
-                                proximity_group.alignments[a.row_idx - 1].kimura80(
-                                    confidence_matrix.consensus_position(a.row_idx, a.col_start),
-                                    confidence_matrix.consensus_position(a.row_idx, a.col_end),
-                                )
+                                proximity_group.alignments[a.row_idx - 1]
+                                    .kimura80(a.query_start, a.query_end)
                             } else {
                                 0.0
                             },
@@ -121,22 +115,52 @@ fn get_history_lengths(history: &History) -> Vec<usize> {
         .collect_vec()
 }
 
-pub fn run_pipeline(
+fn get_active_columns<T: Copy + Default + Display>(matrix: &Matrix<T>) -> Vec<(usize, usize)> {
+    let mut active_cols = Vec::new();
+    let mut prior_start = None;
+    let mut prior_end: usize = 0;
+    let cols = matrix.initial_active_cols();
+
+    for &col in cols.iter() {
+        if let Some(val) = prior_start {
+            if prior_end + 1 != col {
+                active_cols.push((val, prior_end));
+                prior_start = Some(col);
+            }
+
+            prior_end = col;
+        } else {
+            prior_start = Some(col);
+            prior_end = col;
+        }
+    }
+
+    if let Some(val) = prior_start {
+        active_cols.push((val, prior_end));
+    }
+
+    active_cols
+}
+
+pub struct NaiveTraceResults<T: JoinStatisticsCollector> {
+    pub trace_segments: Vec<TraceSegment>,
+    pub segments: InitialSegments,
+    pub score_params: ScoreParams,
+    pub alignment_confidences: Vec<f64>,
+    pub active_columns: Vec<(usize, usize)>,
+    pub query_join_statistics: Vec<(usize, T)>,
+    pub viz_writer: Option<RegionAdjudicationSodaWriter>,
+    pub region_index: usize,
+}
+
+pub fn run_naive_trace<T: JoinStatisticsCollector>(
     proximity_group: &ProximityGroup,
     alignment_data: &AlignmentData,
     region_idx: usize,
-    mut args: AuroraArgs,
-) -> Vec<AmbiguousAnnotation> {
+    mut region_viz_writer: Option<RegionAdjudicationSodaWriter>,
+    args: &AuroraArgs,
+) -> NaiveTraceResults<T> {
     let annot_args = &args.annotation_args;
-
-    if args.visualization_args.viz {
-        args.visualization_args
-            .viz_output_path
-            .push(format!("{}", region_idx));
-        fs::create_dir_all(&args.visualization_args.viz_output_path).unwrap();
-    }
-
-    let vis_args = &args.visualization_args;
 
     let score_params = ScoreParams::new(
         proximity_group.alignments.len(),
@@ -153,7 +177,7 @@ pub fn run_pipeline(
     let target_length = target_end - target_start + 1;
 
     let target_seq =
-        build_target_seq_from_alignments(proximity_group.alignments, target_start, target_end);
+        build_target_seq_from_alignments(proximity_group.alignments, target_start, target_length);
 
     let background = Background::new(
         &target_seq,
@@ -180,9 +204,11 @@ pub fn run_pipeline(
     .unwrap();
 
     confidence(&mut confidence_matrix);
-    let (_confidence_avg_by_id, _confidence_by_id) = windowed_confidence(&mut confidence_matrix);
+    let confidence_by_row = windowed_confidence(
+        &mut confidence_matrix,
+        args.annotation_args.score_window_size,
+    );
 
-    let assembly_graph = AssemblyGraph::new(proximity_group, &score_params, &args.annotation_args);
     let segments;
     let simple_trace;
 
@@ -210,135 +236,121 @@ pub fn run_pipeline(
             &simple_trace,
             &confidence_matrix,
             &score_params,
-            &assembly_graph,
             &args.annotation_args,
         );
     }
 
-    let history_lengths;
-    let refined_trace_segments;
-
-    if !vis_args.disable_tracing {
-        let history = history_viterbi_on_segments(
-            &segments,
-            &score_params,
-            &assembly_graph,
-            args.annotation_args.max_history_depth,
-            args.annotation_args.max_histories_per_segment,
-            args.annotation_args.min_relative_history_score,
-        );
-
-        history_lengths = get_history_lengths(&history);
-
-        if args.visualization_args.debug {
-            dump_debug_history_info(
-                &history,
-                &segments,
-                proximity_group.target_start,
-                &history_lengths,
-                vis_args.viz_output_path.join("history_info.csv"),
-            )
-            .map_err(|_| eprintln!("Unable to save debug history info!"))
-            .ok();
-            dump_history_scores(
-                &history,
-                vis_args.viz_output_path.join("history_scores.txt"),
-            )
-            .map_err(|_| eprintln!("Unable to save history scores!"))
-            .ok();
+    if let Some(viz_writer) = region_viz_writer.as_mut() {
+        if args.visualization_args.viz_enable_scores {
+            viz_writer
+                .write_confidences(&confidence_matrix)
+                .expect("Unable to write confidences!!!");
         }
-
-        refined_trace_segments = backtrace_histories(&segments, &history, region_idx);
-
-        if args.visualization_args.debug {
-            dump_final_trace_statistics(
-                &history,
-                &segments,
-                &refined_trace_segments,
-                vis_args.viz_output_path.join("final_trace_stats.csv"),
-            )
-            .map_err(|_| eprintln!("Unable to save final trace statistics!"))
-            .ok();
-        }
-    } else {
-        refined_trace_segments = simple_trace
-            .iter()
-            .enumerate()
-            .map(|(i, v)| RefinedTraceSegment {
-                annotated: vec![AnnotatedRange {
-                    query_id: Some(v.query_id),
-                    row_idx: v.row_idx,
-                    col_start: v.col_start,
-                    col_end: v.col_end,
-                }],
-                join_index: i,
-                score: 0.0,
-                segment: i,
-            })
-            .collect_vec();
-        history_lengths = vec![0; segments.len()];
     }
 
-    // if we're going to produce visualizations, this will
-    // keep track of all of the data needed to do so
-    let mut soda_data = AdjudicationSodaData::new(AdjudicationSodaDataArgs {
-        group: proximity_group,
-        confidence_matrix: &confidence_matrix,
-        alignment_data,
-        target_seq: &target_seq,
-        trace: &refined_trace_segments,
-        segments: &segments,
-        history_counts: &history_lengths,
-        links: &assembly_graph,
-        dump_confidences: args.visualization_args.viz_enable_scores,
-        args: &args,
-    });
-
-    // Grab the annotations...
-    let mut annotations: Vec<AmbiguousAnnotation> = to_annotations(
+    let query_join_statistics = gather_join_statistics(
         proximity_group,
-        alignment_data,
-        &confidence_matrix,
-        &refined_trace_segments,
-        region_idx,
+        &segments,
+        &alignment_data.query_lengths,
+        &args.annotation_args,
     );
 
-    if vis_args.viz {
-        // TODO: this is kind of awkward
-        soda_data.set_annotations(annotations.clone());
+    NaiveTraceResults {
+        trace_segments: simple_trace,
+        segments,
+        score_params,
+        alignment_confidences: confidence_by_row,
+        active_columns: get_active_columns(&confidence_matrix),
+        query_join_statistics,
+        viz_writer: region_viz_writer,
+        region_index: region_idx,
+    }
+}
 
-        let out_path = vis_args.viz_output_path.join("index.html");
-        soda_data.write(out_path);
+pub fn run_history_trace<T: JoinEstimator, S: JoinStatisticsCollector>(
+    proximity_group: &ProximityGroup,
+    alignment_data: &AlignmentData,
+    trace_statistics: &TraceStatistics<T>,
+    naive_trace: &mut NaiveTraceResults<S>,
+    args: &AuroraArgs,
+) -> Vec<AmbiguousAnnotation> {
+    let vis_args = &args.visualization_args;
+
+    let (segments, assembly_graph) = assemble_and_link_segments(
+        proximity_group,
+        &mut naive_trace.segments,
+        &naive_trace.trace_segments,
+        &trace_statistics.region_statistics[naive_trace.region_index],
+        &trace_statistics.query_statistics,
+        &naive_trace.score_params,
+        &args.annotation_args,
+        &alignment_data.query_lengths,
+    );
+
+    let history = history_viterbi_on_segments(
+        segments,
+        &naive_trace.score_params,
+        &assembly_graph,
+        args.annotation_args.max_history_depth,
+        args.annotation_args.max_histories_per_segment,
+        args.annotation_args.min_relative_history_score,
+    );
+
+    let history_lengths = get_history_lengths(&history);
+
+    if args.visualization_args.debug {
+        dump_debug_history_info(
+            &history,
+            segments,
+            proximity_group.target_start,
+            &history_lengths,
+            vis_args.viz_output_path.join("history_info.csv"),
+        )
+        .map_err(|_| eprintln!("Unable to save debug history info!"))
+        .ok();
     }
 
-    if !vis_args.viz_constraints.is_empty() {
-        let target_name = alignment_data
-            .target_name_map
-            .get(proximity_group.target_id)
-            .clone();
+    let refined_trace_segments = backtrace_histories(segments, &history, naive_trace.region_index);
 
-        let target_start = proximity_group.target_start;
-        let target_end = proximity_group.target_end;
-
-        let constraints = vis_args
-            .viz_constraints
-            .iter()
-            .filter(|c| c.target_name == target_name)
-            .filter(|c| c.target_start < target_end && c.target_end > target_start)
-            .collect_vec();
-
-        constraints.iter().for_each(|constraint| {
-            let out_path = vis_args.viz_output_path.parent().unwrap().join(format!(
-                "{}-{}-{}.html",
-                constraint.target_name, constraint.target_start, constraint.target_end
-            ));
-            soda_data.constrain(constraint);
-            soda_data.write(out_path);
-        });
+    if args.visualization_args.debug {
+        dump_final_trace_statistics(
+            &history,
+            segments,
+            &refined_trace_segments,
+            vis_args.viz_output_path.join("final_trace_stats.csv"),
+        )
+        .map_err(|_| eprintln!("Unable to save final trace statistics!"))
+        .ok();
     }
 
-    annotations.sort_by_key(|r| r.annotations.iter().map(|a| a.target_start).min());
-    annotations.retain(|r| r.annotations.iter().any(|a| a.query_name != "skip"));
+    // Grab the annotations...
+    let annotations: Vec<AmbiguousAnnotation> = to_annotations(
+        proximity_group,
+        alignment_data,
+        &refined_trace_segments,
+        naive_trace.region_index,
+    );
+
+    if let Some(viz_writer) = naive_trace.viz_writer.as_mut() {
+        viz_writer
+            .write(AdjudicationSodaDataArgs {
+                group: proximity_group,
+                alignment_confidences: &naive_trace.alignment_confidences,
+                active_columns: &naive_trace.active_columns,
+                alignment_data,
+                annotations: &annotations,
+                target_seq: &build_target_seq_from_alignments(
+                    proximity_group.alignments,
+                    proximity_group.target_start,
+                    proximity_group.target_end - proximity_group.target_start + 1,
+                ),
+                trace: &refined_trace_segments,
+                segments,
+                history_counts: &get_history_lengths(&history),
+                links: &assembly_graph,
+            })
+            .expect("Unable to write visualization!");
+    }
 
     annotations
 }

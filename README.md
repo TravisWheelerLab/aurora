@@ -1,3 +1,8 @@
+<span align="center">
+<p align="center">
+    <img style="width: 5em; height: 5em;" src="fixtures/soda/icon-opt.svg" />
+</p>
+
 # aurora
 
 AURORA:
@@ -7,6 +12,8 @@ Regions and
 Output
 Reliable
 Annotations
+
+</span>
 
 ## About
 
@@ -46,3 +53,4 @@ See `LICENSE` for details.
 ## Authors
 
 Jack Roddy - jroddy@arizona.edu
+Isaac Robinson - isaacrobinson@arizona.edu

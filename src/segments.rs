@@ -1,9 +1,17 @@
 use core::f64;
-use std::{cmp::Ordering, fmt::Debug, iter::Fuse};
+use std::{cmp::Ordering, collections::HashMap, fmt::Debug, iter::Fuse};
 
 use crate::{
-    assembly::AssemblyGraph, chunks::ProximityGroup, matrix::Matrix, score_params::ScoreParams,
-    viterbi::TraceSegment, AnnotationArgs,
+    alignment::{Alignment, Strand},
+    annotation::AmbiguousAnnotation,
+    assembly::SegmentAssemblyGraph,
+    chunks::ProximityGroup,
+    join_estimation::JoinEstimator,
+    matrix::Matrix,
+    score_params::ScoreParams,
+    trace_statistics::{QueryStatistics, RegionStatistics},
+    viterbi::TraceSegment,
+    AnnotationArgs,
 };
 use itertools::Itertools;
 
@@ -53,10 +61,15 @@ pub enum BlockType {
 pub struct Block {
     pub row_idx: usize,
     pub block_type: BlockType,
+    pub strand: Strand,
     pub query_id: Option<usize>,
-    pub target_start: usize,
-    pub target_end: usize,
-    pub confidence: f64,
+    pub col_start: usize,
+    pub col_end: usize,
+    pub query_start: usize,
+    pub query_end: usize,
+    pub avg_confidence: f64,
+    pub alignment_score: f64,
+    pub kimura80: f64,
     pub can_join_up_to: usize,
 }
 
@@ -87,6 +100,52 @@ impl Block {
     pub fn to_comparable(&self) -> (Option<usize>, usize) {
         (self.query_id, self.row_idx)
     }
+
+    pub fn from_alignment(
+        alignment: &Alignment,
+        group_start: usize,
+        row: usize,
+        confidence: f64,
+        score: f64,
+    ) -> Self {
+        Self {
+            row_idx: row,
+            block_type: BlockType::Alignment,
+            strand: alignment.strand,
+            query_id: Some(alignment.query_id),
+            col_start: alignment.target_start.saturating_sub(group_start),
+            col_end: alignment.target_end.saturating_sub(group_start),
+            query_start: alignment.query_start,
+            query_end: alignment.query_end,
+            avg_confidence: confidence,
+            alignment_score: score,
+            kimura80: alignment.kimura80(alignment.query_start, alignment.query_end),
+            can_join_up_to: 0,
+        }
+    }
+
+    pub fn from_annotation(
+        annotation: &AmbiguousAnnotation,
+        selected_index: usize,
+        row: usize,
+    ) -> Self {
+        let simple_annot = &annotation.annotations[selected_index];
+
+        Self {
+            row_idx: row,
+            block_type: BlockType::Alignment,
+            strand: simple_annot.strand,
+            query_id: Some(simple_annot.query_id),
+            col_start: simple_annot.target_start,
+            col_end: simple_annot.target_end,
+            query_start: simple_annot.query_start,
+            query_end: simple_annot.query_end,
+            avg_confidence: annotation.confidence,
+            alignment_score: annotation.confidence.ln(),
+            kimura80: simple_annot.kimura80,
+            can_join_up_to: 0,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -98,8 +157,8 @@ pub struct Segment {
     pub blocks: Vec<Block>,
 }
 
-// type SegmentedMatrix = Vec<Segment>;
 pub type SegmentedMatrix = Vec<Segment>;
+pub type SegmentedMatrixView<'a> = &'a [Segment];
 
 #[derive(Copy, Clone, Debug)]
 enum MergeEntry<T> {
@@ -170,6 +229,7 @@ pub struct MergeIterator<
     val1: MergeEntry<I::Item>,
     val2: MergeEntry<I::Item>,
     prior_val: MergeEntry<I::Item>,
+    only_unique: bool,
     comparator: F,
 }
 
@@ -178,13 +238,14 @@ impl<I: Iterator, J: Iterator<Item = I::Item>, F: Fn(&I::Item, &I::Item) -> Orde
 where
     I::Item: Copy,
 {
-    pub fn new(iter1: I, iter2: J, comparator: F) -> Self {
+    pub fn new(iter1: I, iter2: J, comparator: F, only_unique: bool) -> Self {
         Self {
             iter1: iter1.fuse(),
             iter2: iter2.fuse(),
             val1: MergeEntry::Start,
             val2: MergeEntry::Start,
             prior_val: MergeEntry::Start,
+            only_unique,
             comparator,
         }
     }
@@ -194,6 +255,22 @@ where
             (MergeEntry::Some(val1), MergeEntry::Some(val2)) => (self.comparator)(val1, val2),
             (val1, val2) => val1.cmp(val2),
         }
+    }
+}
+
+pub struct InitialSegments {
+    segments: SegmentedMatrix,
+    initial_trace_scores: Vec<f64>,
+}
+
+#[allow(dead_code)]
+impl InitialSegments {
+    pub fn view_segments(&self) -> SegmentedMatrixView<'_> {
+        return &self.segments;
+    }
+
+    pub fn len(&self) -> usize {
+        self.segments.len()
     }
 }
 
@@ -224,6 +301,10 @@ where
                 next_val = self.val2;
                 self.val2 = self.iter2.next().into();
             }
+
+            if !self.only_unique {
+                break;
+            }
         }
 
         self.prior_val = next_val;
@@ -250,7 +331,7 @@ pub fn unique_merging_iterator<I: Iterator, J: Iterator<Item = I::Item>>(
 where
     I::Item: Copy + Ord,
 {
-    MergeIterator::new(list1, list2, |a, b| a.cmp(b))
+    MergeIterator::new(list1, list2, |a, b| a.cmp(b), true)
 }
 
 #[derive(Debug)]
@@ -261,13 +342,12 @@ struct SegmentInfo {
     max_resolution_segment: usize,
 }
 
-fn compute_segment_score_bounds(
+fn finalize_segments(
     segments: &mut SegmentedMatrix,
     initial_trace: &[TraceSegment],
     initial_trace_scores: &[f64],
     score_params: &ScoreParams,
-    assembly_graph: &AssemblyGraph,
-    alignment_segment_bounds: &[Option<(usize, usize)>],
+    assembly_graph: &SegmentAssemblyGraph,
 ) {
     // There is some floating point error introduced for the absolute score bound...
     let epsilon = 1e-2;
@@ -275,9 +355,14 @@ fn compute_segment_score_bounds(
     let mut visited_segment_info = vec![false; segments.len()];
     let mut segments_info: Vec<SegmentInfo> = Vec::with_capacity(segments.len());
 
+    // Allow each alignment block to be bounded by the farthest segment it can be linked to...
+    for ((first, second), edge) in assembly_graph.link_graph.iter() {
+        let b = &mut segments[first.0].blocks[edge.first_sparse_row];
+        b.can_join_up_to = b.can_join_up_to.max(second.0);
+    }
+
     for (s_idx, seg) in segments.iter_mut().enumerate() {
         // Used for gathering segment info, this is used for computing a lower bound on valid history scores...
-        let mut farthest_back = s_idx;
         let mut max_block_score = f64::NEG_INFINITY;
         let prior_score = segments_info
             .last()
@@ -291,37 +376,23 @@ fn compute_segment_score_bounds(
             0.0
         };
 
-        // Get the farthest back segment this segment can possibly join to...
         for b_idx in 0..seg.blocks.len() {
             let block = &seg.blocks[b_idx];
-            max_block_score = max_block_score.max(block.confidence);
-
-            if let Some((first, _)) = alignment_segment_bounds[block.row_idx] {
-                if block.row_idx == 0 || s_idx != first {
-                    continue;
-                }
-            } else {
-                // This branch should basically be impossible as the loop pretty much makes sure this is a actual block that got kept.
-                continue;
-            }
-            // Skip the skip state and tandem repeats...
-            if let BlockType::TandemRepeat | BlockType::Skip = block.block_type {
-                continue;
-            }
-
-            for e in assembly_graph.link_graph[block.row_idx - 1].iter() {
-                if let Some((_, last)) = alignment_segment_bounds[e.edge_to + 1] {
-                    farthest_back = farthest_back.min(last);
-                }
-            }
+            max_block_score = max_block_score.max(block.alignment_score);
         }
 
         segments_info.push(SegmentInfo {
-            can_join_back_to: farthest_back,
+            can_join_back_to: s_idx, // Placeholder value...
             max_block_score,
             first_pass_score: prior_score + transition_score + initial_trace_scores[s_idx],
             max_resolution_segment: s_idx, // This is resolved in the next step...
         });
+    }
+
+    // Compute farthest back segment each segment can be joined to....
+    for (first, second) in assembly_graph.link_graph.keys() {
+        let seg_info = &mut segments_info[second.0];
+        seg_info.can_join_back_to = seg_info.can_join_back_to.min(first.0);
     }
 
     // Run DFS-like algorithm to determine sections with joins that can be resolved seperately...
@@ -380,9 +451,8 @@ pub fn segments_from_matrix_trace(
     trace_segments: &[TraceSegment],
     confidence_matrix: &Matrix<f64>,
     score_params: &ScoreParams,
-    assembly_graph: &AssemblyGraph,
     annotation_args: &AnnotationArgs,
-) -> SegmentedMatrix {
+) -> InitialSegments {
     // Matrix should always have at least 1 row (for the skip state)...
     debug_assert!(confidence_matrix.def.num_rows > 0);
     debug_assert!(
@@ -427,7 +497,13 @@ pub fn segments_from_matrix_trace(
             .collect_vec();
 
         // Compute scores and start/end points for all rows in this segment....
-        // TODO: This isn't fully correct, if we want it to be we need to track if this segment starts in, and if the segment ends in a skip state to compute correct transitions for history tracing...
+        // TODO: This isn't fully correct,
+        // if we want it to be identical to initial viterbi trace,
+        // we need to track if each block in this segment starts in the skip state,
+        // and if each block in each segment ends in a skip state to compute correct
+        // transitions for history tracing...
+        // This would require a few additional booleans/states for each block and adjustments
+        // to the history tracing to incorperate them...
         for column in seg.col_start..=seg.col_end {
             let rows = &matrix_definition.active_rows_by_col[column];
             let row_iter = rows
@@ -465,7 +541,7 @@ pub fn segments_from_matrix_trace(
 
         let row_filter = |&&row_idx: &&usize| {
             (row_idx == 0)
-                || (seg.ali_id != 0
+                || (seg.row_idx != 0  // If this is a skip state in the first trace, we force it to be one in the second history trace...
                     && (row_conf_sum[row_idx] / (row_valid_cell_count[row_idx].max(1) as f64))
                         > min_confidence)
         };
@@ -510,13 +586,34 @@ pub fn segments_from_matrix_trace(
                         _ => None,
                     };
 
+                    let query_start = confidence_matrix.consensus_position(row_idx, start);
+                    let query_end = confidence_matrix.consensus_position(row_idx, end);
+
+                    let kimura80 = match block_type {
+                        BlockType::Alignment => {
+                            group.alignments[row_idx - 1].kimura80(query_start, query_end)
+                        }
+                        _ => 0.0,
+                    };
+
+                    let strand = match block_type {
+                        BlockType::Alignment => group.alignments[row_idx - 1].strand,
+                        _ => Strand::Forward,
+                    };
+
                     Block {
                         row_idx,
                         block_type,
+                        strand,
                         query_id,
-                        target_start: start,
-                        target_end: end,
-                        confidence: row_scores[row_idx],
+                        col_start: start,
+                        col_end: end,
+                        query_start,
+                        query_end,
+                        avg_confidence: row_conf_sum[row_idx]
+                            / (row_valid_cell_count[row_idx].max(1) as f64),
+                        alignment_score: row_scores[row_idx],
+                        kimura80,
                         can_join_up_to: s_idx,
                     }
                 })
@@ -528,45 +625,39 @@ pub fn segments_from_matrix_trace(
         segments.push(new_segment);
     }
 
-    // Allow each alignment block to be bounded by the farthest segment it can be linked to...
-    for (s_idx, seg) in segments.iter_mut().enumerate() {
-        for b_idx in 0..seg.blocks.len() {
-            let block = &seg.blocks[b_idx];
-
-            if let Some((_, last)) = alignment_segment_bounds[block.row_idx] {
-                if block.row_idx == 0 || s_idx != last {
-                    continue;
-                }
-            } else {
-                continue;
-            }
-
-            // Skip the skip state and tandem repeats...
-            if let BlockType::TandemRepeat | BlockType::Skip = block.block_type {
-                continue;
-            }
-            let mut farthest_forward = s_idx;
-
-            for e in assembly_graph.link_graph[block.row_idx - 1].iter() {
-                if let Some((first, _)) = alignment_segment_bounds[e.edge_to + 1] {
-                    farthest_forward = farthest_forward.max(first);
-                }
-            }
-
-            seg.blocks[b_idx].can_join_up_to = farthest_forward;
-        }
+    InitialSegments {
+        segments,
+        initial_trace_scores: trace_row_scores,
     }
+}
 
-    compute_segment_score_bounds(
-        &mut segments,
+pub fn assemble_and_link_segments<'a, T: JoinEstimator>(
+    proximity_group: &ProximityGroup,
+    initial_segments: &'a mut InitialSegments,
+    trace_segments: &[TraceSegment],
+    region_statistics: &RegionStatistics,
+    query_statistics: &[QueryStatistics<T>],
+    score_params: &ScoreParams,
+    annotation_args: &AnnotationArgs,
+    query_lengths: &HashMap<usize, usize>,
+) -> (&'a SegmentedMatrix, SegmentAssemblyGraph) {
+    let assembly_graph = SegmentAssemblyGraph::new(
+        proximity_group.alignments,
+        query_lengths,
+        &initial_segments.segments,
+        region_statistics,
+        query_statistics,
+        annotation_args,
+    );
+    finalize_segments(
+        &mut initial_segments.segments,
         trace_segments,
-        &trace_row_scores,
+        &initial_segments.initial_trace_scores,
         score_params,
-        assembly_graph,
-        &alignment_segment_bounds,
+        &assembly_graph,
     );
 
-    segments
+    (&initial_segments.segments, assembly_graph)
 }
 
 #[cfg(test)]

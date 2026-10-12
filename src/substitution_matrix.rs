@@ -1,14 +1,16 @@
-use std::{
-    fs::File,
-    io::{BufRead, BufReader, Read},
-    path::Path,
-};
+use std::io::{BufReader, Read};
+
+use anyhow::{anyhow, Context};
+use itertools::Itertools;
 
 use crate::alphabet::{
-    ALIGNMENT_ALPHABET_STR, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, STR_TO_DIGITAL_NUCLEOTIDE,
+    ALIGNMENT_ALPHABET_STR, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, NUCLEOTIDE_ALPHABET_UTF8,
+    STR_TO_DIGITAL_NUCLEOTIDE,
 };
+use crate::util::read_non_empty_lines;
 
 pub trait AlignmentScore {
+    #[allow(dead_code)]
     fn score(&self, target_char: u8, query_char: u8) -> f64;
     fn score_with_background(&self, target_char: u8, query_char: u8, frequencies: &[f64; 4])
         -> f64;
@@ -57,11 +59,13 @@ impl AlignmentScore for SimpleSubstitutionMatrix {
     }
 }
 
+const ALHPABET_SIZE: usize = NUCLEOTIDE_ALPHABET_UTF8.len();
+
 pub struct SubstitutionMatrix {
     pub name: String,
     pub gap_open_score: f64,
     pub gap_extend_score: f64,
-    pub scores: [[f64; 14]; 14],
+    pub scores: [[f64; ALHPABET_SIZE]; ALHPABET_SIZE],
     pub core_ratios: [[f64; 4]; 4],
 }
 
@@ -110,11 +114,25 @@ impl std::fmt::Debug for SubstitutionMatrix {
     }
 }
 
-impl PartialEq for SubstitutionMatrix {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
+impl Ord for SubstitutionMatrix {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.name.cmp(&other.name)
     }
 }
+
+impl PartialOrd for SubstitutionMatrix {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.name.cmp(&other.name))
+    }
+}
+
+impl PartialEq for SubstitutionMatrix {
+    fn eq(&self, other: &Self) -> bool {
+        self.name.eq(&other.name)
+    }
+}
+
+impl Eq for SubstitutionMatrix {}
 
 enum ParserState {
     Header,
@@ -160,7 +178,7 @@ impl SubstitutionMatrix {
         gap_open: f64,
         gap_extend: f64,
         target_background_frequencies: [f64; 4],
-        original_scores: [[f64; 14]; 14],
+        original_scores: [[f64; ALHPABET_SIZE]; ALHPABET_SIZE],
     ) -> Self {
         let mut unscaled_scores = original_scores;
 
@@ -193,31 +211,21 @@ impl SubstitutionMatrix {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn from_file(path: impl AsRef<Path>) -> Vec<SubstitutionMatrix> {
-        let file = File::open(path).expect("failed to open matrix file");
-        SubstitutionMatrix::parse(file)
-    }
-
-    pub fn parse<R: Read>(matrix_buf: R) -> Vec<SubstitutionMatrix> {
+    pub fn parse<R: Read>(matrix_buf: R) -> anyhow::Result<Vec<SubstitutionMatrix>> {
         let mut matrices = vec![];
 
         let buf_reader = BufReader::new(matrix_buf);
         let mut state = ParserState::Header;
 
-        let mut lines: Vec<String> = buf_reader
-            .lines()
-            .map(|l| l.expect("failed to read line"))
-            .filter(|l| !l.is_empty())
-            .collect();
+        let mut lines: Vec<(usize, String)> = read_non_empty_lines(buf_reader).try_collect()?;
 
         // add a single blank line to the
         // end to serve as a sentinel
-        lines.push("".to_string());
+        lines.push((lines.last().map(|v| v.0).unwrap_or(1), "".to_string()));
 
-        let line_tokens: Vec<Vec<&str>> = lines
+        let line_tokens: Vec<(usize, Vec<&str>)> = lines
             .iter()
-            .map(|l| l.split_whitespace().collect::<Vec<&str>>())
+            .map(|l| (l.0, l.1.split_whitespace().collect::<Vec<&str>>()))
             .collect();
 
         let mut name = "".to_string();
@@ -231,26 +239,37 @@ impl SubstitutionMatrix {
         line_tokens
             .iter()
             .zip(line_tokens.iter().skip(1))
-            .for_each(|(tokens, next_tokens)| {
+            .try_for_each(|((line_num, tokens), (_, next_tokens))| {
+                let error_msg = |msg| move || format!("{} at line {}", msg, line_num);
+
                 match state {
                     ParserState::Header => match tokens.first() {
                         Some(&"#matrix") => {
                             name = tokens[1].to_string();
                         }
                         Some(&"#gap-open") => {
-                            gap_open = tokens[1].parse::<f64>().expect("failed to parse float");
+                            gap_open = tokens[1]
+                                .parse::<f64>()
+                                .with_context(error_msg("failed to parse int"))?;
                         }
                         Some(&"#gap-ext") => {
-                            gap_extend = tokens[1].parse::<f64>().expect("failed to parse float");
+                            gap_extend = tokens[1]
+                                .parse::<f64>()
+                                .with_context(error_msg("failed to parse float"))?;
                         }
                         Some(&"#lambda") => {
-                            lambda = tokens[1].parse::<f64>().expect("failed to parse float");
+                            lambda = tokens[1]
+                                .parse::<f64>()
+                                .with_context(error_msg("failed to parse float"))?;
                         }
                         Some(&"#fi") => {
                             let freqs: Vec<f64> = tokens[1..=4]
                                 .iter()
-                                .map(|&f| f.parse::<f64>().expect("failed to parse float"))
-                                .collect();
+                                .map(|&f| {
+                                    f.parse::<f64>()
+                                        .with_context(error_msg("failed to parse float"))
+                                })
+                                .try_collect()?;
                             background_freqs_i
                                 .iter_mut()
                                 .zip(freqs)
@@ -259,14 +278,17 @@ impl SubstitutionMatrix {
                         Some(&"#fj") => {
                             let freqs: Vec<f64> = tokens[1..=4]
                                 .iter()
-                                .map(|&f| f.parse::<f64>().expect("failed to parse float"))
-                                .collect();
+                                .map(|&f| {
+                                    f.parse::<f64>()
+                                        .with_context(error_msg("failed to parse float"))
+                                })
+                                .try_collect()?;
                             background_freqs_j
                                 .iter_mut()
                                 .zip(freqs)
                                 .for_each(|(a, b)| *a = b);
                         }
-                        _ => panic!(),
+                        _ => return Err(anyhow!(error_msg("Unknown matrices file syntax!")())),
                     },
                     ParserState::Chars => {
                         chars = tokens.iter().map(|t| t.to_string()).collect();
@@ -274,22 +296,28 @@ impl SubstitutionMatrix {
                     ParserState::Scores => scores_vec.push(
                         tokens
                             .iter()
-                            .map(|t| t.parse::<f64>().expect("failed to parse float"))
-                            .collect(),
+                            .map(|t| {
+                                t.parse::<f64>()
+                                    .with_context(error_msg("failed to parse float"))
+                            })
+                            .try_collect()?,
                     ),
                 }
 
                 // TODO: refactor this to get rid of the closure
                 let mut add_matrix = || {
                     assert_eq!(scores_vec.len(), chars.len());
-                    let mut scores = [[0.0; 14]; 14];
+                    let mut scores = [[0.0; ALHPABET_SIZE]; ALHPABET_SIZE];
 
                     let char_indices: Vec<usize> = chars
                         .iter()
                         .map(|c| {
-                            (*STR_TO_DIGITAL_NUCLEOTIDE.get(c).expect("invalid char")) as usize
+                            STR_TO_DIGITAL_NUCLEOTIDE
+                                .get(c)
+                                .ok_or_else(|| anyhow!(error_msg("invalid char")()))
+                                .map(|v| *v as usize)
                         })
-                        .collect();
+                        .try_collect()?;
 
                     scores_vec
                         .iter()
@@ -304,7 +332,7 @@ impl SubstitutionMatrix {
                                     //       matrices, the target is the
                                     //       columns and the query is the rows
                                     //
-                                    // todo: need to have a command line flag to
+                                    // TODO: need to have a command line flag to
                                     //       indicate what the orientation is
 
                                     scores[col_idx][row_idx] = *val;
@@ -320,26 +348,30 @@ impl SubstitutionMatrix {
                         scores,
                     ));
                     scores_vec = vec![];
+
+                    Ok::<_, anyhow::Error>(())
                 };
 
                 state = match next_tokens.first() {
                     Some(token) if token.starts_with('#') => {
                         if let ParserState::Scores = state {
-                            add_matrix()
+                            add_matrix()?;
                         }
                         ParserState::Header
                     }
                     Some(token) if token.parse::<f64>().is_err() => ParserState::Chars,
                     Some(token) if token.parse::<f64>().is_ok() => ParserState::Scores,
                     None => {
-                        add_matrix();
-                        return;
+                        add_matrix()?;
+                        return Ok(());
                     }
-                    _ => panic!(),
+                    _ => return Err(anyhow!(error_msg("Unknown syntax in matrices file!")())),
                 };
-            });
 
-        matrices
+                Ok(())
+            })?;
+
+        Ok(matrices)
     }
 }
 
@@ -347,7 +379,10 @@ impl SubstitutionMatrix {
 mod tests {
     use crate::{
         alignment::Alignment,
-        alphabet::NucleotideByteUtils,
+        alphabet::{
+            NucleotideByteUtils, A_DIGITAL, C_DIGITAL, G_DIGITAL, K_DIGITAL, M_DIGITAL, N_DIGITAL,
+            R_DIGITAL, S_DIGITAL, T_DIGITAL, W_DIGITAL, X_DIGITAL, Y_DIGITAL,
+        },
         windowed_scores::{build_target_seq_from_alignments, Background, BackgroundFrequencies},
     };
 
@@ -431,7 +466,7 @@ mod tests {
             [0.0220, 0.1331, 0.0368, 0.9131],
         ];
 
-        let matrix_vec = SubstitutionMatrix::parse(matrix_buf);
+        let matrix_vec = SubstitutionMatrix::parse(matrix_buf)?;
         let matrix = matrix_vec.first().unwrap();
 
         matrix
@@ -476,7 +511,7 @@ mod tests {
             -30 -30 -30 -30 -30 -30 -30 -30 -30 -30 -30 -30"
             .as_bytes();
 
-        let matrix_vec = SubstitutionMatrix::parse(matrix_buf);
+        let matrix_vec = SubstitutionMatrix::parse(matrix_buf)?;
         let matrix = matrix_vec.first().unwrap();
 
         let correct: [[f64; 12]; 12] = [
@@ -530,9 +565,16 @@ mod tests {
             ],
         ];
 
+        let expected_col_order = [
+            A_DIGITAL, C_DIGITAL, G_DIGITAL, T_DIGITAL, K_DIGITAL, M_DIGITAL, N_DIGITAL, R_DIGITAL,
+            S_DIGITAL, W_DIGITAL, X_DIGITAL, Y_DIGITAL,
+        ];
         (0..12).for_each(|target_char| {
             (0..12).for_each(|query_char| {
-                let score = matrix.score(target_char, query_char);
+                let score = matrix.score(
+                    expected_col_order[target_char],
+                    expected_col_order[query_char],
+                );
                 assert_eq!(
                     format!("{:6.4}", score),
                     format!("{:6.4}", correct[target_char as usize][query_char as usize])
@@ -567,28 +609,22 @@ mod tests {
             -30 -30 -30 -30 -30 -30 -30 -30 -30 -30 -30 -30"
             .as_bytes();
 
-        let matrix_vec = SubstitutionMatrix::parse(matrix_buf);
+        let matrix_vec = SubstitutionMatrix::parse(matrix_buf)?;
         let matrix = matrix_vec.first().unwrap();
 
-        let mut ali: Vec<Alignment> = [
+        let ali: Vec<Alignment> = [
             format!("{}\n{}", "AAAAA", "ACGTA"),
             format!("{}\n{}", "CCCCC", "ACGTA"),
             format!("{}\n{}", "GGGGG", "ACGTA"),
             format!("{}\n{}", "TTTTT", "ACGTA"),
         ]
         .iter()
-        .map(|v| Alignment::from_str(v))
+        .zip([10, 15, 20, 25].iter())
+        .map(|(v, &start)| Alignment::from_str_with_target_offset(v, start))
         .collect();
 
-        let starts = [10, 15, 20, 25];
-        let ends = [14, 19, 24, 29];
-        (0..4).for_each(|i| {
-            ali[i].target_start = starts[i];
-            ali[i].target_end = ends[i];
-        });
-
-        let target_start = starts[0] - 5;
-        let target_end = ends.last().unwrap() + 5;
+        let target_start = ali.first().unwrap().target_start - 5;
+        let target_end = ali.last().unwrap().target_end + 5;
         let target_length = target_end - target_start + 1;
 
         let target_seq = build_target_seq_from_alignments(&ali, target_start, target_length);
@@ -606,12 +642,11 @@ mod tests {
         ];
 
         ali.iter().enumerate().for_each(|(ali_idx, ali)| {
-            ali.target_seq
-                .iter()
-                .zip(&ali.query_seq)
+            ali.target_aligned_sequence()
+                .zip(ali.query_aligned_sequence())
                 .enumerate()
                 .map(|(idx, bytes)| (idx, idx + ali.target_start, bytes))
-                .for_each(|(ali_pos, target_pos, (&target_char, &query_char))| {
+                .for_each(|(ali_pos, target_pos, (target_char, query_char))| {
                     println!(
                         "{target_pos}: {} - {}",
                         target_char.to_utf8_string(),

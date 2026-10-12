@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Region REGION_INDEX</title>
+    <link rel="icon" type="image/x-icon" href="../icon.svg"/>
+  </head>
+  <body>
+    <div class="container">
+      <div class="sidebar" id="sidebar">
+        <div class="inner-sidebar">
+          <a class="button" style="font-size: 1.5em;" href="../index.html">&#x1F878;</a><br>
+          <span class="button" id="toggle">&#xFF0B;</span>
+
+          <div class="widget-vertical">
+            <label for="aliThresh">Alignment threshold:</label><br />
+            <input type="text" id="aliThresh" rows="15" cols="15" resize="none"></input>
+          </div>
+
+          <div class="widget-vertical">
+            <label for="confThresh">Confidence threshold:</label><br />
+            <input type="text" id="confThresh" rows="15" cols="15" resize="none"></input>
+          </div>
+
+          <div class="widget-horizontal">
+            <label>
+              <input
+                type="checkbox"
+                id="traceAtTop"
+                name="traceAtTop"
+                checked
+              />
+              Trace at top
+            </label>
+          </div>
+
+
+          <div class="widget-horizontal">
+            <label>
+              <input type="checkbox" id="labels" name="labels" checked />
+              Labels
+            </label>
+          </div>
+
+          <div class="widget-horizontal">
+            <label>
+              <input 
+                type="checkbox"
+                id="onlyTrace"
+                name="onlyTrace"
+                checked 
+              />
+              Only show trace
+            </label>
+          </div>
+
+          <div class="widget-horizontal">
+            <label>
+              <input
+                type="checkbox"
+                id="onlySelected"
+                name="onlySelected"
+                checked
+              />
+              Only show selected
+            </label>
+          </div>
+
+          <div class="widget-horizontal">
+            <label>
+              <input type="checkbox" id="showInactive" name="showInactive"/>
+              Show inactive columns
+            </label>
+          </div>
+
+          <div class="widget-horizontal">
+            <label>
+              <input type="checkbox" id="showSegments" name="showSegments"/>
+              Show history segments and blocks. 
+            </label>
+          </div>
+
+          <div class="widget-vertical">
+            <label for="regex">Regex:</label><br />
+            <input type="text" id="regex" rows="15" cols="15" resize="none"></input>
+          </div>
+        </div>
+      </div>
+      <div class="viz"></div>
+    </div>
+  </body>
+
+  <script defer>
+    let data2 = "hello!!!";
+  </script>
+  <script defer>
+    console.log(data2);
+    let data = {};
+
+    run(data);
+  </script>
+</html>
+

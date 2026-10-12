@@ -43,7 +43,7 @@ impl<T: Into<usize> + TryFrom<usize> + Copy + Debug> AVLIndexSet<T> {
         let (new_root, inserted_index) = self._insert_into_tree(self.root, new_idx, compare);
         self.root = Some(new_root);
 
-        // If it found a node has the same value in the tree, delete the node we just inserted as it already exists...
+        // If it found a node that has the same value in the tree, delete the node we just inserted as it already exists...
         if inserted_index.into() != new_idx.into() {
             self.nodes.pop();
             Result::Ok(SetInsert::Found(inserted_index.into()))
@@ -153,7 +153,7 @@ impl<T: Into<usize> + TryFrom<usize> + Copy + Debug> AVLIndexSet<T> {
         }
     }
 
-    fn search(&self, compare: impl Fn(usize) -> Ordering) -> Option<usize> {
+    pub fn search(&self, compare: impl Fn(usize) -> Ordering) -> Option<usize> {
         self._search(self.root, compare)
     }
 
@@ -181,7 +181,7 @@ impl<T: Into<usize> + TryFrom<usize> + Copy + Debug> AVLIndexSet<T> {
     }
 
     /// Iterate over the elements in the tree, in sorted order. Returns the element index and the depth of the element in the tree.
-    pub fn iter(&self) -> AVLInOrderSetIterator<T> {
+    pub fn iter(&self) -> AVLInOrderSetIterator<'_, T> {
         let mut stack = Vec::with_capacity(self.depth() + 1);
         if let Some(root) = self.root {
             stack.push((root, 0_u8));
@@ -190,7 +190,7 @@ impl<T: Into<usize> + TryFrom<usize> + Copy + Debug> AVLIndexSet<T> {
         AVLInOrderSetIterator { tree: self, stack }
     }
 
-    pub fn bfs(&self) -> AVLBFSSetIterator<T> {
+    pub fn bfs(&self) -> AVLBFSSetIterator<'_, T> {
         let mut queue = VecDeque::new();
 
         if let Some(root) = self.root {

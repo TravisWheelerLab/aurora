@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <!-- Deep night sky background -->
+    <radialGradient id="sky" cx="50%" cy="80%" r="90%">
+      <stop offset="0%" stop-color="#0a0a1a"/>
+      <stop offset="100%" stop-color="#03030d"/>
+    </radialGradient>
+
+    <!-- Aurora band 1 - green-teal -->
+    <linearGradient id="aurora1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00ffa3" stop-opacity="0"/>
+      <stop offset="25%" stop-color="#00e5ff" stop-opacity="0.9"/>
+      <stop offset="55%" stop-color="#00ff88" stop-opacity="0.85"/>
+      <stop offset="80%" stop-color="#39ff14" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#00ffa3" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Aurora band 2 - purple-pink -->
+    <linearGradient id="aurora2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#bf00ff" stop-opacity="0"/>
+      <stop offset="30%" stop-color="#ff00cc" stop-opacity="0.7"/>
+      <stop offset="60%" stop-color="#9d00ff" stop-opacity="0.8"/>
+      <stop offset="85%" stop-color="#ff44aa" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#bf00ff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Aurora band 3 - cyan glow -->
+    <linearGradient id="aurora3" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00cfff" stop-opacity="0"/>
+      <stop offset="40%" stop-color="#00ffee" stop-opacity="0.6"/>
+      <stop offset="70%" stop-color="#00bfff" stop-opacity="0.75"/>
+      <stop offset="100%" stop-color="#00cfff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Soft blur for glow effect -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="1.2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="softblur">
+      <feGaussianBlur stdDeviation="0.7"/>
+    </filter>
+
+    <!-- Clip to circle -->
+    <clipPath id="circle">
+      <circle cx="16" cy="16" r="15"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="16" cy="16" r="15" fill="url(#sky)"/>
+
+  <g clip-path="url(#circle)">
+
+    <!-- Stars -->
+    <circle cx="4" cy="4" r="0.4" fill="white" opacity="0.8"/>
+    <circle cx="9" cy="2" r="0.3" fill="white" opacity="0.6"/>
+    <circle cx="14" cy="5" r="0.35" fill="white" opacity="0.7"/>
+    <circle cx="20" cy="3" r="0.3" fill="white" opacity="0.5"/>
+    <circle cx="27" cy="5" r="0.4" fill="white" opacity="0.8"/>
+    <circle cx="24" cy="8" r="0.25" fill="white" opacity="0.5"/>
+    <circle cx="6" cy="8" r="0.3" fill="white" opacity="0.6"/>
+    <circle cx="29" cy="12" r="0.35" fill="white" opacity="0.7"/>
+    <circle cx="2" cy="12" r="0.3" fill="white" opacity="0.5"/>
+
+    <!-- Aurora curtain band 1 - green/teal, wavy -->
+    <g filter="url(#glow)" opacity="0.9">
+      <path d="M-2,18 C2,12 6,20 10,14 C14,8 18,17 22,13 C26,9 30,16 34,13 L34,20 C30,23 26,15 22,19 C18,23 14,14 10,20 C6,26 2,18 -2,22 Z"
+            fill="url(#aurora1)"/>
+    </g>
+
+    <!-- Aurora curtain band 2 - purple/pink -->
+    <g filter="url(#softblur)" opacity="0.75">
+      <path d="M-2,14 C3,9 7,16 12,11 C17,6 21,14 25,10 C28,7 31,13 34,10 L34,17 C31,20 28,14 25,17 C21,21 17,11 12,16 C7,21 3,14 -2,19 Z"
+            fill="url(#aurora2)"/>
+    </g>
+
+    <!-- Aurora curtain band 3 - thin cyan -->
+    <g filter="url(#softblur)" opacity="0.6">
+      <path d="M-2,11 C4,7 8,13 13,9 C18,5 22,11 26,8 C29,6 32,10 34,8 L34,13 C32,15 29,11 26,13 C22,16 18,8 13,13 C8,18 4,11 -2,15 Z"
+            fill="url(#aurora3)"/>
+    </g>
+
+    <!-- Horizon glow -->
+    <rect x="-2" y="24" width="36" height="10" fill="#001a0a" opacity="0.6"/>
+    <path d="M-2,24 Q8,21 16,23 Q24,25 34,22 L34,26 Q24,29 16,27 Q8,25 -2,28 Z"
+          fill="#003d1a" opacity="0.4"/>
+
+    <!-- Subtle reflection on ground -->
+    <ellipse cx="16" cy="28" rx="12" ry="2" fill="#00ff88" opacity="0.06"/>
+
+  </g>
+
+  <!-- Circle border with subtle aurora tint -->
+  <circle cx="16" cy="16" r="15" fill="none" stroke="#00ffa3" stroke-width="0.6" opacity="0.3"/>
+</svg>

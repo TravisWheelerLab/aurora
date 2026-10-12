@@ -6,39 +6,61 @@ mod balanced_tree;
 mod chunks;
 mod confidence;
 mod history_tracing;
+mod join_estimation;
 mod matrix;
+mod uleb;
+
+// Keeping around for enhanced parameter estimation work...
+#[allow(dead_code)]
+mod p2estimator;
+
 mod pipeline;
 mod score_params;
 mod segment_groups;
 mod segments;
+mod sequence_store;
+mod statistics;
 mod substitution_matrix;
 mod support;
+
+// Note: This will be used for components/archetectures additions soon...
+#[allow(dead_code)]
+mod union_find;
+
+mod formats;
+mod trace_statistics;
 mod util;
 mod viterbi;
 mod viz;
 mod windowed_scores;
 
+use core::ops::RangeBounds;
 use std::{
-    collections::HashMap,
-    fs::{self, create_dir_all, File},
-    io::{BufRead, BufReader, BufWriter, Write},
+    fmt::Debug,
+    fs::File,
+    io::{BufWriter, Write},
+    ops::Bound,
     path::PathBuf,
 };
 
-use alignment::AlignmentData;
 use chunks::ProximityGroup;
 
-use anyhow::{Ok, Result};
+use anyhow::{Context, Ok, Result};
 use clap::{Args, Parser};
 use itertools::Itertools;
 use rayon::prelude::*;
+use std::str::FromStr;
+use thiserror::Error;
 use viz::VizConstraint;
 
 use crate::{
     annotation::AmbiguousAnnotation,
     chunks::validate_groups,
-    pipeline::run_pipeline,
-    viz::stats::{write_family_statistics, write_inversion_statistics},
+    formats::load_alignments,
+    join_estimation::{BayesianJoinEstimator, BayesianJoinStatistics},
+    pipeline::{run_history_trace, run_naive_trace, NaiveTraceResults},
+    trace_statistics::{trace_statistics, OccuranceCountingMode, TraceStatistics},
+    viz::SodaVizWriter,
 };
 
 #[cfg(not(target_env = "msvc"))]
@@ -59,6 +81,10 @@ pub struct AuroraArgs {
     /// The path to substitution matrices
     #[arg()]
     matrices: String,
+
+    /// The path to FASTA formatted sequences, only required for BPAF format.
+    #[arg()]
+    fasta: Option<String>,
 
     #[command(flatten)]
     #[clap(next_help_heading = "Annotation options")]
@@ -93,6 +119,31 @@ pub struct PerformanceArgs {
     pub num_threads: usize,
 }
 
+#[derive(Error, Debug)]
+enum ParseRangedError<T: Debug, E> {
+    #[error(transparent)]
+    ParseError(#[from] E),
+    #[error("float value {0:?} is not between {1:?} and {2:?}")]
+    RangeError(T, Bound<T>, Bound<T>),
+}
+
+const fn ranged<F: PartialOrd + Debug + FromStr + Send + Sync + Clone + Copy + 'static>(
+    range: impl RangeBounds<F> + Send + Sync + Clone + 'static,
+) -> impl Fn(&str) -> Result<F, ParseRangedError<F, F::Err>> + Clone + Send + Sync + 'static {
+    move |v: &str| {
+        let f = F::from_str(v)?;
+        if range.contains(&f) {
+            Result::Ok(f)
+        } else {
+            Result::Err(ParseRangedError::RangeError(
+                f,
+                range.start_bound().map(|v| *v),
+                range.end_bound().map(|v| *v),
+            ))
+        }
+    }
+}
+
 #[derive(Args, Debug, Clone, Default)]
 pub struct AnnotationArgs {
     /// The penalty of jumping between query models
@@ -100,7 +151,8 @@ pub struct AnnotationArgs {
         short = 'J',
         long = "query-jump",
         default_value = "-127.0",
-        value_name = "f"
+        value_name = "f",
+        value_parser = ranged::<f64>(..-1.0)
     )]
     pub query_jump_penalty: f64,
 
@@ -110,11 +162,12 @@ pub struct AnnotationArgs {
         short = 'L',
         long = "skip-loop",
         default_value = "30",
-        value_name = "n"
+        value_name = "n",
+        value_parser = ranged::<usize>(1..)
     )]
     pub num_skip_loops_eq_to_jump: usize,
 
-    /// The max distance across unaligned positions
+    /// The max distance across positions
     /// in the target (genome) at which a join is
     /// considered between compatible alignments
     #[arg(
@@ -125,13 +178,24 @@ pub struct AnnotationArgs {
     )]
     pub target_join_distance: usize,
 
-    /// The maximum overlap in the consensus at which
+    /// Removes joins that fall below this threshold of occuring.
+    /// Value can be set between 0 and 1.
+    #[arg(
+        long = "join-likelihood-threshold",
+        default_value = "0.25",
+        value_name = "f",
+        value_parser = ranged::<f64>(0.0..1.0)
+    )]
+    pub join_likelihood_threshold: f64,
+
+    /// The maximum allowed overlap in the consensus at which
     /// a join is considered between compatible alignments.
     #[arg(
         short = 'O',
         long = "consensus-join-overlap",
         default_value = "200",
-        value_name = "n"
+        value_name = "n",
+        value_parser = ranged::<isize>(0..)
     )]
     pub consensus_join_overlap: isize,
 
@@ -140,14 +204,21 @@ pub struct AnnotationArgs {
     #[arg(
         short = 'C',
         long = "consensus-join-distance",
-        default_value = "2000",
-        value_name = "n"
+        default_value = "2500",
+        value_name = "n",
+        value_parser = ranged::<isize>(0..)
     )]
     pub consensus_join_distance: isize,
 
     /// The maximum seperation or overlap in nucleotides on both target and consensus
     /// for a join to be allowed between inverted alignments.
-    #[arg(long = "inversion-distance", default_value = "20", value_name = "n")]
+    #[arg(
+        short = 'I',
+        long = "inversion-distance",
+        default_value = "200",
+        value_name = "n",
+        value_parser = ranged::<isize>(0..)
+    )]
     pub inversion_distance: isize,
 
     /// The size of the window looked at to determine a single alignment score in nucleotides.
@@ -155,7 +226,8 @@ pub struct AnnotationArgs {
         short = 'W',
         long = "window-size",
         default_value = "31",
-        value_name = "n"
+        value_name = "n",
+        value_parser = ranged::<usize>(1..)
     )]
     pub score_window_size: usize,
 
@@ -164,7 +236,8 @@ pub struct AnnotationArgs {
         short = 'B',
         long = "background-window-size",
         default_value = "61",
-        value_name = "n"
+        value_name = "n",
+        value_parser = ranged::<usize>(1..)
     )]
     pub background_window_size: usize,
 
@@ -181,17 +254,14 @@ pub struct AnnotationArgs {
     #[arg(
         long = "min-segment-confidence",
         default_value = "0.1",
-        value_name = "f"
+        value_name = "f",
+        value_parser = ranged::<f64>(0.0..1.0)
     )]
     pub min_block_confidence: f64,
 
     /// The max depth of the histories used for identifying joins.
     #[arg(long = "max-history-depth", default_value = "64", value_name = "n")]
     pub max_history_depth: usize,
-
-    /// The max number of allowed annotations an annotation can consider linking to independantly in front of it...
-    #[arg(long = "max-forward-links", default_value = "5", value_name = "n")]
-    pub max_forward_links: usize,
 
     /// The total number of histories allowed in a single segment.
     /// Additional histories are removed, lowest scoring first.
@@ -204,42 +274,6 @@ pub struct AnnotationArgs {
     /// Set to 0 or greater to disable.
     #[arg(long = "min-history-score", default_value = "-500.0", value_name = "f")]
     pub min_relative_history_score: f64,
-
-    /// The amount of overlap between two joinable sequences in the consensus
-    /// before a penalty starts being applied to the join.
-    #[arg(long = "free-join-overlap", default_value = "4", value_name = "n")]
-    pub free_join_consensus_overlap: usize,
-
-    /// The amount of gap between two joinable sequences
-    /// before a penalty starts being applied to the join.
-    #[arg(long = "free-join-gap", default_value = "10", value_name = "n")]
-    pub free_join_consensus_gap: usize,
-
-    /// The amount of penalty to apply to a join at the maximum allowed consensus overlap
-    /// A value of 1 means to apply a penalty equal to a query jump.
-    /// The cost grows linearly to this value as the overlap increases.
-    #[arg(
-        long = "consensus-overlap-penalty",
-        default_value = "1.0",
-        value_name = "f"
-    )]
-    pub join_consensus_overlap_penalty: f64,
-
-    /// The amount of penalty to apply to a join at the maximum allowed consensus gap
-    /// A value of 1 means to apply a penalty equal to a query jump.
-    /// The cost grows linearly to this value as the gap increases.
-    #[arg(
-        long = "consensus-gap-penalty",
-        default_value = "0.5",
-        value_name = "f"
-    )]
-    pub join_consensus_gap_penalty: f64,
-
-    /// The amount of penalty to apply to a join at the maximum allowed target gap
-    /// A value of 1 means to apply a penalty equal to a query jump.
-    /// The cost grows linearly to this value as the gap between the sequences in the target space increases.
-    #[arg(long = "target-gap-penalty", default_value = "0.4", value_name = "f")]
-    pub join_target_gap_penalty: f64,
 }
 
 #[derive(Args, Debug, Clone, Default)]
@@ -259,7 +293,7 @@ pub struct IoArgs {
 
 #[derive(Args, Debug, Clone)]
 pub struct UltraArgs {
-    /// The path to ULTRA output
+    /// The path to ULTRA output. Must be ULTRA's JSON output format.
     #[arg(short = 'U', long = "ultra-file", value_name = "path")]
     pub ultra_file_path: Option<PathBuf>,
 
@@ -301,78 +335,22 @@ pub struct VisualizationArgs {
     #[arg(long = "debug")]
     pub debug: bool,
 
-    /// Disable history tracing entirely, dumping only visuals.
-    #[arg(long = "disable-tracing")]
-    pub disable_tracing: bool,
-
-    #[clap(skip)]
-    pub viz_reference_bed_index: HashMap<String, usize>,
+    /// Exclude regions with no competing annotations from the visualization output.
+    /// These regions will still show up in aurora's output.
+    #[arg(long = "viz-hide-simple-regions")]
+    pub viz_hide_simple_regions: bool,
 }
 
 fn main() -> Result<()> {
     let mut args = AuroraArgs::parse();
     let viz_args = &mut args.visualization_args;
 
-    if viz_args.viz {
-        if let Result::Ok(metadata) = fs::metadata(&viz_args.viz_output_path) {
-            if metadata.is_dir() {
-                // TODO: real error
-                panic!(
-                    "directory: {} already exists",
-                    viz_args.viz_output_path.to_str().unwrap()
-                )
-            }
-        }
-
-        create_dir_all(&viz_args.viz_output_path)?;
-        viz_args.viz_output_path = viz_args.viz_output_path.canonicalize()?;
-
-        if let Some(path) = &viz_args.viz_reference_bed_path {
-            let file = File::open(path).expect("failed to open viz reference bed file");
-            let reader = BufReader::new(file);
-
-            let mut chrom_list = vec![String::from("sentinel")];
-            let mut prev_start = 0usize;
-            let mut index: HashMap<String, usize> = HashMap::new();
-            reader
-                .lines()
-                .map(|l| l.unwrap())
-                .enumerate()
-                .for_each(|(line_num, line)| {
-                    let tokens: Vec<&str> = line.split_whitespace().collect();
-                    let chrom = tokens[0].to_string();
-                    let start = tokens[1].parse::<usize>().expect("failed to parse int");
-
-                    let last_chrom = chrom_list.last().expect("chrom list is empty");
-
-                    if chrom == *last_chrom {
-                        if prev_start > start {
-                            panic!("bed file is unsorted");
-                        }
-                    } else if !chrom_list.contains(&chrom) {
-                        chrom_list.push(chrom.clone());
-                        index.insert(chrom, line_num);
-                    } else {
-                        panic!("bed file is unsorted");
-                    }
-
-                    prev_start = start;
-                });
-
-            viz_args.viz_reference_bed_index = index;
-        }
-    }
-
-    let alignments_file = File::open(&args.alignments)?;
-    let matrices_file = File::open(&args.matrices)?;
-
-    let ultra_file = match args.ultra_args.ultra_file_path {
-        Some(ref path) => Some(File::open(path)?),
-        None => None,
-    };
-
-    let alignment_data =
-        AlignmentData::from_caf_and_ultra_and_matrices(alignments_file, ultra_file, matrices_file)?;
+    let alignment_data = load_alignments(
+        &args.alignments,
+        args.fasta.as_ref(),
+        &args.matrices,
+        args.ultra_args.ultra_file_path.as_ref(),
+    )?;
 
     let proximity_groups = ProximityGroup::from_alignment_data(
         &alignment_data,
@@ -391,68 +369,36 @@ fn main() -> Result<()> {
     if let Some(path) = &args.io_args.regions_path {
         let regions_file = File::create(path).unwrap();
         let mut regions_writer = BufWriter::new(regions_file);
-        proximity_groups.iter().enumerate().for_each(|(idx, g)| {
-            writeln!(
-                &mut regions_writer,
-                "{},{},{}:{},{}:{}",
-                idx,
-                alignment_data.target_name_map.get(g.target_id),
-                g.target_start,
-                g.target_end,
-                g.line_start,
-                g.line_end,
-            )
-            .expect("failed to write to regions file")
-        });
-    }
-
-    if viz_args.viz {
-        let error_msg = "failed to write to index.html";
-        let index_file = File::create(viz_args.viz_output_path.join("index.html")).unwrap();
-        let mut index_writer = BufWriter::new(index_file);
-
-        writeln!(&mut index_writer, "<h3>Statistics</h3><a href=\"family_stats.html\">Families</a><br><a href=\"inversion_stats.html\">Inversions</a><br>")?;
-
-        viz_args
-            .viz_constraints
+        proximity_groups
             .iter()
             .enumerate()
-            .for_each(|(idx, c)| {
+            .try_for_each(|(idx, g)| {
                 writeln!(
-                    &mut index_writer,
-                    "<a href=\"{}-{}-{}.html\">slice {} | {} {}:{}</a><br>",
-                    c.target_name,
-                    c.target_start,
-                    c.target_end,
+                    &mut regions_writer,
+                    "{},{},{}:{},{}:{}",
                     idx,
-                    c.target_name,
-                    c.target_start,
-                    c.target_end,
+                    alignment_data.target_name_map.get(g.target_id),
+                    g.target_start,
+                    g.target_end,
+                    g.line_start,
+                    g.line_end,
                 )
-                .expect(error_msg);
-            });
-
-        proximity_groups.iter().enumerate().for_each(|(idx, g)| {
-            writeln!(
-                &mut index_writer,
-                "<h3>region {} | {} {}:{}</h3>\n<ul>",
-                idx,
-                alignment_data.target_name_map.get(g.target_id),
-                g.target_start,
-                g.target_end,
-            )
-            .expect(error_msg);
-
-            writeln!(
-                &mut index_writer,
-                "    <li><a href=\"{}/index.html\">annotations</a></li>",
-                idx,
-            )
-            .expect(error_msg);
-
-            writeln!(&mut index_writer, "</ul>").expect(error_msg);
-        });
+                .context("failed to write to regions file")
+            })?;
     }
+
+    let soda_viz = if viz_args.viz {
+        Some(SodaVizWriter::new(
+            &proximity_groups,
+            &alignment_data.target_name_map,
+            &viz_args.viz_output_path,
+            viz_args.viz_reference_bed_path.as_ref(),
+            &viz_args.viz_constraints,
+            viz_args.viz_hide_simple_regions,
+        )?)
+    } else {
+        None
+    };
 
     debug_assert!(validate_groups(
         &proximity_groups,
@@ -476,17 +422,42 @@ fn main() -> Result<()> {
         .build_global()
         .unwrap();
 
-    let mut results = proximity_groups
+    let mut naive_results = proximity_groups
         .par_iter()
         .panic_fuse()
         .enumerate()
         .map(|(region_idx, group)| {
+            let viz = soda_viz
+                .as_ref()
+                .map(|v| v.new_region(group, &alignment_data, region_idx))
+                .flatten();
+            run_naive_trace(group, &alignment_data, region_idx, viz, &args)
+        })
+        .collect::<Vec<NaiveTraceResults<BayesianJoinStatistics>>>();
+    naive_results.sort_by_key(|v| v.region_index);
+
+    let trace_stats: TraceStatistics<BayesianJoinEstimator> = trace_statistics(
+        &naive_results,
+        &alignment_data,
+        OccuranceCountingMode::Segments,
+    );
+
+    let mut results: Vec<(usize, Vec<AmbiguousAnnotation>)> = proximity_groups
+        .par_iter()
+        .zip(naive_results)
+        .map(|(group, mut naive_trace)| {
             (
-                region_idx,
-                run_pipeline(group, &alignment_data, region_idx, args.clone()),
+                naive_trace.region_index,
+                run_history_trace(
+                    group,
+                    &alignment_data,
+                    &trace_stats,
+                    &mut naive_trace,
+                    &args,
+                ),
             )
         })
-        .collect::<Vec<(usize, Vec<AmbiguousAnnotation>)>>();
+        .collect();
     results.sort_by_key(|v| v.0);
 
     for (_region, annots) in results.iter() {
@@ -501,20 +472,17 @@ fn main() -> Result<()> {
         }
     }
 
-    if args.visualization_args.viz {
-        let mut family_stats_writer = File::create(
-            args.visualization_args
-                .viz_output_path
-                .join("family_stats.html"),
-        )?;
-        write_family_statistics(&mut family_stats_writer, &results)?;
-        let mut inv_stats_writer = File::create(
-            args.visualization_args
-                .viz_output_path
-                .join("inversion_stats.html"),
-        )?;
-        write_inversion_statistics(&mut inv_stats_writer, &results)?;
-    }
+    soda_viz
+        .map(|v| {
+            v.finalize(
+                &proximity_groups,
+                &results,
+                &alignment_data.target_name_map,
+                &alignment_data.query_lengths,
+            )
+        })
+        .transpose()
+        .context("Failed to finalize visual!")?;
 
     Ok(())
 }
