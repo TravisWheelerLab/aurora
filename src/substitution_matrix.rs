@@ -4,7 +4,8 @@ use anyhow::{anyhow, Context};
 use itertools::Itertools;
 
 use crate::alphabet::{
-    ALIGNMENT_ALPHABET_STR, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, STR_TO_DIGITAL_NUCLEOTIDE,
+    ALIGNMENT_ALPHABET_STR, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, NUCLEOTIDE_ALPHABET_UTF8,
+    STR_TO_DIGITAL_NUCLEOTIDE,
 };
 use crate::util::read_non_empty_lines;
 
@@ -58,11 +59,13 @@ impl AlignmentScore for SimpleSubstitutionMatrix {
     }
 }
 
+const ALHPABET_SIZE: usize = NUCLEOTIDE_ALPHABET_UTF8.len();
+
 pub struct SubstitutionMatrix {
     pub name: String,
     pub gap_open_score: f64,
     pub gap_extend_score: f64,
-    pub scores: [[f64; 14]; 14],
+    pub scores: [[f64; ALHPABET_SIZE]; ALHPABET_SIZE],
     pub core_ratios: [[f64; 4]; 4],
 }
 
@@ -111,11 +114,25 @@ impl std::fmt::Debug for SubstitutionMatrix {
     }
 }
 
-impl PartialEq for SubstitutionMatrix {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
+impl Ord for SubstitutionMatrix {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.name.cmp(&other.name)
     }
 }
+
+impl PartialOrd for SubstitutionMatrix {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.name.cmp(&other.name))
+    }
+}
+
+impl PartialEq for SubstitutionMatrix {
+    fn eq(&self, other: &Self) -> bool {
+        self.name.eq(&other.name)
+    }
+}
+
+impl Eq for SubstitutionMatrix {}
 
 enum ParserState {
     Header,
@@ -161,7 +178,7 @@ impl SubstitutionMatrix {
         gap_open: f64,
         gap_extend: f64,
         target_background_frequencies: [f64; 4],
-        original_scores: [[f64; 14]; 14],
+        original_scores: [[f64; ALHPABET_SIZE]; ALHPABET_SIZE],
     ) -> Self {
         let mut unscaled_scores = original_scores;
 
@@ -290,7 +307,7 @@ impl SubstitutionMatrix {
                 // TODO: refactor this to get rid of the closure
                 let mut add_matrix = || {
                     assert_eq!(scores_vec.len(), chars.len());
-                    let mut scores = [[0.0; 14]; 14];
+                    let mut scores = [[0.0; ALHPABET_SIZE]; ALHPABET_SIZE];
 
                     let char_indices: Vec<usize> = chars
                         .iter()
@@ -315,7 +332,7 @@ impl SubstitutionMatrix {
                                     //       matrices, the target is the
                                     //       columns and the query is the rows
                                     //
-                                    // todo: need to have a command line flag to
+                                    // TODO: need to have a command line flag to
                                     //       indicate what the orientation is
 
                                     scores[col_idx][row_idx] = *val;
@@ -362,7 +379,10 @@ impl SubstitutionMatrix {
 mod tests {
     use crate::{
         alignment::Alignment,
-        alphabet::NucleotideByteUtils,
+        alphabet::{
+            NucleotideByteUtils, A_DIGITAL, C_DIGITAL, G_DIGITAL, K_DIGITAL, M_DIGITAL, N_DIGITAL,
+            R_DIGITAL, S_DIGITAL, T_DIGITAL, W_DIGITAL, X_DIGITAL, Y_DIGITAL,
+        },
         windowed_scores::{build_target_seq_from_alignments, Background, BackgroundFrequencies},
     };
 
@@ -545,9 +565,16 @@ mod tests {
             ],
         ];
 
+        let expected_col_order = [
+            A_DIGITAL, C_DIGITAL, G_DIGITAL, T_DIGITAL, K_DIGITAL, M_DIGITAL, N_DIGITAL, R_DIGITAL,
+            S_DIGITAL, W_DIGITAL, X_DIGITAL, Y_DIGITAL,
+        ];
         (0..12).for_each(|target_char| {
             (0..12).for_each(|query_char| {
-                let score = matrix.score(target_char, query_char);
+                let score = matrix.score(
+                    expected_col_order[target_char],
+                    expected_col_order[query_char],
+                );
                 assert_eq!(
                     format!("{:6.4}", score),
                     format!("{:6.4}", correct[target_char as usize][query_char as usize])
@@ -585,25 +612,19 @@ mod tests {
         let matrix_vec = SubstitutionMatrix::parse(matrix_buf)?;
         let matrix = matrix_vec.first().unwrap();
 
-        let mut ali: Vec<Alignment> = [
+        let ali: Vec<Alignment> = [
             format!("{}\n{}", "AAAAA", "ACGTA"),
             format!("{}\n{}", "CCCCC", "ACGTA"),
             format!("{}\n{}", "GGGGG", "ACGTA"),
             format!("{}\n{}", "TTTTT", "ACGTA"),
         ]
         .iter()
-        .map(|v| Alignment::from_str(v))
+        .zip([10, 15, 20, 25].iter())
+        .map(|(v, &start)| Alignment::from_str_with_target_offset(v, start))
         .collect();
 
-        let starts = [10, 15, 20, 25];
-        let ends = [14, 19, 24, 29];
-        (0..4).for_each(|i| {
-            ali[i].target_start = starts[i];
-            ali[i].target_end = ends[i];
-        });
-
-        let target_start = starts[0] - 5;
-        let target_end = ends.last().unwrap() + 5;
+        let target_start = ali.first().unwrap().target_start - 5;
+        let target_end = ali.last().unwrap().target_end + 5;
         let target_length = target_end - target_start + 1;
 
         let target_seq = build_target_seq_from_alignments(&ali, target_start, target_length);
@@ -621,12 +642,11 @@ mod tests {
         ];
 
         ali.iter().enumerate().for_each(|(ali_idx, ali)| {
-            ali.target_seq
-                .iter()
-                .zip(&ali.query_seq)
+            ali.target_aligned_sequence()
+                .zip(ali.query_aligned_sequence())
                 .enumerate()
                 .map(|(idx, bytes)| (idx, idx + ali.target_start, bytes))
-                .for_each(|(ali_pos, target_pos, (&target_char, &query_char))| {
+                .for_each(|(ali_pos, target_pos, (target_char, query_char))| {
                     println!(
                         "{target_pos}: {} - {}",
                         target_char.to_utf8_string(),

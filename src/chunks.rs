@@ -45,13 +45,6 @@ impl<'a> ProximityGroup<'a> {
         alignment_data: &'a AlignmentData,
         join_distance: usize,
     ) -> Vec<ProximityGroup<'a>> {
-        alignment_data.target_groups.iter().for_each(|g| {
-            debug_assert!(g
-                .alignments
-                .windows(2)
-                .all(|w| w[0].target_start <= w[1].target_start));
-        });
-
         alignment_data
             .target_groups
             .iter()
@@ -206,6 +199,10 @@ pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool 
     for (group_idx, group) in groups.iter().enumerate() {
         for repeat in group.tandem_repeats {
             if repeat.target_start < group.target_start || repeat.target_end > group.target_end {
+                eprintln!(
+                    "Repeat falls outside group range! Repeat: {:?}, Group Range: ({}, {})",
+                    repeat, group.target_start, group.target_end
+                );
                 return false;
             }
         }
@@ -213,6 +210,10 @@ pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool 
         for ali in group.alignments {
             // check if any alignments are outside of the chunk boundaries
             if ali.target_start < group.target_start || ali.target_end > group.target_end {
+                eprintln!(
+                    "Alignment falls outside group range! Alignment: {:?}, Group Range: ({}, {})",
+                    ali, group.target_start, group.target_end
+                );
                 return false;
             }
 
@@ -222,6 +223,11 @@ pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool 
             #[allow(clippy::needless_range_loop)]
             for other_group_idx in 0..group_idx {
                 let other_group = &groups[other_group_idx];
+
+                // If groups have different targets, ignore...
+                if group.target_id != other_group.target_id {
+                    continue;
+                }
 
                 // if the other chunk is farther than the join distance
                 // away from this alignment, then there's nothing to check
@@ -237,6 +243,10 @@ pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool 
                     if ali.strand == other_ali.strand
                         && (ali.target_start - other_ali.target_end + 1) < join_distance
                     {
+                        eprintln!(
+                            "Alignments within join distance! Alignments:\n\t{}\n\t{}",
+                            ali, other_ali
+                        );
                         return false;
                     }
                 }
@@ -245,6 +255,10 @@ pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool 
             // then check all chunks to the right
             for other_group_idx in (group_idx..groups.len()).skip(1) {
                 let other_group = &groups[other_group_idx];
+
+                if group.target_id != other_group.target_id {
+                    continue;
+                }
 
                 if (other_group.target_start - ali.target_end + 1) > join_distance {
                     continue;
@@ -258,6 +272,10 @@ pub fn validate_groups(groups: &[ProximityGroup], join_distance: usize) -> bool 
                     if other_ali.strand == ali.strand
                         && (other_ali.target_start - ali.target_end + 1) < join_distance
                     {
+                        eprintln!(
+                            "Alignment groups not in order! Offending alignments: \n\t{}\n\t{}",
+                            ali, other_ali
+                        );
                         return false;
                     }
                 }

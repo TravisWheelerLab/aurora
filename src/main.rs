@@ -8,6 +8,7 @@ mod confidence;
 mod history_tracing;
 mod join_estimation;
 mod matrix;
+mod uleb;
 
 // Keeping around for enhanced parameter estimation work...
 #[allow(dead_code)]
@@ -17,6 +18,7 @@ mod pipeline;
 mod score_params;
 mod segment_groups;
 mod segments;
+mod sequence_store;
 mod statistics;
 mod substitution_matrix;
 mod support;
@@ -25,6 +27,7 @@ mod support;
 #[allow(dead_code)]
 mod union_find;
 
+mod formats;
 mod trace_statistics;
 mod util;
 mod viterbi;
@@ -33,18 +36,16 @@ mod windowed_scores;
 
 use core::ops::RangeBounds;
 use std::{
-    collections::HashMap,
     fmt::Debug,
-    fs::{self, create_dir_all, File},
-    io::{BufRead, BufReader, BufWriter, Write},
+    fs::File,
+    io::{BufWriter, Write},
     ops::Bound,
     path::PathBuf,
 };
 
-use alignment::AlignmentData;
 use chunks::ProximityGroup;
 
-use anyhow::{anyhow, Context, Ok, Result};
+use anyhow::{Context, Ok, Result};
 use clap::{Args, Parser};
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -55,13 +56,11 @@ use viz::VizConstraint;
 use crate::{
     annotation::AmbiguousAnnotation,
     chunks::validate_groups,
+    formats::load_alignments,
     join_estimation::{BayesianJoinEstimator, BayesianJoinStatistics},
     pipeline::{run_history_trace, run_naive_trace, NaiveTraceResults},
     trace_statistics::{trace_statistics, OccuranceCountingMode, TraceStatistics},
-    viz::{
-        stats::{write_family_statistics, write_inversion_statistics},
-        write_index_file, ICON_SVG,
-    },
+    viz::SodaVizWriter,
 };
 
 #[cfg(not(target_env = "msvc"))]
@@ -82,6 +81,10 @@ pub struct AuroraArgs {
     /// The path to substitution matrices
     #[arg()]
     matrices: String,
+
+    /// The path to FASTA formatted sequences, only required for BPAF format.
+    #[arg()]
+    fasta: Option<String>,
 
     #[command(flatten)]
     #[clap(next_help_heading = "Annotation options")]
@@ -332,93 +335,22 @@ pub struct VisualizationArgs {
     #[arg(long = "debug")]
     pub debug: bool,
 
-    /// Disable history tracing entirely, dumping only visuals.
-    #[arg(long = "disable-tracing")]
-    pub disable_tracing: bool,
-
-    #[clap(skip)]
-    pub viz_reference_bed_index: HashMap<String, usize>,
+    /// Exclude regions with no competing annotations from the visualization output.
+    /// These regions will still show up in aurora's output.
+    #[arg(long = "viz-hide-simple-regions")]
+    pub viz_hide_simple_regions: bool,
 }
 
 fn main() -> Result<()> {
     let mut args = AuroraArgs::parse();
     let viz_args = &mut args.visualization_args;
 
-    if viz_args.viz {
-        if let Result::Ok(metadata) = fs::metadata(&viz_args.viz_output_path) {
-            if metadata.is_dir() {
-                // TODO: real error
-                return Result::Err(anyhow!(
-                    "directory: '{}' already exists",
-                    viz_args.viz_output_path.to_str().unwrap_or("?")
-                ));
-            }
-        }
-
-        if let Some(path) = &viz_args.viz_reference_bed_path {
-            let file = File::open(path).context(format!(
-                "failed to open viz reference bed file: '{}'",
-                path.to_str().unwrap_or("?")
-            ))?;
-            let reader = BufReader::new(file);
-
-            let mut chrom_list = vec![String::from("sentinel")];
-            let mut prev_start = 0usize;
-            let mut index: HashMap<String, usize> = HashMap::new();
-            reader
-                .lines()
-                .map(|l| l.unwrap())
-                .enumerate()
-                .try_for_each(|(line_num, line)| {
-                    let line_num_info = || format!("failed to read line {}", line);
-
-                    let tokens: Vec<&str> = line.split_whitespace().collect();
-                    let chrom = tokens[0].to_string();
-                    let start = tokens[1].parse::<usize>().with_context(line_num_info)?;
-
-                    let last_chrom = chrom_list.last().context("chrom list is empty")?;
-
-                    if chrom == *last_chrom {
-                        if prev_start > start {
-                            return Result::Err(anyhow!("bed file is unsorted"));
-                        }
-                    } else if !chrom_list.contains(&chrom) {
-                        chrom_list.push(chrom.clone());
-                        index.insert(chrom, line_num);
-                    } else {
-                        return Result::Err(anyhow!("bed file is unsorted"));
-                    }
-
-                    prev_start = start;
-
-                    Ok(())
-                })
-                .context(format!(
-                    "failed to parse bed file: '{}'",
-                    path.to_str().unwrap_or("?")
-                ))?;
-
-            viz_args.viz_reference_bed_index = index;
-        }
-    }
-
-    let alignments_file = File::open(&args.alignments).context(format!(
-        "failed to open alignments file: '{}'",
-        args.alignments
-    ))?;
-    let matrices_file = File::open(&args.matrices)
-        .context(format!("failed to open matrices file: '{}'", args.matrices))?;
-
-    let ultra_file = match args.ultra_args.ultra_file_path {
-        Some(ref path) => Some(File::open(path).context(format!(
-            "failed to open ultra file: '{}'",
-            path.to_str().unwrap_or("?")
-        ))?),
-        None => None,
-    };
-
-    let alignment_data =
-        AlignmentData::from_caf_and_ultra_and_matrices(alignments_file, ultra_file, matrices_file)?;
+    let alignment_data = load_alignments(
+        &args.alignments,
+        args.fasta.as_ref(),
+        &args.matrices,
+        args.ultra_args.ultra_file_path.as_ref(),
+    )?;
 
     let proximity_groups = ProximityGroup::from_alignment_data(
         &alignment_data,
@@ -455,19 +387,18 @@ fn main() -> Result<()> {
             })?;
     }
 
-    if viz_args.viz {
-        create_dir_all(&viz_args.viz_output_path)?;
-        viz_args.viz_output_path = viz_args.viz_output_path.canonicalize()?;
-        let mut index_file = File::create(viz_args.viz_output_path.join("index.html")).unwrap();
-
-        write_index_file(
-            &mut index_file,
-            &alignment_data,
+    let soda_viz = if viz_args.viz {
+        Some(SodaVizWriter::new(
             &proximity_groups,
+            &alignment_data.target_name_map,
+            &viz_args.viz_output_path,
+            viz_args.viz_reference_bed_path.as_ref(),
             &viz_args.viz_constraints,
-        )
-        .context("failed to write to index.html file for visualization")?;
-    }
+            viz_args.viz_hide_simple_regions,
+        )?)
+    } else {
+        None
+    };
 
     debug_assert!(validate_groups(
         &proximity_groups,
@@ -495,7 +426,13 @@ fn main() -> Result<()> {
         .par_iter()
         .panic_fuse()
         .enumerate()
-        .map(|(region_idx, group)| run_naive_trace(group, &alignment_data, region_idx, &args))
+        .map(|(region_idx, group)| {
+            let viz = soda_viz
+                .as_ref()
+                .map(|v| v.new_region(group, &alignment_data, region_idx))
+                .flatten();
+            run_naive_trace(group, &alignment_data, region_idx, viz, &args)
+        })
         .collect::<Vec<NaiveTraceResults<BayesianJoinStatistics>>>();
     naive_results.sort_by_key(|v| v.region_index);
 
@@ -535,26 +472,17 @@ fn main() -> Result<()> {
         }
     }
 
-    if args.visualization_args.viz {
-        let mut family_stats_writer = File::create(
-            args.visualization_args
-                .viz_output_path
-                .join("family_stats.html"),
-        )?;
-        write_family_statistics(
-            &mut family_stats_writer,
-            &results,
-            &alignment_data.query_lengths,
-        )?;
-        let mut inv_stats_writer = File::create(
-            args.visualization_args
-                .viz_output_path
-                .join("inversion_stats.html"),
-        )?;
-        write_inversion_statistics(&mut inv_stats_writer, &results)?;
-        let mut icon_file = File::create(args.visualization_args.viz_output_path.join("icon.svg"))?;
-        icon_file.write_all(ICON_SVG.as_bytes())?;
-    }
+    soda_viz
+        .map(|v| {
+            v.finalize(
+                &proximity_groups,
+                &results,
+                &alignment_data.target_name_map,
+                &alignment_data.query_lengths,
+            )
+        })
+        .transpose()
+        .context("Failed to finalize visual!")?;
 
     Ok(())
 }

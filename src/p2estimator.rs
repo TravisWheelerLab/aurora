@@ -127,7 +127,6 @@ fn _add_sample_to_estimator(data: MutableQuantileEstimatorData, sample: f64) {
         let target_rank = (targets[i] * (*observations) as f64) as usize;
         let current_rank = ranks[i];
         if current_rank.abs_diff(target_rank) > 1 {
-            //println!("{:?}, {}, {}", ranks, i, ranks[i]);
             let new_rank: usize = target_rank.clamp(
                 ranks[i - 1].saturating_add(1),
                 ranks[i + 1].saturating_sub(1),

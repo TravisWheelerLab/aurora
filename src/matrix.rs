@@ -86,8 +86,8 @@ impl MatrixDef {
                 strand_by_logical_row[row_idx] = ali.strand;
 
                 // the start/end of the alignment in terms of the columns of the matrix
-                let col_start = ali.target_start - target_start;
-                let col_end = ali.target_end - target_start;
+                let col_start = ali.target_start.strict_sub(target_start);
+                let col_end = ali.target_end.strict_sub(target_start);
                 num_cells += col_end - col_start + 1;
 
                 col_range_by_logical_row[row_idx] = (col_start, col_end);
@@ -118,7 +118,10 @@ impl MatrixDef {
                     }
                 }
 
-                for (&target_char, &query_char) in ali.target_seq.iter().zip(ali.query_seq.iter()) {
+                for (target_char, query_char) in ali
+                    .target_aligned_sequence()
+                    .zip(ali.query_aligned_sequence())
+                {
                     match target_char {
                         GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => {
                             // if the target character is a gap, we advance the

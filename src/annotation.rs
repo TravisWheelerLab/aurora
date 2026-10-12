@@ -3,7 +3,7 @@ use std::fmt::Display;
 use crate::alignment::Strand;
 use itertools::Itertools;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SimpleAnnotation {
     pub target_start: usize,
     pub target_end: usize,
@@ -15,7 +15,7 @@ pub struct SimpleAnnotation {
     pub kimura80: f64,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AmbiguousAnnotation {
     pub target_name: String,
     pub annotations: Vec<SimpleAnnotation>,

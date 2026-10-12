@@ -1276,7 +1276,7 @@ fn history_backtrace_append_block(
     region_idx: usize,
 ) -> Option<AddedBlockInfo> {
     // Case 1: Same row index and touches start of segment in front of it, extend the segment backwards to include this...
-    let stack_size = refined_segments.len() - 1;
+    let stack_size = refined_segments.len();
 
     if let Some(ref_seg) = refined_segments.last_mut() {
         let direct_extensions =
@@ -1288,7 +1288,7 @@ fn history_backtrace_append_block(
             ref_seg.annotated = direct_extensions;
             return Some(AddedBlockInfo {
                 history_index: current_history_index,
-                trace_stack_index: stack_size,
+                trace_stack_index: stack_size - 1,
                 join_index: ref_seg.join_index,
             });
         }
