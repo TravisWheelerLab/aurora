@@ -89,8 +89,12 @@ where
     let get_and_format = |v| formatter(&prop_ref(v));
 
     if !simplify {
-        if let Result::Ok(val) = simple_annotations.iter().map(prop_ref).all_equal_value() {
-            formatter(&val)
+        if let Result::Ok(val) = simple_annotations
+            .iter()
+            .map(get_and_format)
+            .all_equal_value()
+        {
+            val
         } else {
             simple_annotations.iter().map(get_and_format).join(",")
         }
@@ -121,7 +125,7 @@ fn get_strings(simple_annotations: &[SimpleAnnotation], simplify: bool) -> [Stri
             simple_annotations,
             |v| v.kimura80,
             simplify,
-            |v| format!("{:4.3}", v),
+            |v| format!("{:.3}", v),
         ),
     ]
 }
