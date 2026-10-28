@@ -188,7 +188,7 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
 
     let skip_state_score = approximate_ideal_skip_state_score(
         &score_params,
-        annot_args.query_jump_penalty,
+        annot_args.num_skip_loops_eq_to_jump as f64,
         annot_args.skip_state_score_shift,
     );
 
