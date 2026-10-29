@@ -12,8 +12,7 @@ async function load_b64_gzip_json(text) {
   } else {
     text = btoa(text);
     rawText = new Uint8Array(text.length);
-    for (let i = 0; i < text.length; i++)
-      rawText[i] = text.charCodeAt(i);
+    for (let i = 0; i < text.length; i++) rawText[i] = text.charCodeAt(i);
   }
 
   const json = new TextDecoder().decode(fzstd.decompress(rawText));
@@ -25,24 +24,30 @@ async function bootstrap() {
   let data_elm = document.getElementById("data");
 
   if (!data_elm) {
-    console.error("Unable to find annotation data.")
+    console.error("Unable to find annotation data.");
     document.body.innerText = "Unable to find annotation data.";
     return;
   }
 
   let data = await load_b64_gzip_json(data_elm.textContent);
 
-  if(confidences) {
-    data.alignmentConfidences = await load_b64_gzip_json(confidences.textContent);
+  if (confidences) {
+    data.alignmentConfidences = await load_b64_gzip_json(
+      confidences.textContent,
+    );
   }
 
   window.auroraData = data;
 
   let parser = new DOMParser();
-  let relative_path = document.getElementById("code").src.split("/").slice(0, -1);
-  let html_template = HTML_TEMPLATE
-    .replace("ICON_PATH_TARGET", [...relative_path, "icon.svg"].join("/"))
-    .replace("INDEX_PATH_TARGET", [...relative_path, "index.html"].join("/"));
+  let relative_path = document
+    .getElementById("code")
+    .src.split("/")
+    .slice(0, -1);
+  let html_template = HTML_TEMPLATE.replace(
+    "ICON_PATH_TARGET",
+    [...relative_path, "icon.svg"].join("/"),
+  ).replace("INDEX_PATH_TARGET", [...relative_path, "index.html"].join("/"));
   let template_doc = parser.parseFromString(html_template, "text/html");
 
   // Update the page...
@@ -51,7 +56,6 @@ async function bootstrap() {
 
   run(data);
 }
-
 
 function run(data) {
   document
@@ -72,51 +76,50 @@ function run(data) {
   let optionTimeoutId = 0;
 
   let classColorCache = {
-    "sine": "#1f77b4",
-    "line": "#ff7f0e",
-    "ltr": "#2ca02c",
-    "dna": "#d62728",
-    "simple": "#9467bd",
-    "low_complexity": "#8c564b",
-    "satellite": "#e377c2",
-    "rna": "#7f7f7f",
-    "other": "#bcbd22",
-    "unknown": "#17becf",
-    "unspecified": "#17becf",
-    "simple_repeat": "#d13d8e",
+    sine: "#1f77b4",
+    line: "#ff7f0e",
+    ltr: "#2ca02c",
+    dna: "#d62728",
+    simple: "#9467bd",
+    low_complexity: "#8c564b",
+    satellite: "#e377c2",
+    rna: "#7f7f7f",
+    other: "#bcbd22",
+    unknown: "#17becf",
+    unspecified: "#17becf",
+    simple_repeat: "#d13d8e",
     "tandem-repeat": "#d13d8e",
-  }
+  };
 
   function stringToColor(s, heavyChars = 5) {
-      let validChars = 69;
-      let hash = 0;
-      let revHash = 0;
-      let multiplier = 360 * (2 ** heavyChars);
-      let stepDivisor = 2;
-      let range = 360;
+    let validChars = 69;
+    let hash = 0;
+    let revHash = 0;
+    let multiplier = 360 * 2 ** heavyChars;
+    let stepDivisor = 2;
+    let range = 360;
 
-      let m = multiplier / (validChars - 1);
+    let m = multiplier / (validChars - 1);
 
-      for(let i = 0; i < s.length; i++) {
-          hash = (hash + charToNumber(s.charAt(i)) * m) % range;
-          revHash = (revHash + charToNumber(s.charAt(s.length - (1 + i))) * m) % range;
-          m /= stepDivisor;
-      }
+    for (let i = 0; i < s.length; i++) {
+      hash = (hash + charToNumber(s.charAt(i)) * m) % range;
+      revHash =
+        (revHash + charToNumber(s.charAt(s.length - (1 + i))) * m) % range;
+      m /= stepDivisor;
+    }
 
-      let sat = 60 + (revHash % 30);
-      let light = 30 + ((revHash * 30) % 50);
+    let sat = 60 + (revHash % 30);
+    let light = 30 + ((revHash * 30) % 50);
 
-      return "hsl(" + hash + ", " + sat + "%, " + light + "%)";
+    return "hsl(" + hash + ", " + sat + "%, " + light + "%)";
   }
 
-
   function charToNumber(char) {
-      if("a" <= char && char <= "z") {
-          return (char.charCodeAt(0) - "a".charCodeAt(0)) + 1;
-      }
-      else {
-          return 0;
-      }
+    if ("a" <= char && char <= "z") {
+      return char.charCodeAt(0) - "a".charCodeAt(0) + 1;
+    } else {
+      return 0;
+    }
   }
 
   function classColorFromName(name) {
@@ -125,7 +128,7 @@ function run(data) {
 
       if (nameSplit.length > 1) {
         let c = nameSplit[1].split("/")[0].toLowerCase();
-        if(!(c in classColorCache)) {
+        if (!(c in classColorCache)) {
           classColorCache[c] = stringToColor(c);
         }
         return classColorCache[c];
@@ -1436,13 +1439,13 @@ function run(data) {
     return { confidenceSegments };
   }
 
-  function prepareSegments(segmentStrings, targetStart) {
+  function prepareSegments(segmentStrings, targetStart, includesEntryStates) {
     let segments = [];
 
     for (const [index, seg] of segmentStrings.entries()) {
       let tokens = seg.split(",");
-      let start = parseInt(tokens[0]) + targetStart;
-      let end = parseInt(tokens[1]) + targetStart;
+      let start = parseInt(tokens[0]) + targetStart - includesEntryStates;
+      let end = parseInt(tokens[1]) + targetStart - includesEntryStates;
       let history_count = parseInt(tokens[2]);
       segments.push({
         id: `segment-${index}`,
@@ -1456,7 +1459,7 @@ function run(data) {
     return segments;
   }
 
-  function prepareBlocks(blockStrings, targetStart) {
+  function prepareBlocks(blockStrings, targetStart, includesEntryStates) {
     let blocks = [];
 
     for (const [index, blk] of blockStrings.entries()) {
@@ -1465,8 +1468,8 @@ function run(data) {
       let block = parseInt(tokens[1]);
       let row = parseInt(tokens[2]);
       let query_id = parseInt(tokens[3]);
-      let start = parseInt(tokens[4]) + targetStart;
-      let end = parseInt(tokens[5]) + targetStart;
+      let start = parseInt(tokens[4]) + targetStart - includesEntryStates;
+      let end = parseInt(tokens[5]) + targetStart - includesEntryStates;
       let join_to = parseInt(tokens[6]);
 
       let confidence = parseFloat(tokens[7]);
@@ -1614,8 +1617,16 @@ function run(data) {
       competedAssemblyRows: data.competedAssemblyRows,
       ...prepareInactiveSegments(data.inactiveSegmentStrings),
       ...prepareConfidenceSegments(data.confidenceSegmentStrings),
-      historySegments: prepareSegments(data.historySegments, data.targetStart),
-      historyBlocks: prepareBlocks(data.historyBlocks, data.targetStart),
+      historySegments: prepareSegments(
+        data.historySegments,
+        data.targetStart,
+        data.includesEntryStates,
+      ),
+      historyBlocks: prepareBlocks(
+        data.historyBlocks,
+        data.targetStart,
+        data.includesEntryStates,
+      ),
       alignmentConfidences: prepareAlignmentConfidences(
         data.alignmentConfidences,
       ),
@@ -1726,6 +1737,6 @@ function run(data) {
   }
 }
 
-document.addEventListener("DOMContentLoaded", function() {
+document.addEventListener("DOMContentLoaded", function () {
   bootstrap();
 });

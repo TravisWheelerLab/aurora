@@ -351,7 +351,12 @@ where
                 let prior_active = self.def.ali_ids_by_col[col_idx.saturating_sub(1)]
                     .iter()
                     .any(|&id| id != 0);
-                current_active || prior_active
+                let future_active = self.def.ali_ids_by_col
+                    [col_idx.saturating_add(1).min(self.num_cols() - 1)]
+                .iter()
+                .any(|&id| id != 0);
+
+                current_active || prior_active || future_active
             })
             .collect()
     }

@@ -356,6 +356,7 @@ pub fn run_history_trace<T: JoinEstimator, S: JoinStatisticsCollector>(
                 segments,
                 history_counts: &get_history_lengths(&history),
                 links: &assembly_graph,
+                includes_entry_states: naive_trace.includes_entry_states,
             })
             .expect("Unable to write visualization!");
     }
