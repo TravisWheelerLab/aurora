@@ -372,9 +372,10 @@ impl<'a> AdjudicationSodaData<'a> {
             // constraint filter
             .filter(|s| {
                 let bound = s.max_bounds();
+                let shift = self.includes_entry_states as usize;
 
-                bound.0 + self.target_start() <= self.constrained_target_end()
-                    && bound.1 + self.target_start() >= self.constrained_target_start()
+                bound.0 + self.target_start() - shift <= self.constrained_target_end()
+                    && bound.1 + self.target_start() - shift >= self.constrained_target_start()
             })
             .flat_map(|seg| seg.annotated.iter().map(|v| self.trace_string(v)))
             .join("|")]
@@ -448,8 +449,8 @@ impl<'a> AdjudicationSodaData<'a> {
                     .filter(move |(_, a)| {
                         a.target_start <= self.constrained_target_end()
                             && a.target_end >= self.constrained_target_start()
-                            && a.target_start < seg_target_end
-                            && a.target_end > seg_target_start
+                            && a.target_start <= seg_target_end
+                            && a.target_end >= seg_target_start
                     })
                     // get the row idx of the assembly
                     .map(|(i, a)| (i + 1, a))
