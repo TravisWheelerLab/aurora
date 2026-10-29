@@ -31,7 +31,10 @@ pub fn to_annotations(
     alignment_data: &AlignmentData,
     trace_segments: &[RefinedTraceSegment],
     region_idx: usize,
+    includes_entry_states: bool,
 ) -> Vec<AmbiguousAnnotation> {
+    let target_shift = includes_entry_states as usize;
+
     trace_segments
         .iter()
         .filter(|v| v.annotated.iter().any(|a| a.row_idx != 0))
@@ -49,8 +52,10 @@ pub fn to_annotations(
                     .iter()
                     .map(|a| {
                         SimpleAnnotation {
-                            target_start: a.col_start + proximity_group.target_start,
-                            target_end: a.col_end + proximity_group.target_start,
+                            target_start: a.col_start
+                                + proximity_group.target_start.strict_sub(target_shift),
+                            target_end: a.col_end
+                                + proximity_group.target_start.strict_sub(target_shift),
                             query_id: a.query_id.unwrap_or(0),
                             query_name: match a.row_idx {
                                 // 0 is the skip state row
@@ -151,6 +156,7 @@ pub struct NaiveTraceResults<T: JoinStatisticsCollector> {
     pub query_join_statistics: Vec<(usize, T)>,
     pub viz_writer: Option<RegionAdjudicationSodaWriter>,
     pub region_index: usize,
+    pub includes_entry_states: bool,
 }
 
 pub fn run_naive_trace<T: JoinStatisticsCollector>(
@@ -168,7 +174,7 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
         annot_args.num_skip_loops_eq_to_jump,
     );
 
-    let matrix_def = MatrixDef::from_proximity_group(proximity_group);
+    let matrix_def = MatrixDef::from_proximity_group(proximity_group, true);
 
     let mut confidence_matrix = Matrix::<f64>::new(&matrix_def);
 
@@ -264,6 +270,7 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
         query_join_statistics,
         viz_writer: region_viz_writer,
         region_index: region_idx,
+        includes_entry_states: confidence_matrix.def.has_entry_states,
     }
 }
 
@@ -329,6 +336,7 @@ pub fn run_history_trace<T: JoinEstimator, S: JoinStatisticsCollector>(
         alignment_data,
         &refined_trace_segments,
         naive_trace.region_index,
+        naive_trace.includes_entry_states,
     );
 
     if let Some(viz_writer) = naive_trace.viz_writer.as_mut() {

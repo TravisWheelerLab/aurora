@@ -415,6 +415,7 @@ fn windowed_score_alignment(
             0.0
         } else {
             (substitution_matrix.gap_open() + (gap_length - 1.0) * substitution_matrix.gap_extend())
+            // TODO: Why this division here???
                 / gap_length
         }
     };
