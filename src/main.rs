@@ -150,9 +150,10 @@ pub struct AnnotationArgs {
     #[arg(
         short = 'J',
         long = "query-jump",
-        default_value = "-127.0",
+        default_value = "-127.0",//"-127.0",
         value_name = "f",
-        value_parser = ranged::<f64>(..-1.0)
+        value_parser = ranged::<f64>(..-1.0),
+        allow_negative_numbers = true
     )]
     pub query_jump_penalty: f64,
 
@@ -246,7 +247,8 @@ pub struct AnnotationArgs {
         short = 'S',
         long = "skip-state-penalty",
         default_value = "0.0",
-        value_name = "f"
+        value_name = "f",
+        allow_negative_numbers = true
     )]
     pub skip_state_score_shift: f64,
 
@@ -272,7 +274,12 @@ pub struct AnnotationArgs {
     /// The lowest score a history can have before being pruned.
     /// This is relative to the best scoring history for a segment.
     /// Set to 0 or greater to disable.
-    #[arg(long = "min-history-score", default_value = "-500.0", value_name = "f")]
+    #[arg(
+        long = "min-history-score",
+        default_value = "-500.0",
+        value_name = "f",
+        allow_negative_numbers = true
+    )]
     pub min_relative_history_score: f64,
 }
 
