@@ -87,7 +87,7 @@ pub struct AuroraArgs {
     fasta: Option<String>,
 
     /// Display currently installed version of aurora.
-    #[arg(long, default_value="false", action = ArgAction::Version)]
+    #[arg(long, action = ArgAction::Version)]
     pub version: (),
 
     #[command(flatten)]
