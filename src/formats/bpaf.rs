@@ -371,7 +371,7 @@ fn parse_sequence_record(index: usize, entry: ULEBEntry) -> Result<SequenceEntry
     let mask_run_count = read_le_from_array!(data, data_offset, u32)?;
     data_offset += mask_run_count as usize * 2 * size_of::<u32>();
 
-    let two_bit_length = dna_ends
+    let two_bit_length = data_ends
         .get(data_ends.len() & 0xFFFFFFFE)
         .copied()
         .unwrap_or(0) as usize;
@@ -386,7 +386,7 @@ fn parse_sequence_record(index: usize, entry: ULEBEntry) -> Result<SequenceEntry
     let mut data_offset_4 = 0;
     let mut sequence = vec![0u8; dna_length as usize];
 
-    for (i, (&run_end, &run_data_end)) in data_ends.iter().zip(data_ends.iter()).enumerate() {
+    for (i, (&run_end, &run_data_end)) in dna_ends.iter().zip(data_ends.iter()).enumerate() {
         if i % 2 == 0 {
             let data_run_length = run_data_end - data_offset_2;
 

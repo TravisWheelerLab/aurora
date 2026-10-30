@@ -46,7 +46,7 @@ use std::{
 use chunks::ProximityGroup;
 
 use anyhow::{Context, Ok, Result};
-use clap::{Args, Parser};
+use clap::{ArgAction, Args, Parser};
 use itertools::Itertools;
 use rayon::prelude::*;
 use std::str::FromStr;
@@ -71,8 +71,8 @@ use tikv_jemallocator::Jemalloc;
 static GLOBAL: Jemalloc = Jemalloc;
 
 #[derive(Debug, Parser, Clone)]
-#[command(name = "aurora")]
-#[command(about = "stuff")]
+#[command(name = "aurora", version, disable_version_flag = true)]
+#[command(about = "Aurora is a tool that performs biological sequence annotation adjudication.")]
 pub struct AuroraArgs {
     /// The path to CAF formatted alignments
     #[arg()]
@@ -85,6 +85,10 @@ pub struct AuroraArgs {
     /// The path to FASTA formatted sequences, only required for BPAF format.
     #[arg()]
     fasta: Option<String>,
+
+    /// Display currently installed version of aurora.
+    #[arg(long, action = ArgAction::Version)]
+    pub version: bool,
 
     #[command(flatten)]
     #[clap(next_help_heading = "Annotation options")]
