@@ -29,10 +29,11 @@ pub fn load_ultra_file(alignment_data: &mut AlignmentData, ultra_file: impl Read
         if let Some(target_id) = alignment_data.target_name_map.key(&r.sequence_name) {
             if let Some(group) = alignment_data.target_groups.get_mut(target_id) {
                 group.tandem_repeats.push(TandemRepeat {
-                    // TODO: figure out if ultra uses 0- or 1-based indexing
+                    // Ultra uses 0-based indexing for tandem repeats...
                     id: 0, // The id is set durring normalization...
-                    target_start: r.start,
-                    target_end: r.start + r.length - 1,
+                    target_start: r.start + 1,
+                    // Odd formula is because aurora expects this to be inclusive...
+                    target_end: r.start + r.length,
                     consensus_pattern: r.consensus,
                     period: r.period,
                     scores: r.position_score_deltas,
