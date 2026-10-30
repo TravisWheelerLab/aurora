@@ -26,7 +26,7 @@ pub struct MatrixDef {
     pub num_rows: usize,
     /// The number of columns in the matrix (also the length of the target sequence)
     pub num_cols: usize,
-    /// The logical start position of the target sequence
+    /// The logical start position of the target sequence, 1-based
     pub target_start: usize,
     /// The total number of active cells in the matrix
     #[allow(dead_code)]
@@ -48,12 +48,14 @@ pub struct MatrixDef {
     pub query_id_by_logical_row: Vec<usize>,
     /// For each row, the strand of the alignment that corresponds to that row
     pub strand_by_logical_row: Vec<Strand>,
+    /// If true, this matrix includes entry skip states on both sides, and target start value is actually one less than the true value.
+    pub has_entry_states: bool,
 }
 
 impl MatrixDef {
-    pub fn from_proximity_group(group: &ProximityGroup) -> Self {
-        let target_start = group.target_start;
-        let target_end = group.target_end;
+    pub fn from_proximity_group(group: &ProximityGroup, include_entry_states: bool) -> Self {
+        let target_start = group.target_start.strict_sub(include_entry_states as usize);
+        let target_end = group.target_end.strict_add(include_entry_states as usize);
 
         // +1 for the skip state
         let num_rows = group.alignments.len() + group.tandem_repeats.len() + 1;
@@ -197,6 +199,7 @@ impl MatrixDef {
             col_range_by_logical_row,
             query_id_by_logical_row,
             strand_by_logical_row,
+            has_entry_states: include_entry_states,
         }
     }
 
@@ -348,7 +351,12 @@ where
                 let prior_active = self.def.ali_ids_by_col[col_idx.saturating_sub(1)]
                     .iter()
                     .any(|&id| id != 0);
-                current_active || prior_active
+                let future_active = self.def.ali_ids_by_col
+                    [col_idx.saturating_add(1).min(self.num_cols() - 1)]
+                .iter()
+                .any(|&id| id != 0);
+
+                current_active || prior_active || future_active
             })
             .collect()
     }

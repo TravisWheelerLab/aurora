@@ -46,7 +46,7 @@ use std::{
 use chunks::ProximityGroup;
 
 use anyhow::{Context, Ok, Result};
-use clap::{Args, Parser};
+use clap::{ArgAction, Args, Parser};
 use itertools::Itertools;
 use rayon::prelude::*;
 use std::str::FromStr;
@@ -71,8 +71,8 @@ use tikv_jemallocator::Jemalloc;
 static GLOBAL: Jemalloc = Jemalloc;
 
 #[derive(Debug, Parser, Clone)]
-#[command(name = "aurora")]
-#[command(about = "stuff")]
+#[command(name = "aurora", version, disable_version_flag = true)]
+#[command(about = "Aurora is a tool that performs biological sequence annotation adjudication.")]
 pub struct AuroraArgs {
     /// The path to CAF formatted alignments
     #[arg()]
@@ -85,6 +85,10 @@ pub struct AuroraArgs {
     /// The path to FASTA formatted sequences, only required for BPAF format.
     #[arg()]
     fasta: Option<String>,
+
+    /// Display currently installed version of aurora.
+    #[arg(long, action = ArgAction::Version)]
+    pub version: bool,
 
     #[command(flatten)]
     #[clap(next_help_heading = "Annotation options")]
@@ -150,9 +154,10 @@ pub struct AnnotationArgs {
     #[arg(
         short = 'J',
         long = "query-jump",
-        default_value = "-127.0",
+        default_value = "-127.0",//"-127.0",
         value_name = "f",
-        value_parser = ranged::<f64>(..-1.0)
+        value_parser = ranged::<f64>(..-1.0),
+        allow_negative_numbers = true
     )]
     pub query_jump_penalty: f64,
 
@@ -246,7 +251,8 @@ pub struct AnnotationArgs {
         short = 'S',
         long = "skip-state-penalty",
         default_value = "0.0",
-        value_name = "f"
+        value_name = "f",
+        allow_negative_numbers = true
     )]
     pub skip_state_score_shift: f64,
 
@@ -272,7 +278,12 @@ pub struct AnnotationArgs {
     /// The lowest score a history can have before being pruned.
     /// This is relative to the best scoring history for a segment.
     /// Set to 0 or greater to disable.
-    #[arg(long = "min-history-score", default_value = "-500.0", value_name = "f")]
+    #[arg(
+        long = "min-history-score",
+        default_value = "-500.0",
+        value_name = "f",
+        allow_negative_numbers = true
+    )]
     pub min_relative_history_score: f64,
 }
 

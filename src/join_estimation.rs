@@ -220,9 +220,31 @@ impl From<&MedianEstimator> for HalfT {
 
 impl From<&BayesianJoinStatistics> for BayesianJoinEstimator {
     fn from(statistics: &BayesianJoinStatistics) -> Self {
+        let (target_distance_join, target_distance_nojoin) = if statistics
+            .joinable_target_distance
+            .mean()
+            > statistics.unjoinable_target_distance.mean()
+        {
+            eprintln!("Warning: joins found to have larger target distance than non-joins, using fallback...");
+            let s1 = statistics.joinable_target_distance.samples();
+            let s2 = statistics.unjoinable_target_distance.samples();
+            let m1 = statistics.joinable_target_distance.mean();
+            let m2 = statistics.unjoinable_target_distance.mean();
+            let total_mean = s1 as f64 / (s1 + s2) as f64 * m1 + s2 as f64 / (s1 + s2) as f64 * m2;
+            (
+                ExponentialEstimator::new(total_mean / 2.0, s1 + s2),
+                ExponentialEstimator::new(total_mean, s1 + s2),
+            )
+        } else {
+            (
+                (&statistics.joinable_target_distance).into(),
+                (&statistics.unjoinable_target_distance).into(),
+            )
+        };
+
         Self {
-            target_distance_join: (&statistics.joinable_target_distance).into(),
-            target_distance_nojoin: (&statistics.unjoinable_target_distance).into(),
+            target_distance_join,
+            target_distance_nojoin,
             divergence_join: (&statistics.joinable_divergence).into(),
             divergence_nojoin: HalfT::from_sample_mean(
                 statistics

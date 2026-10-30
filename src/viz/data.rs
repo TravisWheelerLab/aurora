@@ -32,6 +32,7 @@ pub struct FullAdjudicationSodaDataArgs<'a> {
     pub links: &'a SegmentAssemblyGraph,
     pub viz_bed_path: Option<&'a PathBuf>,
     pub viz_bed_offset: Option<(u64, usize)>,
+    pub includes_entry_states: bool,
 }
 
 pub struct AdjudicationSodaData<'a> {
@@ -48,6 +49,7 @@ pub struct AdjudicationSodaData<'a> {
     links: &'a SegmentAssemblyGraph,
     viz_bed_path: Option<&'a PathBuf>,
     viz_bed_offset: Option<(u64, usize)>,
+    includes_entry_states: bool,
 }
 
 impl<'a> AdjudicationSodaData<'a> {
@@ -66,6 +68,7 @@ impl<'a> AdjudicationSodaData<'a> {
             links: args.links,
             viz_bed_path: args.viz_bed_path,
             viz_bed_offset: args.viz_bed_offset,
+            includes_entry_states: args.includes_entry_states,
         }
     }
 
@@ -104,6 +107,7 @@ impl<'a> AdjudicationSodaData<'a> {
             "confidenceSegmentStrings": self.confidence_segment_strings(),
             "historySegments": self.history_segments(),
             "historyBlocks": self.history_blocks(),
+            "includesEntryStates": self.includes_entry_states,
         }))
     }
 
@@ -350,10 +354,11 @@ impl<'a> AdjudicationSodaData<'a> {
     }
 
     fn trace_string(&self, seg: &AnnotatedRange) -> String {
+        let shift = self.includes_entry_states as usize;
         format!(
             "{},{},{},{},{:3.2}",
-            seg.col_start,
-            seg.col_end,
+            seg.col_start - shift,
+            seg.col_end - shift,
             seg.query_id.unwrap_or(0),
             seg.row_idx,
             seg.avg_confidence
@@ -367,9 +372,10 @@ impl<'a> AdjudicationSodaData<'a> {
             // constraint filter
             .filter(|s| {
                 let bound = s.max_bounds();
+                let shift = self.includes_entry_states as usize;
 
-                bound.0 + self.target_start() <= self.constrained_target_end()
-                    && bound.1 + self.target_start() >= self.constrained_target_start()
+                bound.0 + self.target_start() - shift <= self.constrained_target_end()
+                    && bound.1 + self.target_start() - shift >= self.constrained_target_start()
             })
             .flat_map(|seg| seg.annotated.iter().map(|v| self.trace_string(v)))
             .join("|")]
@@ -398,6 +404,7 @@ impl<'a> AdjudicationSodaData<'a> {
 
     fn inactive_segment_strings(&self) -> Vec<Vec<String>> {
         let mut inactive_col_ranges: Vec<(usize, usize)> = vec![];
+        let shift = self.includes_entry_states as usize;
         self.active_columns
             .iter()
             .zip(self.active_columns.iter().skip(1))
@@ -412,8 +419,8 @@ impl<'a> AdjudicationSodaData<'a> {
             .map(|(start, end)| {
                 format!(
                     "{},{}",
-                    start + self.target_start(),
-                    end + self.target_start()
+                    start + self.target_start() - shift,
+                    end + self.target_start() - shift
                 )
             })
             .collect_vec()]
@@ -427,9 +434,10 @@ impl<'a> AdjudicationSodaData<'a> {
             // target start & end coordinates
             .map(|seg| {
                 let bounds = seg.max_bounds();
+                let shift = self.includes_entry_states as usize;
                 (
-                    bounds.0 + self.target_start(),
-                    bounds.1 + self.target_start(),
+                    bounds.0 + self.target_start() - shift,
+                    bounds.1 + self.target_start() - shift,
                 )
             })
             .flat_map(|(seg_target_start, seg_target_end)| {
@@ -441,8 +449,8 @@ impl<'a> AdjudicationSodaData<'a> {
                     .filter(move |(_, a)| {
                         a.target_start <= self.constrained_target_end()
                             && a.target_end >= self.constrained_target_start()
-                            && a.target_start < seg_target_end
-                            && a.target_end > seg_target_start
+                            && a.target_start <= seg_target_end
+                            && a.target_end >= seg_target_start
                     })
                     // get the row idx of the assembly
                     .map(|(i, a)| (i + 1, a))

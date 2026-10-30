@@ -460,6 +460,7 @@ pub struct AdjudicationSodaDataArgs<'a> {
     pub segments: &'a SegmentedMatrix,
     pub history_counts: &'a [usize],
     pub links: &'a SegmentAssemblyGraph,
+    pub includes_entry_states: bool,
 }
 
 impl RegionAdjudicationSodaWriter {
@@ -632,6 +633,7 @@ impl RegionAdjudicationSodaWriter {
             links: args.links,
             viz_bed_path: self.viz_bed_path.as_ref(),
             viz_bed_offset: self.viz_bed_offset,
+            includes_entry_states: args.includes_entry_states,
         });
         let html_end = Self::DATA_TEMPLATE
             .split_once("FILE_SPLIT_POINT")

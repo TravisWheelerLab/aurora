@@ -11,11 +11,11 @@ pub struct ScoreParams {
 }
 
 pub fn approximate_ideal_skip_state_score(
+    score_params: &ScoreParams,
     num_skip_loops_match_jump: f64,
-    query_jump_penalty_nats: f64,
     penalty_shift: f64,
 ) -> f64 {
-    -(query_jump_penalty_nats / num_skip_loops_match_jump) + penalty_shift
+    -(score_params.query_jump_score / num_skip_loops_match_jump) + penalty_shift
 }
 
 fn fast_select(a: f64, b: f64, switch: bool) -> f64 {
