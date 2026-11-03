@@ -521,10 +521,8 @@ pub fn segments_from_matrix_trace(
                 let confidence_value = confidence_matrix.get_sparse(score_idx, column);
 
                 row_scores[row_idx] += trans_cost + confidence_value.ln();
-                if score_idx != 0 {
-                    row_conf_sum[row_idx] += confidence_value;
-                    row_valid_cell_count[row_idx] += 1;
-                }
+                row_conf_sum[row_idx] += confidence_value;
+                row_valid_cell_count[row_idx] += 1;
 
                 // Set for the next column...
                 prior_val[row_idx] = score_idx;
