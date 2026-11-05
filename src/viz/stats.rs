@@ -61,8 +61,9 @@ fn write_tsv<const N: usize, A: std::fmt::Display, B: std::fmt::Display>(
     Ok(())
 }
 
-fn write_statistics_table_page<const N: usize, A: std::fmt::Display, B: std::fmt::Display>(
+pub fn write_statistics_table_page<const N: usize, A: std::fmt::Display, B: std::fmt::Display>(
     writer: &mut impl Write,
+    extra_page_content: &str,
     title: &str,
     header: &[A; N],
     data: &[[B; N]],
@@ -74,6 +75,7 @@ fn write_statistics_table_page<const N: usize, A: std::fmt::Display, B: std::fmt
     let table_page = TABLE_HTML
         .replace("PAGE_TITLE", title)
         .replace("SODA_TARGET", SodaVizWriter::SODA_JS)
+        .replace("PAGE_CONTENT", extra_page_content)
         .replace(
             "TSV_TARGET",
             str::from_utf8(&tmp_writer).expect("UTF8 decoding failed!"),
@@ -230,6 +232,7 @@ pub fn write_target_statistics(
 
     write_statistics_table_page(
         stats_writer,
+        "<br><a href=\"index.html\">&lt Back</a><br>",
         "Target Statistics",
         &[
             "Target_Name_string",
@@ -304,6 +307,7 @@ pub fn write_family_statistics(
 
     write_statistics_table_page(
         stats_writer,
+        "<br><a href=\"index.html\">&lt Back</a><br>",
         "Family Statistics",
         &[
             "Family_string",
@@ -373,6 +377,7 @@ pub fn write_inversion_statistics(
 
     write_statistics_table_page(
         stats_writer,
+        "<br><a href=\"index.html\">&lt Back</a><br>",
         "Inversion Statistics",
         &["Region_region", "Inversions_int", "Normal_Joins_int"],
         &inversion_stats

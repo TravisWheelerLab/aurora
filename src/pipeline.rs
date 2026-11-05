@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, fs};
 
 use itertools::Itertools;
 
@@ -209,7 +209,24 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
     )
     .unwrap();
 
+    if let Some(viz_writer) = region_viz_writer.as_mut() {
+        if args.visualization_args.debug {
+            viz_writer
+                .write_matrix("windowed_score", &confidence_matrix)
+                .expect("Unable to write windowed_score matrix!");
+        }
+    }
+
     confidence(&mut confidence_matrix);
+
+    if let Some(viz_writer) = region_viz_writer.as_mut() {
+        if args.visualization_args.debug {
+            viz_writer
+                .write_matrix("unwindowed_confidence", &confidence_matrix)
+                .expect("Unable to write unwindowed_confidence matrix!");
+        }
+    }
+
     let confidence_by_row = windowed_confidence(
         &mut confidence_matrix,
         args.annotation_args.score_window_size,
@@ -247,9 +264,9 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
     }
 
     if let Some(viz_writer) = region_viz_writer.as_mut() {
-        if args.visualization_args.viz_enable_scores {
+        if args.visualization_args.viz_enable_scores || args.visualization_args.debug {
             viz_writer
-                .write_confidences(&confidence_matrix)
+                .write_matrix("confidence", &confidence_matrix)
                 .expect("Unable to write confidences!!!");
         }
     }
@@ -306,28 +323,46 @@ pub fn run_history_trace<T: JoinEstimator, S: JoinStatisticsCollector>(
     let history_lengths = get_history_lengths(&history);
 
     if args.visualization_args.debug {
-        dump_debug_history_info(
-            &history,
-            segments,
-            proximity_group.target_start,
-            &history_lengths,
-            vis_args.viz_output_path.join("history_info.csv"),
-        )
-        .map_err(|_| eprintln!("Unable to save debug history info!"))
-        .ok();
+        let viz_dir = vis_args
+            .viz_output_path
+            .join(naive_trace.region_index.to_string());
+
+        fs::create_dir_all(&viz_dir)
+            .map(|()| {
+                dump_debug_history_info(
+                    &history,
+                    segments,
+                    proximity_group.target_start,
+                    &history_lengths,
+                    viz_dir.join("history_info.csv"),
+                )
+                .map_err(|_| eprintln!("Unable to save debug history info!"))
+                .ok();
+            })
+            .map_err(|_| eprintln!("Unable to save debug history info!"))
+            .ok();
     }
 
     let refined_trace_segments = backtrace_histories(segments, &history, naive_trace.region_index);
 
     if args.visualization_args.debug {
-        dump_final_trace_statistics(
-            &history,
-            segments,
-            &refined_trace_segments,
-            vis_args.viz_output_path.join("final_trace_stats.csv"),
-        )
-        .map_err(|_| eprintln!("Unable to save final trace statistics!"))
-        .ok();
+        let viz_dir = vis_args
+            .viz_output_path
+            .join(naive_trace.region_index.to_string());
+
+        fs::create_dir_all(&viz_dir)
+            .map(|()| {
+                dump_final_trace_statistics(
+                    &history,
+                    segments,
+                    &refined_trace_segments,
+                    viz_dir.join("final_trace_stats.csv"),
+                )
+                .map_err(|_| eprintln!("Unable to save final trace statistics!"))
+                .ok();
+            })
+            .map_err(|_| eprintln!("Unable to save final trace statistics!"))
+            .ok();
     }
 
     // Grab the annotations...

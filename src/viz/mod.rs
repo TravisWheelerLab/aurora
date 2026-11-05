@@ -179,7 +179,8 @@ fn is_simple_proximity_group(group: &ProximityGroup) -> bool {
 impl SodaVizWriter {
     pub const SODA_JS: &str = include_str!("../../fixtures/soda/soda.js");
     pub const ICON_SVG: &'static str = include_str!("../../fixtures/soda/icon-opt.svg");
-    const INDEX_TEMPLATE: &'static str = include_str!("../../fixtures/soda/index.html");
+    const INDEX_HEADER_TEMPLATE: &'static str =
+        include_str!("../../fixtures/soda/index_header.html");
     const FZSTD_JS: &'static str = include_str!("../../fixtures/soda/fzstd.js");
     const HTML_TEMPLATE: &'static str = include_str!("../../fixtures/soda/annotations.html");
     const JS: &'static str = include_str!("../../fixtures/soda/annotations.js");
@@ -331,39 +332,40 @@ impl SodaVizWriter {
         viz_constraints: &[VizConstraint],
         exclude_simple_viz: bool,
     ) -> std::io::Result<()> {
-        let mut index_links = String::new();
-
-        viz_constraints
-            .iter()
-            .enumerate()
-            .for_each(|(idx, c)| {
-                index_links.push_str(&format!(
-                    "<div class=\"region\" data-target=\"{name}\" data-start=\"{start}\" data-end=\"{end}\"><a href=\"{name}-{start}-{end}.html\"><h3>slice {idx} | {name} {start}:{end}</h3></a></div>\n",
-                    name = c.target_name,
-                    start = c.target_start,
-                    end = c.target_end,
-                    idx = idx
-                ));
-            });
-
-        regions.iter().enumerate().for_each(|(idx, group)| {
-            if exclude_simple_viz && is_simple_proximity_group(group) {
-                return;
-            }
-
-            index_links.push_str(&format!(
-                "<div class=\"region\" data-target=\"{name}\" data-start=\"{start}\" data-end=\"{end}\"><a href=\"{idx}/index.html\"><h3>region {idx} | {name} {start}:{end}</h3></a></div>\n",
-                name = target_name_map.get(*&group.target_id),
-                start = group.target_start,
-                end = group.target_end,
-                idx = idx,
-            ));
+        let viz_constr_locations = viz_constraints.iter().map(|c| {
+            let region_name = format!("{}-{}-{}", c.target_name, c.target_start, c.target_end);
+            [
+                region_name,
+                c.target_name.clone(),
+                c.target_start.to_string(),
+                c.target_end.to_string(),
+            ]
         });
 
-        writeln!(
+        let region_entries = regions.iter().enumerate().filter_map(|(idx, group)| {
+            if exclude_simple_viz && is_simple_proximity_group(group) {
+                return None;
+            }
+
+            Some([
+                idx.to_string(),
+                target_name_map.get(*&group.target_id).clone(),
+                group.target_start.to_string(),
+                group.target_end.to_string(),
+            ])
+        });
+
+        write_statistics_table_page(
             writer,
-            "{}",
-            Self::INDEX_TEMPLATE.replace("INDEX_LINKS_TARGET", &index_links)
+            Self::INDEX_HEADER_TEMPLATE,
+            "AURORA Results",
+            &[
+                "Region_region",
+                "Target_str",
+                "Target_Start_int",
+                "Target_End_int",
+            ],
+            &viz_constr_locations.chain(region_entries).collect_vec(),
         )
     }
 
@@ -437,7 +439,7 @@ impl SodaVizWriter {
 pub struct RegionAdjudicationSodaWriter {
     viz_path: PathBuf,
     region_idx: usize,
-    has_dumped_confidences: bool,
+    matricies_started: bool,
     finished: bool,
     constraints: Vec<VizConstraint>,
     viz_bed_path: Option<PathBuf>,
@@ -478,7 +480,7 @@ impl RegionAdjudicationSodaWriter {
         Self {
             viz_path: viz_path.as_ref().to_path_buf(),
             region_idx,
-            has_dumped_confidences: false,
+            matricies_started: false,
             finished: false,
             constraints: constraints
                 .iter()
@@ -499,125 +501,126 @@ impl RegionAdjudicationSodaWriter {
         }
     }
 
-    pub fn write_confidences(&mut self, confidence_matrix: &Matrix<f64>) -> io::Result<()> {
-        self.write_confidences_internal(Some(confidence_matrix))
-    }
-
-    fn write_confidences_internal(
-        &mut self,
-        confidence_matrix: Option<&Matrix<f64>>,
-    ) -> io::Result<()> {
-        if self.has_dumped_confidences {
-            return Err(io::Error::other("Attempted to write confidences twice!"));
-        }
-        // Extract first part of html template...
+    fn write_file_start(&self, file_path: &PathBuf) -> io::Result<()> {
         let html_start = Self::DATA_TEMPLATE
-            .split_once("FILE_SPLIT_POINT")
+            .split_once("MATRIX_TARGET")
             .ok_or(io::Error::other(
                 "HTML template is broken, missing split point.",
             ))?
             .0;
 
-        // Make the directory for the region if it does not exist...
-        let viz_dir = self.viz_path.join(format!("{}", self.region_idx));
-        fs::create_dir_all(&viz_dir)?;
-
-        self.write_confidences_single(&viz_dir.join("index.html"), html_start, confidence_matrix)?;
-
-        for constraint in self.constraints.iter() {
-            self.write_confidences_single(
-                &self.viz_path.join(format!(
-                    "{}-{}-{}.html",
-                    constraint.target_name, constraint.target_start, constraint.target_end
-                )),
-                html_start,
-                confidence_matrix,
-            )?;
-        }
-
-        self.has_dumped_confidences = true;
-        Ok(())
-    }
-
-    fn write_confidences_single(
-        &self,
-        path: &PathBuf,
-        html_start: &str,
-        confidence_matrix: Option<&Matrix<f64>>,
-    ) -> io::Result<()> {
-        let html_start = html_start
-            .replace("REGION_INDEX", &self.region_idx.to_string())
-            .replace(
-                "CONFIDENCES_TARGET",
-                &to_safe_compressed_string(&self.confidence_json(confidence_matrix)?)?,
-            );
-
-        let mut file = File::create(path)?;
+        let mut file = File::create(file_path)?;
         file.write_all(html_start.as_bytes())?;
 
         Ok(())
     }
 
-    fn confidence_json(&self, confidence_matrix: Option<&Matrix<f64>>) -> io::Result<String> {
-        let json = serde_json::json!(self.alignment_confidences(confidence_matrix));
+    pub fn write_matrix(&mut self, name: &str, matrix: &Matrix<f64>) -> io::Result<()> {
+        if self.finished {
+            return Err(io::Error::other(
+                "Attempting to write matricies after visualization has been finished!",
+            ));
+        }
+
+        let viz_dir = self.viz_path.join(format!("{}", self.region_idx));
+        let viz_index = &viz_dir.join("index.html");
+
+        if !self.matricies_started {
+            // Make the directory for the region if it does not exist...
+            fs::create_dir_all(&viz_dir)?;
+            self.write_file_start(&viz_index)?;
+        }
+
+        self.write_matrix_single(viz_index, name, matrix)?;
+
+        for constraint in self.constraints.iter() {
+            let viz_const_path = &self.viz_path.join(format!(
+                "{}-{}-{}.html",
+                constraint.target_name, constraint.target_start, constraint.target_end
+            ));
+
+            if !self.matricies_started {
+                self.write_file_start(viz_const_path)?;
+            }
+
+            self.write_matrix_single(viz_const_path, name, matrix)?;
+        }
+
+        self.matricies_started = true;
+        Ok(())
+    }
+
+    fn write_matrix_single(
+        &self,
+        path: &PathBuf,
+        name: &str,
+        matrix: &Matrix<f64>,
+    ) -> io::Result<()> {
+        let matrix_data = format!(
+            "{}\n",
+            &to_safe_compressed_string(&self.matrix_json(name, matrix)?)?
+        );
+
+        let mut file = File::options().create(false).append(true).open(path)?;
+        file.write_all(matrix_data.as_bytes())?;
+
+        Ok(())
+    }
+
+    fn matrix_json(&self, name: &str, matrix: &Matrix<f64>) -> io::Result<String> {
+        let (min_val, max_val) = matrix
+            .data
+            .iter()
+            .flat_map(|v| v.iter())
+            .copied()
+            .minmax_by(|a, b| a.total_cmp(b))
+            .into_option()
+            .unwrap_or((0.0, 1.0));
+
+        let json = serde_json::json!({
+            "name": name,
+            "min": min_val,
+            "max": max_val,
+            "seqs": &self.alignment_matrix(matrix)
+        });
         let string = serde_json::to_string(&json)?;
         Ok(string)
     }
 
-    fn alignment_confidences(
-        &self,
-        confidence_matrix: Option<&Matrix<f64>>,
-    ) -> Option<Vec<String>> {
-        if let Some(val) = confidence_matrix {
-            let region_start = val.def.target_start;
+    fn alignment_matrix(&self, matrix: &Matrix<f64>) -> Vec<String> {
+        let region_start = matrix.def.target_start;
 
-            return Some(
-                val.def
-                    .col_range_by_logical_row
-                    .iter()
-                    .enumerate()
-                    .map(|(row, &(start, end))| {
-                        let max_arr = (start..=end)
-                            .map(|col| {
-                                *val.data[col]
-                                    .iter()
-                                    .max_by(|a, b| a.total_cmp(b))
-                                    .unwrap_or(&0.0)
-                            })
-                            .collect_vec();
-                        let seq_arr = (start..=end)
-                            .zip(max_arr.iter())
-                            .flat_map(|(col, max_score)| {
-                                ((val.get(row, col).ln() - max_score.ln()) as f32).to_le_bytes()
-                            })
-                            .collect_vec();
-                        let max_arr_enc = max_arr
-                            .iter()
-                            .flat_map(|v| (v.ln() as f32).to_le_bytes())
-                            .collect_vec();
+        matrix
+            .def
+            .col_range_by_logical_row
+            .iter()
+            .enumerate()
+            .map(|(row, &(start, end))| {
+                let seq_arr = (start..=end)
+                    .flat_map(|col| (matrix.get(row, col) as f32).to_le_bytes())
+                    .collect_vec();
 
-                        format!(
-                            "{},{},{},{}",
-                            region_start + start,
-                            region_start + end,
-                            BASE64_STANDARD.encode(seq_arr),
-                            BASE64_STANDARD.encode(max_arr_enc)
-                        )
-                    })
-                    .collect_vec(),
-            );
-        }
-
-        None
+                format!(
+                    "{},{},{}",
+                    region_start + start,
+                    region_start + end,
+                    BASE64_STANDARD.encode(seq_arr)
+                )
+            })
+            .collect_vec()
     }
 
     pub fn write(&mut self, args: AdjudicationSodaDataArgs) -> io::Result<()> {
-        if !self.has_dumped_confidences {
-            self.write_confidences_internal(None)?;
-        }
-
         if self.finished {
             return Err(io::Error::other("Already fully written the visual!"));
+        }
+
+        let viz_index_path = &self
+            .viz_path
+            .join(format!("{}/index.html", self.region_idx));
+
+        if !self.matricies_started {
+            self.write_file_start(viz_index_path)?;
         }
 
         let mut soda_data = AdjudicationSodaData::new(FullAdjudicationSodaDataArgs {
@@ -636,16 +639,14 @@ impl RegionAdjudicationSodaWriter {
             includes_entry_states: args.includes_entry_states,
         });
         let html_end = Self::DATA_TEMPLATE
-            .split_once("FILE_SPLIT_POINT")
+            .split_once("MATRIX_TARGET")
             .ok_or(io::Error::other(
                 "HTML template is broken, missing split point.",
             ))?
             .1;
 
         self.write_single(
-            &self
-                .viz_path
-                .join(format!("{}/index.html", self.region_idx)),
+            viz_index_path,
             html_end,
             "../annotations.js",
             &mut soda_data,
@@ -653,11 +654,17 @@ impl RegionAdjudicationSodaWriter {
         )?;
 
         for constraint in self.constraints.iter() {
+            let constraint_path = &self.viz_path.join(format!(
+                "{}-{}-{}.html",
+                constraint.target_name, constraint.target_start, constraint.target_end
+            ));
+
+            if !self.matricies_started {
+                self.write_file_start(constraint_path)?;
+            }
+
             self.write_single(
-                &self.viz_path.join(format!(
-                    "{}-{}-{}.html",
-                    constraint.target_name, constraint.target_start, constraint.target_end
-                )),
+                constraint_path,
                 html_end,
                 "annotations.js",
                 &mut soda_data,
@@ -665,6 +672,7 @@ impl RegionAdjudicationSodaWriter {
             )?;
         }
 
+        self.matricies_started = true;
         self.finished = true;
         Ok(())
     }

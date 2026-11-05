@@ -31,10 +31,14 @@ async function bootstrap() {
 
   let data = await load_b64_gzip_json(data_elm.textContent);
 
+  data.alignmentMatricies = [];
   if (confidences) {
-    data.alignmentConfidences = await load_b64_gzip_json(
-      confidences.textContent,
-    );
+    for (let matrix_data of confidences.textContent.split("\n")) {
+      if (matrix_data.trim().length == 0) {
+        continue;
+      }
+      data.alignmentMatricies.push(await load_b64_gzip_json(matrix_data));
+    }
   }
 
   window.auroraData = data;
@@ -174,7 +178,7 @@ function run(data) {
   let rowToConf = [];
 
   let params = prepareData();
-  let charts = initializeCharts();
+  let charts = initializeCharts(data.alignmentMatricies.length);
 
   bindWidgets();
 
@@ -298,7 +302,7 @@ function run(data) {
     inputs.forEach((input) => input.addEventListener("input", handleEvent));
   }
 
-  function initializeCharts() {
+  function initializeCharts(matrix_count) {
     // default chart settings that
     // are shared across all charts
     let chartConf = {
@@ -691,7 +695,7 @@ function run(data) {
     let alignments = new soda.Chart({
       ...chartConf,
       zoomable: true,
-      rowHeight: 44,
+      rowHeight: 32 + 12 * matrix_count,
 
       updateLayout(params) {
         let queryIds = [...new Set(params.proxy.map((a) => a.queryId))];
@@ -887,103 +891,100 @@ function run(data) {
         }
 
         if (domainWidth < state.aliThresh) {
-          let annotations =
-            params.alignmentConfidences != null
-              ? domainFilter(params.alignmentConfidences)
-              : [];
-          annotations = annotations.map((val) => {
-            let offset = val.start;
-            let domain = this.domain;
-            let start = Math.max(Math.floor(domain[0]), val.start);
-            let end = Math.min(Math.ceil(domain[1]), val.end);
-            return {
-              id: val.id,
-              row: val.row,
-              values: val.values
-                .slice(start - offset, end + 1 - offset)
-                .map(Math.exp),
-              scores: val.values.slice(start - offset, end + 1 - offset),
-              norms: val.norms.slice(start - offset, end + 1 - offset),
-              start: start - 0.5,
-              end: end + 0.5,
-            };
-          });
+          for (let i = 0; i < params.alignmentMatricies.length; i++) {
+            let matrix = params.alignmentMatricies[i];
 
-          let heatmap_selection = soda.heatmap({
-            chart: this,
-            selector: "ali-seq-conf",
-            annotations: annotations,
-            y: (d) => y(d) + 12,
-            height: 12,
-          });
+            let annotations = domainFilter(matrix.seqs);
 
-          heatmap_selection
-            .selectAll(function () {
-              return this.children;
-            })
-            .on("mouseover", function (data) {
-              let element = this;
-              let d3 = soda.internalD3;
-              let bbox = element.getBoundingClientRect();
-              let x = d3.event.clientX - bbox.left;
-              let y = d3.event.clientY - bbox.top;
-
-              let cell = Math.floor((x / bbox.width) * data.a.scores.length);
-
-              d3.select(document.body)
-                .select(".heatmap-hover-tooltip")
-                .remove();
-
-              d3.select(document.body)
-                .select(".heatmap-highlight-tooltip")
-                .remove();
-
-              let cellX = Math.round(
-                bbox.left + cell * (bbox.width / data.a.scores.length),
-              );
-              let cellY = bbox.top;
-              let cellWidth = Math.round(bbox.width / data.a.scores.length);
-              let cellHeight = Math.round(bbox.height);
-
-              d3.select(document.body)
-                .append("div")
-                .attr("class", "heatmap-highlight-tooltip")
-                .style("position", "fixed")
-                .style("left", `${cellX}px`)
-                .style("top", `${cellY}px`)
-                .style("width", `${cellWidth}px`)
-                .style("height", `${cellHeight}px`)
-                .style("z-index", "1000")
-                .style("pointer-events", "none")
-                .style("background-color", "rgba(0, 255, 255, 0.4)");
-
-              d3.select(document.body)
-                .append("div")
-                .attr("class", "heatmap-hover-tooltip")
-                .style("position", "fixed")
-                .style("z-index", "1000")
-                .style("left", `${Math.round(cellX + cellWidth / 2)}px`)
-                .style("top", `${cellY - 5}px`)
-                .style("background-color", "lightblue")
-                .style("border-radius", "3px")
-                .style("transform", "translate(-50%, -100%)")
-                .style("padding", "3px")
-                .html(
-                  `Log Score: ${data.a.scores[cell] + data.a.norms[cell]}<br>Normalized Log Score: ${data.a.scores[cell]}<br>Normalized Score: ${data.a.values[cell]}`,
-                );
-            })
-            .on("mouseout", function () {
-              let d3 = soda.internalD3;
-              d3.select(document.body)
-                .select(".heatmap-hover-tooltip")
-                .remove();
-
-              d3.select(document.body)
-                .select(".heatmap-highlight-tooltip")
-                .remove();
+            annotations = annotations.map((val) => {
+              let offset = val.start;
+              let domain = this.domain;
+              let start = Math.max(Math.floor(domain[0]), val.start);
+              let end = Math.min(Math.ceil(domain[1]), val.end);
+              return {
+                id: val.id,
+                row: val.row,
+                values: val.values.slice(start - offset, end + 1 - offset),
+                start: start - 0.5,
+                end: end + 0.5,
+              };
             });
 
-          annotations = domainFilter(params.sequences);
+            let heatmap_selection = soda.heatmap({
+              chart: this,
+              selector: `ali-seq-conf-${i}`,
+              annotations: annotations,
+              y: (d) => y(d) + 12 * (i + 1),
+              height: 12,
+              domain: [matrix.min, matrix.max],
+            });
+
+            heatmap_selection
+              .selectAll(function () {
+                return this.children;
+              })
+              .on("mouseover", function (data) {
+                let element = this;
+                let d3 = soda.internalD3;
+                let bbox = element.getBoundingClientRect();
+                let x = d3.event.clientX - bbox.left;
+                let y = d3.event.clientY - bbox.top;
+
+                let cell = Math.floor((x / bbox.width) * data.a.values.length);
+
+                d3.select(document.body)
+                  .select(".heatmap-hover-tooltip")
+                  .remove();
+
+                d3.select(document.body)
+                  .select(".heatmap-highlight-tooltip")
+                  .remove();
+
+                let cellX = Math.round(
+                  bbox.left + cell * (bbox.width / data.a.values.length),
+                );
+                let cellY = bbox.top;
+                let cellWidth = Math.round(bbox.width / data.a.values.length);
+                let cellHeight = Math.round(bbox.height);
+
+                d3.select(document.body)
+                  .append("div")
+                  .attr("class", "heatmap-highlight-tooltip")
+                  .style("position", "fixed")
+                  .style("left", `${cellX}px`)
+                  .style("top", `${cellY}px`)
+                  .style("width", `${cellWidth}px`)
+                  .style("height", `${cellHeight}px`)
+                  .style("z-index", "1000")
+                  .style("pointer-events", "none")
+                  .style("background-color", "rgba(0, 255, 255, 0.4)");
+
+                d3.select(document.body)
+                  .append("div")
+                  .attr("class", "heatmap-hover-tooltip")
+                  .style("position", "fixed")
+                  .style("z-index", "1000")
+                  .style("left", `${Math.round(cellX + cellWidth / 2)}px`)
+                  .style("top", `${cellY - 5}px`)
+                  .style("background-color", "lightblue")
+                  .style("border-radius", "3px")
+                  .style("transform", "translate(-50%, -100%)")
+                  .style("padding", "3px")
+                  .html(`Value: ${data.a.values[cell]}`);
+              })
+              .on("mouseout", function () {
+                let d3 = soda.internalD3;
+                d3.select(document.body)
+                  .select(".heatmap-hover-tooltip")
+                  .remove();
+
+                d3.select(document.body)
+                  .select(".heatmap-highlight-tooltip")
+                  .remove();
+              });
+          }
+
+          let annotations = domainFilter(params.sequences);
           soda.sequence({
             chart: this,
             selector: "ali-seq",
@@ -1114,10 +1115,14 @@ function run(data) {
         inactiveSegments: params.inactiveSegments[state.traceIteration],
         confidenceSegments:
           params.confidenceSegments[state.traceIteration].filter(queryFilter),
-        alignmentConfidences:
-          params.alignmentConfidences != null
-            ? params.alignmentConfidences.filter(queryFilter)
-            : null,
+        alignmentMatricies: params.alignmentMatricies.map((mat) => {
+          return {
+            name: mat.name,
+            min: mat.min,
+            max: mat.max,
+            seqs: mat.seqs.filter(queryFilter),
+          };
+        }),
       };
 
       this.renderParams = filteredParams;
@@ -1532,34 +1537,42 @@ function run(data) {
     return new Float32Array(intView.buffer);
   }
 
-  function prepareAlignmentConfidences(alScores) {
-    if (alScores == null) return alScores;
+  function prepareAlignmentMatricies(matricies) {
+    let newMatricies = [];
+    let ids = 0;
 
-    let alignment_scores = [];
-    let i = 0;
+    for (let mat of matricies) {
+      let alignment_scores = [];
+      let row = 0;
 
-    for (const entry of alScores) {
-      let tokens = entry.split(",");
+      for (const entry of mat.seqs) {
+        let tokens = entry.split(",");
 
-      let start = parseInt(tokens[0]);
-      let end = parseInt(tokens[1]);
-      let values = base64ToFloats(tokens[2]);
-      let norms = base64ToFloats(tokens[3]);
+        let start = parseInt(tokens[0]);
+        let end = parseInt(tokens[1]);
+        let values = base64ToFloats(tokens[2]);
 
-      alignment_scores.push({
-        start,
-        end,
-        values,
-        norms,
-        id: `${i}`,
-        row: i,
-        average: values.reduce((acc, v) => acc + v, 0) / values.length,
+        alignment_scores.push({
+          start,
+          end,
+          values,
+          id: `${ids}`,
+          row,
+        });
+
+        row++;
+        ids++;
+      }
+
+      newMatricies.push({
+        name: mat.name,
+        min: mat.min,
+        max: mat.max,
+        seqs: alignment_scores,
       });
-
-      i++;
     }
 
-    return alignment_scores;
+    return newMatricies;
   }
 
   function prepareData() {
@@ -1627,9 +1640,7 @@ function run(data) {
         data.targetStart,
         data.includesEntryStates,
       ),
-      alignmentConfidences: prepareAlignmentConfidences(
-        data.alignmentConfidences,
-      ),
+      alignmentMatricies: prepareAlignmentMatricies(data.alignmentMatricies),
     };
 
     alignments.proxy.forEach((a) => {

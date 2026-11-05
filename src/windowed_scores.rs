@@ -415,7 +415,7 @@ fn windowed_score_alignment(
             0.0
         } else {
             (substitution_matrix.gap_open() + (gap_length - 1.0) * substitution_matrix.gap_extend())
-            // TODO: Why this division here???
+            // There is a query entry for every nucleotide in the gap, so we have to divide by the length...
                 / gap_length
         }
     };
@@ -428,15 +428,17 @@ fn windowed_score_alignment(
         .zip(alignment.query_aligned_sequence())
         .filter(|&(t, _)| t != GAP_OPEN_DIGITAL && t != GAP_EXTEND_DIGITAL)
         .enumerate()
-        .map(|(target_idx, (t, q))| {
-            let target_pos = target_idx + alignment.target_start;
-            let frequencies = background.frequencies_at(target_pos);
-            match q {
-                GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => 0.0,
-                _ => substitution_matrix.score_with_background(t, q, &frequencies),
+        .map(|(target_idx, (t, q))| match q {
+            GAP_OPEN_DIGITAL | GAP_EXTEND_DIGITAL => 0.0,
+            _ => {
+                let target_pos = target_idx + alignment.target_start;
+                let frequencies = background.frequencies_at(target_pos);
+                substitution_matrix.score_with_background(t, q, &frequencies)
             }
         })
         .collect();
+
+    debug_assert_eq!(ali_length, scores_without_gaps.len());
 
     let mut windowed_scores = vec![0.0; ali_length];
 
@@ -523,6 +525,7 @@ mod tests {
         ];
 
         ali.iter().zip(gaps).try_for_each(|(a, g)| {
+            println!("{:?}", locate_query_gaps(a));
             assert_eq!(locate_query_gaps(a)?, g);
             Ok(())
         })
