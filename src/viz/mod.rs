@@ -362,8 +362,8 @@ impl SodaVizWriter {
             &[
                 "Region_region",
                 "Target_str",
-                "Target_Start_int",
-                "Target_End_int",
+                "Target_Start_start",
+                "Target_End_end",
             ],
             &viz_constr_locations.chain(region_entries).collect_vec(),
         )
@@ -511,7 +511,11 @@ impl RegionAdjudicationSodaWriter {
             .0;
 
         let mut file = File::create(file_path)?;
-        file.write_all(html_start.as_bytes())?;
+        file.write_all(
+            html_start
+                .replace("REGION_INDEX", &self.region_idx.to_string())
+                .as_bytes(),
+        )?;
 
         Ok(())
     }

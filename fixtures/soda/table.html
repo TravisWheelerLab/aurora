@@ -76,6 +76,8 @@
                                 }
                                 break;
                             case "int":
+                            case "start":
+                            case "end":
                                 new_val = parseInt(v);
                                 break;
                             case "string":
@@ -213,14 +215,51 @@
                 let [col, ord] = getCurrentOrder();
 
                 let inner_tsv = tsv;
+                let filterArr = Object.entries(filter).map(([k, v]) => {
+                    let otherKey = null;
+                    if (k.endsWith("_start")) {
+                        let idx = inner_tsv.columns.indexOf(k);
+                        otherKey = inner_tsv.columns
+                            .slice(idx)
+                            .find((v) => v.endsWith("_end"));
+                    } else if (k.endsWith("_end")) {
+                        let idx = inner_tsv.columns.indexOf(k);
+                        otherKey = inner_tsv.columns
+                            .slice(0, idx)
+                            .reverse()
+                            .find((v) => v.endsWith("_start"));
+                    }
+                    return [k, v, otherKey];
+                });
 
                 if (Object.keys(filter).length > 0) {
                     inner_tsv = inner_tsv.filter((row) => {
-                        return Object.entries(filter).every(([k, v]) => {
+                        return filterArr.every(([k, v, otherKey]) => {
                             let k_parts = k.split("_");
                             let k_type = k_parts[k_parts.length - 1];
 
                             switch (k_type) {
+                                case "start":
+                                case "end":
+                                    v = parseInt(v);
+                                    let exactMatch = false;
+                                    if (otherKey != null) {
+                                        let min = Math.min(
+                                            row[k],
+                                            row[otherKey],
+                                        );
+                                        let max = Math.max(
+                                            row[k],
+                                            row[otherKey],
+                                        );
+                                        exactMatch = v >= min && v <= max;
+                                    }
+                                    return (
+                                        row[k]
+                                            .toString()
+                                            .startsWith(v.toString()) ||
+                                        exactMatch
+                                    );
                                 case "float":
                                 case "int":
                                 case "region":
@@ -327,6 +366,8 @@
                                 break;
                             case "float":
                             case "int":
+                            case "start":
+                            case "end":
                             case "string":
                             default:
                                 d3.select(this).text(d.value);

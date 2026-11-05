@@ -895,6 +895,7 @@ function run(data) {
         if (domainWidth < state.aliThresh) {
           for (let i = 0; i < params.alignmentMatricies.length; i++) {
             let matrix = params.alignmentMatricies[i];
+            let d3 = soda.internalD3;
 
             let annotations = domainFilter(matrix.seqs);
 
@@ -912,13 +913,25 @@ function run(data) {
               };
             });
 
+            let maxAbsValue = Math.max(
+              Math.abs(matrix.min),
+              Math.abs(matrix.max),
+            );
+
             let heatmap_selection = soda.heatmap({
               chart: this,
               selector: `ali-seq-conf-${i}`,
               annotations,
               y: (d) => y(d) + 12 * (i + 1),
               height: 12,
-              domain: [matrix.min, matrix.max],
+              domain:
+                matrix.name == "windowed_score"
+                  ? [-maxAbsValue, maxAbsValue]
+                  : [matrix.min, matrix.max],
+              colorScheme:
+                matrix.name == "windowed_score"
+                  ? d3.interpolateRdBu
+                  : d3.interpolatePlasma,
             });
 
             soda.dynamicText({
@@ -933,69 +946,307 @@ function run(data) {
               text: (d) => [matrix.name, "..."],
             });
 
-            heatmap_selection
-              .selectAll(function () {
-                return this.children;
-              })
-              .on("mouseover", function (data) {
-                let element = this;
-                let d3 = soda.internalD3;
-                let bbox = element.getBoundingClientRect();
-                let x = d3.event.clientX - bbox.left;
-                let y = d3.event.clientY - bbox.top;
+            let attachHeatmapTooltip = (heatmap_selection) => {
+              heatmap_selection
+                .selectAll(function () {
+                  return this.children;
+                })
+                .on("mouseover", function (data) {
+                  let element = this;
+                  let d3 = soda.internalD3;
+                  let bbox = element.getBoundingClientRect();
+                  let x = d3.event.clientX - bbox.left;
+                  let y = d3.event.clientY - bbox.top;
 
-                let cell = Math.floor((x / bbox.width) * data.a.values.length);
+                  let cell = Math.floor(
+                    (x / bbox.width) * data.a.values.length,
+                  );
 
-                d3.select(document.body)
-                  .select(".heatmap-hover-tooltip")
-                  .remove();
+                  d3.select(document.body)
+                    .select(".heatmap-hover-tooltip")
+                    .remove();
 
-                d3.select(document.body)
-                  .select(".heatmap-highlight-tooltip")
-                  .remove();
+                  d3.select(document.body)
+                    .select(".heatmap-highlight-tooltip")
+                    .remove();
 
-                let cellX = Math.round(
-                  bbox.left + cell * (bbox.width / data.a.values.length),
-                );
-                let cellY = bbox.top;
-                let cellWidth = Math.round(bbox.width / data.a.values.length);
-                let cellHeight = Math.round(bbox.height);
+                  let cellX = Math.round(
+                    bbox.left + cell * (bbox.width / data.a.values.length),
+                  );
+                  let cellY = bbox.top;
+                  let cellWidth = Math.round(bbox.width / data.a.values.length);
+                  let cellHeight = Math.round(bbox.height);
 
-                d3.select(document.body)
-                  .append("div")
-                  .attr("class", "heatmap-highlight-tooltip")
-                  .style("position", "fixed")
-                  .style("left", `${cellX}px`)
-                  .style("top", `${cellY}px`)
-                  .style("width", `${cellWidth}px`)
-                  .style("height", `${cellHeight}px`)
-                  .style("z-index", "1000")
-                  .style("pointer-events", "none")
-                  .style("background-color", "rgba(0, 255, 255, 0.4)");
+                  d3.select(document.body)
+                    .append("div")
+                    .attr("class", "heatmap-highlight-tooltip")
+                    .style("position", "fixed")
+                    .style("left", `${cellX}px`)
+                    .style("top", `${cellY}px`)
+                    .style("width", `${cellWidth}px`)
+                    .style("height", `${cellHeight}px`)
+                    .style("z-index", "1000")
+                    .style("pointer-events", "none")
+                    .style("background-color", "rgba(0, 255, 255, 0.4)");
 
-                d3.select(document.body)
-                  .append("div")
-                  .attr("class", "heatmap-hover-tooltip")
-                  .style("position", "fixed")
-                  .style("z-index", "1000")
-                  .style("left", `${Math.round(cellX + cellWidth / 2)}px`)
-                  .style("top", `${cellY - 5}px`)
-                  .style("background-color", "lightblue")
-                  .style("border-radius", "3px")
-                  .style("transform", "translate(-50%, -100%)")
-                  .style("padding", "3px")
-                  .html(`Value: ${data.a.values[cell]}`);
-              })
-              .on("mouseout", function () {
-                let d3 = soda.internalD3;
-                d3.select(document.body)
-                  .select(".heatmap-hover-tooltip")
-                  .remove();
+                  d3.select(document.body)
+                    .append("div")
+                    .attr("class", "heatmap-hover-tooltip")
+                    .style("position", "fixed")
+                    .style("z-index", "1000")
+                    .style("left", `${Math.round(cellX + cellWidth / 2)}px`)
+                    .style("top", `${cellY - 5}px`)
+                    .style("background-color", "lightblue")
+                    .style("border-radius", "3px")
+                    .style("transform", "translate(-50%, -100%)")
+                    .style("padding", "3px")
+                    .html(
+                      `Target Position: ${Math.ceil(data.a.start) + cell}<br>Value: ${data.a.values[cell]}`,
+                    );
+                })
+                .on("mouseout", function () {
+                  let d3 = soda.internalD3;
+                  d3.select(document.body)
+                    .select(".heatmap-hover-tooltip")
+                    .remove();
 
-                d3.select(document.body)
-                  .select(".heatmap-highlight-tooltip")
-                  .remove();
-              });
+                  d3.select(document.body)
+                    .select(".heatmap-highlight-tooltip")
+                    .remove();
+                });
+            };
+
+            attachHeatmapTooltip(heatmap_selection);
+
+            if (matrix.name == "windowed_score") {
+              heatmap_selection
+                .selectAll(function () {
+                  return this.children;
+                })
+                .on("click", function (data) {
+                  let element = this;
+                  let d3 = soda.internalD3;
+                  let bbox = element.getBoundingClientRect();
+                  let x = d3.event.clientX - bbox.left;
+                  let y = d3.event.clientY - bbox.top;
+
+                  let cell = Math.floor(
+                    (x / bbox.width) * data.a.values.length,
+                  );
+                  console.log(
+                    `clicked ${cell}, with value ${data.a.values[cell]}`,
+                  );
+
+                  let dialog = d3
+                    .select(document.body)
+                    .append("div")
+                    .attr("class", `heatmap-info-${data.a.row}-${cell}`)
+                    .style("position", "fixed")
+                    .style("z-index", "500")
+                    .style("left", "50%")
+                    .style("top", "50%")
+                    .style("background-color", "white")
+                    .style("border", "1px solid black")
+                    .style("border-radius", "3px")
+                    .style("transform", "translate(-50%, -50%)")
+                    .style("padding", "3px");
+
+                  let center_val = Math.ceil(data.a.start) + cell;
+
+                  dialog
+                    .append("div")
+                    .style("width", "100%")
+                    .style("height", "1.5em")
+                    .style("text-align", "center")
+                    .text(
+                      `Query '${params.proxy.find((d) => d.row == data.a.row)?.query}', Alignment ${data.a.row}, Target Position ${center_val}`,
+                    )
+                    .append("button")
+                    .text("X")
+                    .style("float", "right")
+                    .on("click", () => {
+                      dialog.remove();
+                    });
+
+                  let chart_selection = `window-score-${data.a.row}-${cell}`;
+                  console.log(data.a);
+
+                  let unclamped_start_val =
+                    center_val - Math.floor(params.scoreWindowSize / 2);
+                  let unclamped_end_val =
+                    unclamped_start_val + params.scoreWindowSize - 1;
+
+                  let matrixData = [];
+                  let chartStart = Infinity;
+                  let chartEnd = -Infinity;
+                  let nextRow = 2;
+
+                  for (let mat of params.extraMatricies.slice().reverse()) {
+                    let filtered_res = mat.seqs.filter(
+                      (v) => v.row == data.a.row,
+                    );
+                    if (filtered_res.length == 1) {
+                      filtered_res = filtered_res[0];
+                      let start = Math.max(
+                        filtered_res.start,
+                        Math.min(unclamped_start_val, filtered_res.end),
+                      );
+                      let end = Math.max(
+                        filtered_res.start,
+                        Math.min(unclamped_end_val, filtered_res.end),
+                      );
+                      let values = filtered_res.values.slice(
+                        start - filtered_res.start,
+                        end + 1 - filtered_res.start,
+                      );
+
+                      chartStart = Math.min(chartStart, start);
+                      chartEnd = Math.max(chartEnd, end);
+
+                      if (mat.name == "target_gap_costs") {
+                        values = values.slice(0, values.length - 1);
+                      } else {
+                        start -= 0.5;
+                        end += 0.5;
+                      }
+
+                      matrixData.push({
+                        id: mat.name,
+                        name: mat.name,
+                        start,
+                        end,
+                        row: nextRow++,
+                        values,
+                      });
+                    }
+                  }
+
+                  let targetEntries = params.genomeSeqeunces
+                    .filter((v) => v.start < chartEnd && v.end > chartStart)
+                    .map((v) => {
+                      return { ...v, row: 0 };
+                    });
+                  let queryEntriesGood = params.sequences
+                    .filter(
+                      (v) =>
+                        v.start < chartEnd &&
+                        v.end > chartStart &&
+                        v.row == data.a.row,
+                    )
+                    .map((v) => {
+                      return { ...v, row: 1 };
+                    });
+                  let queryEntriesBad = params.gaps
+                    .filter(
+                      (v) =>
+                        v.start < chartEnd &&
+                        v.end > chartStart &&
+                        v.row == data.a.row,
+                    )
+                    .map((v) => {
+                      return { ...v, row: 1 };
+                    });
+
+                  let dialog_content = dialog
+                    .append("div")
+                    .attr("id", chart_selection)
+                    .style("overflow-y", "auto")
+                    .style("width", "min(100vw - 2em, 70em)")
+                    .style("height", "min(100vh - 2em, 30em)");
+
+                  let chart = new soda.Chart({
+                    selector: `div#${chart_selection}`,
+                    rowHeight: 30,
+                    rowCount: 5,
+                    updateLayout(params) {
+                      this.layout = {
+                        row: (d) => d.a.row,
+                        rowCount: this.rowCount,
+                      };
+                    },
+                    draw(params) {
+                      let d3 = soda.internalD3;
+
+                      soda.sequence({
+                        chart: this,
+                        selector: "genome",
+                        annotations: params.genome,
+                        height: 30,
+                      });
+
+                      soda.sequence({
+                        chart: this,
+                        selector: "ali-seq",
+                        annotations: params.sequences,
+                        fillColor: (d) =>
+                          d.a.id[0] == "m"
+                            ? "green"
+                            : d.a.id[0] == "s"
+                              ? "orange"
+                              : "red",
+                      });
+
+                      soda.sequence({
+                        chart: this,
+                        selector: "ali-gaps",
+                        annotations: params.gaps,
+                        y: (d) => this.rowHeight * this.layout.row(d) - 11,
+                        fillColor: "red",
+                      });
+
+                      let dialog_heatmap_selection = soda.heatmap({
+                        chart: this,
+                        selector: "heatmaps",
+                        annotations: params.annotations,
+                        height: 15,
+                        y: (d) => this.rowHeight * this.layout.row(d) + 15,
+                        domain: (d) => {
+                          let highestAbsVal = Math.max(
+                            ...d.a.values.map((v) => Math.abs(v)),
+                          );
+                          return [-highestAbsVal, highestAbsVal];
+                        },
+                        colorScheme: d3.interpolateRdBu,
+                      });
+
+                      attachHeatmapTooltip(dialog_heatmap_selection);
+
+                      soda.dynamicText({
+                        chart: this,
+                        selector: "heatmap_desc",
+                        annotations: params.annotations,
+                        text: (d) => [`${d.a.name}`],
+                        fontSize: 12,
+                      });
+                    },
+                  });
+
+                  chart.render({
+                    annotations: matrixData,
+                    genome: targetEntries,
+                    sequences: queryEntriesGood,
+                    gaps: queryEntriesBad,
+                    rowCount: 5,
+                  });
+
+                  let matrixText = matrixData
+                    .map((v) => `${v.name}\n${v.values.join(", ")}`)
+                    .join("\n");
+
+                  let sumValue = matrixData
+                    .map((v) => v.values.reduce((a, b) => a + b))
+                    .reduce((a, b) => a + b);
+                  console.log(sumValue);
+                  matrixText += `\n\nTotal Sum: ${sumValue}\nAurora Value: ${data.a.values[cell]}`;
+
+                  dialog_content.append("h4").text("Raw Values");
+                  dialog_content
+                    .append("pre")
+                    .style("background-color", "lightgray")
+                    .style("overflow", "auto")
+                    .text(matrixText);
+                });
+            }
           }
 
           let annotations = domainFilter(params.sequences);
@@ -1666,6 +1917,7 @@ function run(data) {
         data.includesEntryStates,
       ),
       ...prepareAlignmentMatricies(data.alignmentMatricies),
+      genomeSeqeunces: genomeAnn,
       scoreWindowSize: data.scoreWindowSize,
     };
 
