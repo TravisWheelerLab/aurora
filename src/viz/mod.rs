@@ -462,6 +462,7 @@ pub struct AdjudicationSodaDataArgs<'a> {
     pub segments: &'a SegmentedMatrix,
     pub history_counts: &'a [usize],
     pub links: &'a SegmentAssemblyGraph,
+    pub score_window_size: usize,
     pub includes_entry_states: bool,
 }
 
@@ -615,12 +616,12 @@ impl RegionAdjudicationSodaWriter {
             return Err(io::Error::other("Already fully written the visual!"));
         }
 
-        let viz_index_path = &self
-            .viz_path
-            .join(format!("{}/index.html", self.region_idx));
+        let viz_dir_path = self.viz_path.join(self.region_idx.to_string());
+        let viz_index_path = viz_dir_path.join("index.html");
 
         if !self.matricies_started {
-            self.write_file_start(viz_index_path)?;
+            fs::create_dir_all(&viz_dir_path)?;
+            self.write_file_start(&viz_index_path)?;
         }
 
         let mut soda_data = AdjudicationSodaData::new(FullAdjudicationSodaDataArgs {
@@ -636,6 +637,7 @@ impl RegionAdjudicationSodaWriter {
             links: args.links,
             viz_bed_path: self.viz_bed_path.as_ref(),
             viz_bed_offset: self.viz_bed_offset,
+            score_window_size: args.score_window_size,
             includes_entry_states: args.includes_entry_states,
         });
         let html_end = Self::DATA_TEMPLATE
@@ -646,7 +648,7 @@ impl RegionAdjudicationSodaWriter {
             .1;
 
         self.write_single(
-            viz_index_path,
+            &viz_index_path,
             html_end,
             "../annotations.js",
             &mut soda_data,

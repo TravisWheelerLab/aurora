@@ -6,9 +6,10 @@ use crate::alignment::{Alignment, TandemRepeat};
 use crate::alphabet::{
     NucleotideByteUtils, GAP_EXTEND_DIGITAL, GAP_OPEN_DIGITAL, NUCLEOTIDE_WEIGHTS, PAD_DIGITAL,
 };
-use crate::matrix::Matrix;
+use crate::matrix::{Matrix, MatrixDef};
 use crate::substitution_matrix::{AlignmentScore, SubstitutionMatrix};
 use crate::util::VecMap;
+use crate::viz::RegionAdjudicationSodaWriter;
 
 pub fn build_target_seq_from_alignments(
     alignments: &[Alignment],
@@ -296,6 +297,78 @@ fn locate_query_gaps(alignment: &Alignment) -> anyhow::Result<Vec<f64>> {
     }
 }
 
+fn copy_to_matrix<T: std::fmt::Display + Copy + std::default::Default>(
+    matrix: &mut Matrix<T>,
+    row: usize,
+    vals: &[T],
+) {
+    let (start, end) = matrix.col_range_by_row(row);
+
+    debug_assert_eq!(end - start + 1, vals.len());
+
+    (start..=end)
+        .zip(vals.iter())
+        .for_each(|(col_idx, &score)| {
+            matrix.set(row, col_idx, score);
+        });
+}
+
+pub fn dump_debug_windowed_score_info(
+    matrix_def: &MatrixDef,
+    viz: &mut RegionAdjudicationSodaWriter,
+    alignments: &[Alignment],
+    tandem_repeats: &[TandemRepeat],
+    substitution_matrices: &VecMap<SubstitutionMatrix>,
+    background: &impl BackgroundFrequencies,
+    skip_state_score: f64,
+) -> anyhow::Result<()> {
+    let mut matrix: Matrix<f64> = Matrix::new(matrix_def);
+    let iter_alignments = || {
+        alignments
+            .iter()
+            .enumerate()
+            .map(|(idx, a)| (idx, a, substitution_matrices.get(a.substitution_matrix_id)))
+            // map the vec enumeration index to a row index
+            .map(|(ali_idx, a, m)| (ali_idx + 1, a, m))
+    };
+
+    for (row_idx, ali, sub_matrix) in iter_alignments() {
+        let mut target_gaps = target_gap_scores(ali, sub_matrix)?;
+        target_gaps.push(0.0);
+        copy_to_matrix(&mut matrix, row_idx, &target_gaps);
+    }
+    viz.write_matrix("_target_gap_costs", &matrix)?;
+
+    for (row_idx, ali, sub_matrix) in iter_alignments() {
+        let target_gaps = query_gap_scores(ali, sub_matrix)?;
+        copy_to_matrix(&mut matrix, row_idx, &target_gaps);
+    }
+    viz.write_matrix("_query_gap_costs", &matrix)?;
+
+    // set the skip score uniformly
+    (0..matrix.num_cols()).for_each(|col_idx| {
+        matrix.set_skip(col_idx, skip_state_score);
+    });
+
+    for (row_idx, ali, sub_matrix) in iter_alignments() {
+        let al_scores = aligned_position_scores(ali, sub_matrix, background);
+        copy_to_matrix(&mut matrix, row_idx, &al_scores);
+    }
+
+    for (row_idx, repeat) in tandem_repeats
+        .iter()
+        .enumerate()
+        // map the vec enumeration index to a row index
+        .map(|(idx, r)| (idx + 1 + alignments.len(), r))
+    {
+        copy_to_matrix(&mut matrix, row_idx, &repeat.scores);
+    }
+
+    viz.write_matrix("_aligned_costs", &matrix)?;
+
+    Ok(())
+}
+
 pub fn windowed_score(
     matrix: &mut Matrix<f64>,
     alignments: &[Alignment],
@@ -305,8 +378,6 @@ pub fn windowed_score(
     window_size: usize,
     skip_state_score: f64,
 ) -> anyhow::Result<()> {
-    let target_start = matrix.target_start();
-
     // set the skip score uniformly
     (0..matrix.num_cols()).for_each(|col_idx| {
         matrix.set_skip(col_idx, skip_state_score);
@@ -320,15 +391,7 @@ pub fn windowed_score(
         .map(|(ali_idx, a, m)| (ali_idx + 1, a, m))
     {
         let windowed_score = windowed_score_alignment(ali, sub_matrix, window_size, background)?;
-
-        windowed_score
-            .iter()
-            .enumerate()
-            // map the vec enumeration index to a column index
-            .map(|(idx, s)| (idx + ali.target_start - target_start, s))
-            .for_each(|(col_idx, &score)| {
-                matrix.set(row_idx, col_idx, score);
-            });
+        copy_to_matrix(matrix, row_idx, &windowed_score);
     }
 
     for (row_idx, repeat) in tandem_repeats
@@ -338,15 +401,7 @@ pub fn windowed_score(
         .map(|(idx, r)| (idx + 1 + alignments.len(), r))
     {
         let windowed_score = windowed_score_tandem_repeat(repeat, window_size)?;
-
-        windowed_score
-            .iter()
-            .enumerate()
-            // map the vec enumeration index to a column index
-            .map(|(idx, s)| (idx + repeat.target_start - target_start, s))
-            .for_each(|(col_idx, &score)| {
-                matrix.set(row_idx, col_idx, score);
-            });
+        copy_to_matrix(matrix, row_idx, &windowed_score);
     }
 
     Ok(())
@@ -387,30 +442,34 @@ fn windowed_score_tandem_repeat(
     Ok(windowed_scores)
 }
 
-fn windowed_score_alignment(
+fn target_gap_scores(
     alignment: &Alignment,
     substitution_matrix: &impl AlignmentScore,
-    window_size: usize,
-    background: &impl BackgroundFrequencies,
 ) -> anyhow::Result<Vec<f64>> {
-    let ali_length = alignment.target_end - alignment.target_start + 1;
+    let mut target_gaps = locate_target_gaps(alignment)?;
 
-    let mut target_gaps = locate_target_gaps(alignment).unwrap();
-    let mut query_gaps = locate_query_gaps(alignment).unwrap();
-
-    debug_assert_eq!(ali_length - 1, target_gaps.len());
-    debug_assert_eq!(ali_length, query_gaps.len());
-
-    // todo: turn these closures into functions
-    let target_gap_fn = |gap_length: &f64| {
+    fn target_gap_score(gap_length: &f64, substitution_matrix: &impl AlignmentScore) -> f64 {
         if *gap_length == 0.0 {
             0.0
         } else {
             substitution_matrix.gap_open() + (gap_length - 1.0) * substitution_matrix.gap_extend()
         }
-    };
+    }
 
-    let query_gap_fn = |gap_length: &f64| {
+    target_gaps
+        .iter_mut()
+        .for_each(|g| *g = target_gap_score(g, substitution_matrix));
+
+    Ok(target_gaps)
+}
+
+fn query_gap_scores(
+    alignment: &Alignment,
+    substitution_matrix: &impl AlignmentScore,
+) -> anyhow::Result<Vec<f64>> {
+    let mut query_gaps = locate_query_gaps(alignment)?;
+
+    fn query_gap_score(gap_length: &f64, substitution_matrix: &impl AlignmentScore) -> f64 {
         if *gap_length == 0.0 {
             0.0
         } else {
@@ -418,12 +477,21 @@ fn windowed_score_alignment(
             // There is a query entry for every nucleotide in the gap, so we have to divide by the length...
                 / gap_length
         }
-    };
+    }
 
-    target_gaps.iter_mut().for_each(|g| *g = target_gap_fn(g));
-    query_gaps.iter_mut().for_each(|g| *g = query_gap_fn(g));
+    query_gaps
+        .iter_mut()
+        .for_each(|g| *g = query_gap_score(g, substitution_matrix));
 
-    let scores_without_gaps: Vec<f64> = alignment
+    Ok(query_gaps)
+}
+
+fn aligned_position_scores(
+    alignment: &Alignment,
+    substitution_matrix: &impl AlignmentScore,
+    background: &impl BackgroundFrequencies,
+) -> Vec<f64> {
+    alignment
         .target_aligned_sequence()
         .zip(alignment.query_aligned_sequence())
         .filter(|&(t, _)| t != GAP_OPEN_DIGITAL && t != GAP_EXTEND_DIGITAL)
@@ -436,7 +504,25 @@ fn windowed_score_alignment(
                 substitution_matrix.score_with_background(t, q, &frequencies)
             }
         })
-        .collect();
+        .collect()
+}
+
+fn windowed_score_alignment(
+    alignment: &Alignment,
+    substitution_matrix: &impl AlignmentScore,
+    window_size: usize,
+    background: &impl BackgroundFrequencies,
+) -> anyhow::Result<Vec<f64>> {
+    let ali_length = alignment.target_end - alignment.target_start + 1;
+
+    let target_gaps = target_gap_scores(alignment, substitution_matrix)?;
+    let query_gaps = query_gap_scores(alignment, substitution_matrix)?;
+
+    debug_assert_eq!(ali_length - 1, target_gaps.len());
+    debug_assert_eq!(ali_length, query_gaps.len());
+
+    let scores_without_gaps: Vec<f64> =
+        aligned_position_scores(alignment, substitution_matrix, background);
 
     debug_assert_eq!(ali_length, scores_without_gaps.len());
 

@@ -22,7 +22,10 @@ use crate::{
         debug::{dump_debug_history_info, dump_final_trace_statistics},
         AdjudicationSodaDataArgs, RegionAdjudicationSodaWriter,
     },
-    windowed_scores::{build_target_seq_from_alignments, windowed_score, Background},
+    windowed_scores::{
+        build_target_seq_from_alignments, dump_debug_windowed_score_info, windowed_score,
+        Background,
+    },
     AuroraArgs,
 };
 
@@ -211,6 +214,17 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
 
     if let Some(viz_writer) = region_viz_writer.as_mut() {
         if args.visualization_args.debug {
+            dump_debug_windowed_score_info(
+                &matrix_def,
+                viz_writer,
+                proximity_group.alignments,
+                proximity_group.tandem_repeats,
+                &alignment_data.substitution_matrices,
+                &background,
+                skip_state_score,
+            )
+            .expect("Unable to write cost matricies!");
+
             viz_writer
                 .write_matrix("windowed_score", &confidence_matrix)
                 .expect("Unable to write windowed_score matrix!");
@@ -391,6 +405,7 @@ pub fn run_history_trace<T: JoinEstimator, S: JoinStatisticsCollector>(
                 segments,
                 history_counts: &get_history_lengths(&history),
                 links: &assembly_graph,
+                score_window_size: args.annotation_args.score_window_size,
                 includes_entry_states: naive_trace.includes_entry_states,
             })
             .expect("Unable to write visualization!");

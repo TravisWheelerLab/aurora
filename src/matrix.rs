@@ -323,6 +323,7 @@ where
         self.def.num_rows
     }
 
+    #[allow(unused)]
     pub fn target_start(&self) -> usize {
         self.def.target_start
     }

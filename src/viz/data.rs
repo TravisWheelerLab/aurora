@@ -32,6 +32,7 @@ pub struct FullAdjudicationSodaDataArgs<'a> {
     pub links: &'a SegmentAssemblyGraph,
     pub viz_bed_path: Option<&'a PathBuf>,
     pub viz_bed_offset: Option<(u64, usize)>,
+    pub score_window_size: usize,
     pub includes_entry_states: bool,
 }
 
@@ -49,6 +50,7 @@ pub struct AdjudicationSodaData<'a> {
     links: &'a SegmentAssemblyGraph,
     viz_bed_path: Option<&'a PathBuf>,
     viz_bed_offset: Option<(u64, usize)>,
+    score_window_size: usize,
     includes_entry_states: bool,
 }
 
@@ -68,6 +70,7 @@ impl<'a> AdjudicationSodaData<'a> {
             links: args.links,
             viz_bed_path: args.viz_bed_path,
             viz_bed_offset: args.viz_bed_offset,
+            score_window_size: args.score_window_size,
             includes_entry_states: args.includes_entry_states,
         }
     }
@@ -108,6 +111,7 @@ impl<'a> AdjudicationSodaData<'a> {
             "historySegments": self.history_segments(),
             "historyBlocks": self.history_blocks(),
             "includesEntryStates": self.includes_entry_states,
+            "scoreWindowSize": self.score_window_size,
         }))
     }
 

@@ -178,7 +178,9 @@ function run(data) {
   let rowToConf = [];
 
   let params = prepareData();
-  let charts = initializeCharts(data.alignmentMatricies.length);
+  let charts = initializeCharts(
+    data.alignmentMatricies.filter((v) => !v.name.startsWith("_")).length,
+  );
 
   bindWidgets();
 
@@ -913,10 +915,22 @@ function run(data) {
             let heatmap_selection = soda.heatmap({
               chart: this,
               selector: `ali-seq-conf-${i}`,
-              annotations: annotations,
+              annotations,
               y: (d) => y(d) + 12 * (i + 1),
               height: 12,
               domain: [matrix.min, matrix.max],
+            });
+
+            soda.dynamicText({
+              chart: this,
+              selector: `ali-seq-conf-labels-${i}`,
+              fillColor: "black",
+              annotations,
+              y: (d) => y(d) + 12 * (i + 1),
+              x: (d) => Math.max(d.c.xScale(d.a.start), 0),
+              textAnchor: (d) =>
+                d.c.xScale(d.a.start) < 200 ? "start" : "end",
+              text: (d) => [matrix.name, "..."],
             });
 
             heatmap_selection
@@ -1539,6 +1553,7 @@ function run(data) {
 
   function prepareAlignmentMatricies(matricies) {
     let newMatricies = [];
+    let newExtraMatricies = [];
     let ids = 0;
 
     for (let mat of matricies) {
@@ -1564,15 +1579,25 @@ function run(data) {
         ids++;
       }
 
-      newMatricies.push({
+      let newMatrix = {
         name: mat.name,
         min: mat.min,
         max: mat.max,
         seqs: alignment_scores,
-      });
+      };
+
+      if (mat.name.startsWith("_")) {
+        newMatrix.name = newMatrix.name.slice(1);
+        newExtraMatricies.push(newMatrix);
+      } else {
+        newMatricies.push(newMatrix);
+      }
     }
 
-    return newMatricies;
+    return {
+      alignmentMatricies: newMatricies,
+      extraMatricies: newExtraMatricies,
+    };
   }
 
   function prepareData() {
@@ -1640,7 +1665,8 @@ function run(data) {
         data.targetStart,
         data.includesEntryStates,
       ),
-      alignmentMatricies: prepareAlignmentMatricies(data.alignmentMatricies),
+      ...prepareAlignmentMatricies(data.alignmentMatricies),
+      scoreWindowSize: data.scoreWindowSize,
     };
 
     alignments.proxy.forEach((a) => {
