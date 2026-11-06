@@ -320,7 +320,7 @@ pub fn dump_debug_windowed_score_info(
     tandem_repeats: &[TandemRepeat],
     substitution_matrices: &VecMap<SubstitutionMatrix>,
     background: &impl BackgroundFrequencies,
-    skip_state_score: f64,
+    skip_state_percent_id: f64,
 ) -> anyhow::Result<()> {
     let mut matrix: Matrix<f64> = Matrix::new(matrix_def);
     let iter_alignments = || {
@@ -345,10 +345,15 @@ pub fn dump_debug_windowed_score_info(
     }
     viz.write_matrix("_query_gap_costs", &matrix)?;
 
-    // set the skip score uniformly
-    (0..matrix.num_cols()).for_each(|col_idx| {
-        matrix.set_skip(col_idx, skip_state_score);
-    });
+    // set the skip score...
+    let skip_scores = get_skip_state_scores(
+        &mut matrix,
+        alignments,
+        substitution_matrices,
+        background,
+        skip_state_percent_id,
+    );
+    copy_to_matrix(&mut matrix, 0, &skip_scores);
 
     for (row_idx, ali, sub_matrix) in iter_alignments() {
         let al_scores = aligned_position_scores(ali, sub_matrix, background);
@@ -369,6 +374,87 @@ pub fn dump_debug_windowed_score_info(
     Ok(())
 }
 
+fn get_skip_state_scores(
+    matrix: &mut Matrix<f64>,
+    alignments: &[Alignment],
+    substitution_matrices: &VecMap<SubstitutionMatrix>,
+    background: &impl BackgroundFrequencies,
+    skip_state_percent_id: f64,
+) -> Vec<f64> {
+    let mut skip_scores: Vec<f64> = vec![0.0; matrix.num_cols()];
+
+    let matrix_target_start = matrix.target_start();
+
+    for (_row_idx, ali, sub_matrix) in alignments
+        .iter()
+        .enumerate()
+        .map(|(idx, a)| (idx, a, substitution_matrices.get(a.substitution_matrix_id)))
+        // map the vec enumeration index to a row index
+        .map(|(ali_idx, a, m)| (ali_idx + 1, a, m))
+    {
+        for (idx, nucl) in ali
+            .target_aligned_sequence()
+            .filter(|&v| !matches!(v, GAP_EXTEND_DIGITAL | GAP_OPEN_DIGITAL))
+            .enumerate()
+        {
+            let bg = background.frequencies_at(ali.target_start + idx);
+            let mat_col = ali.target_start + idx - matrix_target_start;
+            let target_letter_distribution = NUCLEOTIDE_WEIGHTS[nucl as usize];
+            let mut expected_score = 0.0;
+
+            for (t_i, t_prob) in target_letter_distribution.iter().enumerate() {
+                let non_match_sum: f64 = bg
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, p)| if i != t_i { Some(p) } else { None })
+                    .sum();
+
+                for (q_i, q_prob) in bg.iter().enumerate() {
+                    let weight = if t_i == q_i {
+                        skip_state_percent_id
+                    } else {
+                        (1.0 - skip_state_percent_id) * (q_prob / non_match_sum)
+                    };
+
+                    let pair_score = sub_matrix.score_with_background(t_i as u8, q_i as u8, &bg);
+
+                    expected_score += t_prob * weight * pair_score;
+                }
+            }
+
+            skip_scores[mat_col] = skip_scores[mat_col].max(expected_score);
+        }
+    }
+
+    skip_scores
+}
+
+fn init_skip_state(
+    matrix: &mut Matrix<f64>,
+    alignments: &[Alignment],
+    substitution_matrices: &VecMap<SubstitutionMatrix>,
+    background: &impl BackgroundFrequencies,
+    window_size: usize,
+    skip_state_percent_id: f64,
+    skip_state_shift: f64,
+) {
+    let skip_scores = get_skip_state_scores(
+        matrix,
+        alignments,
+        substitution_matrices,
+        background,
+        skip_state_percent_id,
+    );
+    let mut skip_windowed_scores: Vec<f64> = vec![0.0; matrix.num_cols()];
+
+    windowed_sum(&skip_scores, &mut skip_windowed_scores, window_size);
+
+    for skip_score in skip_windowed_scores.iter_mut() {
+        *skip_score += skip_state_shift;
+    }
+    copy_to_matrix(matrix, 0, &skip_windowed_scores);
+}
+
 pub fn windowed_score(
     matrix: &mut Matrix<f64>,
     alignments: &[Alignment],
@@ -376,12 +462,19 @@ pub fn windowed_score(
     substitution_matrices: &VecMap<SubstitutionMatrix>,
     background: &impl BackgroundFrequencies,
     window_size: usize,
-    skip_state_score: f64,
+    skip_state_percent_id: f64,
+    skip_state_shift: f64,
 ) -> anyhow::Result<()> {
     // set the skip score uniformly
-    (0..matrix.num_cols()).for_each(|col_idx| {
-        matrix.set_skip(col_idx, skip_state_score);
-    });
+    init_skip_state(
+        matrix,
+        alignments,
+        substitution_matrices,
+        background,
+        window_size,
+        skip_state_percent_id,
+        skip_state_shift,
+    );
 
     for (row_idx, ali, sub_matrix) in alignments
         .iter()
@@ -407,37 +500,41 @@ pub fn windowed_score(
     Ok(())
 }
 
-fn windowed_score_tandem_repeat(
-    repeat: &TandemRepeat,
-    window_size: usize,
-) -> anyhow::Result<Vec<f64>> {
-    let repeat_length = repeat.target_end - repeat.target_start + 1;
-
-    let mut windowed_scores = vec![0.0; repeat_length];
+fn windowed_sum(src: &[f64], dst: &mut [f64], window_size: usize) {
+    debug_assert_eq!(src.len(), dst.len());
+    debug_assert!(src.len() >= 1);
 
     let half_window = (window_size - 1) / 2;
 
     let mut left = 0usize;
-    let mut right = (repeat_length - 1).min(half_window);
+    let mut right = (dst.len() - 1).min(half_window);
 
-    windowed_scores[0] = repeat.scores[left..=right].iter().sum();
+    dst[0] = src[left..=right].iter().sum();
 
-    (1..repeat_length).for_each(|idx| {
+    (1..dst.len()).for_each(|idx| {
         let prev_left = left;
         let prev_right = right;
 
         left = idx.saturating_sub(half_window);
-        right = (repeat_length - 1).min(idx + half_window);
-        windowed_scores[idx] = windowed_scores[idx - 1];
+        right = (dst.len() - 1).min(idx + half_window);
+        dst[idx] = dst[idx - 1];
 
         if left != prev_left {
-            windowed_scores[idx] -= repeat.scores[left - 1];
+            dst[idx] -= src[left - 1];
         }
 
         if right != prev_right {
-            windowed_scores[idx] += repeat.scores[right];
+            dst[idx] += src[right];
         }
     });
+}
+
+fn windowed_score_tandem_repeat(
+    repeat: &TandemRepeat,
+    window_size: usize,
+) -> anyhow::Result<Vec<f64>> {
+    let mut windowed_scores = vec![0.0; repeat.scores.len()];
+    windowed_sum(&repeat.scores, &mut windowed_scores, window_size);
 
     Ok(windowed_scores)
 }

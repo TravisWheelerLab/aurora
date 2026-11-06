@@ -14,7 +14,7 @@ pub fn windowed_confidence(matrix: &mut Matrix<f64>, window_size: usize) -> Vec<
 
     (0..matrix.num_rows())
         // skip the skip state
-        .skip(1)
+        //.skip(1)
         .for_each(|row_idx| {
             let (row_start, row_end) = matrix.col_range_by_row(row_idx);
             (row_start..=row_end).for_each(|center_of_window_col_idx| {

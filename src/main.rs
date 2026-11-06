@@ -246,15 +246,25 @@ pub struct AnnotationArgs {
     )]
     pub background_window_size: usize,
 
-    /// Apply an additional penalty to the skip state score.
+    /// Apply an additional penalty globally to the skip state score.
     #[arg(
         short = 'S',
-        long = "skip-state-penalty",
+        long = "skip-state-shift",
         default_value = "0.0",
         value_name = "f",
         allow_negative_numbers = true
     )]
     pub skip_state_score_shift: f64,
+
+    /// The percent identity sequence the skip state should model.
+    #[arg(
+        short = 'P',
+        long = "skip-state-percent-id",
+        default_value = "0.5",
+        value_name = "f",
+        value_parser = ranged::<f64>(0.0..1.0)
+    )]
+    pub skip_state_percent_identity: f64,
 
     /// The minimum cost for keeping an alignment in a segment for history tracing.
     #[arg(

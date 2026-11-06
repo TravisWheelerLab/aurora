@@ -49,7 +49,7 @@ impl ScoreParams {
 
         // staying in the skip state for some amount of positions (default = 30)
         // should be the same cost as jumping between query sequences
-        let skip_loop_score = query_jump_score / num_skip_loops_eq_to_jump as f64;
+        let skip_loop_score = query_jump_score / num_skip_loops_eq_to_jump as f64; // 0.0;
 
         Self {
             query_jump_score,

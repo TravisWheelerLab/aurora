@@ -153,7 +153,7 @@ impl AlignmentScore for SubstitutionMatrix {
             (self.core_ratios[t][q] / frequencies[t]).ln()
         } else {
             // TODO: Why did jack do this?
-            // this may not be in the same base (bits instead of nats), and also might be scaled by the lambda.
+            // this may not be in the same base (bits instead of nats)...
             self.scores[t][q]
         }
     }

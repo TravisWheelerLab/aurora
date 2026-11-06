@@ -200,6 +200,7 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
         annot_args.num_skip_loops_eq_to_jump as f64,
         annot_args.skip_state_score_shift,
     );
+    //let skip_state_score = annot_args.skip_state_score_shift;
 
     windowed_score(
         &mut confidence_matrix,
@@ -208,6 +209,7 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
         &alignment_data.substitution_matrices,
         &background,
         args.annotation_args.score_window_size,
+        args.annotation_args.skip_state_percent_identity,
         skip_state_score,
     )
     .unwrap();
@@ -221,7 +223,7 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
                 proximity_group.tandem_repeats,
                 &alignment_data.substitution_matrices,
                 &background,
-                skip_state_score,
+                args.annotation_args.skip_state_percent_identity,
             )
             .expect("Unable to write cost matricies!");
 
