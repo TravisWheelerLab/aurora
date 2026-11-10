@@ -182,6 +182,15 @@ function run(data) {
     data.alignmentMatricies.filter((v) => !v.name.startsWith("_")).length,
   );
 
+  function fixedDynamicText(config) {
+    let res = soda.dynamicText(config);
+    // To circumvent bug in soda's addToTextMaps ...
+    for (let emptySvg of document.querySelectorAll("body > svg")) {
+      emptySvg.remove();
+    }
+    return res;
+  }
+
   bindWidgets();
 
   render();
@@ -385,7 +394,7 @@ function run(data) {
         });
 
         // labels
-        soda.dynamicText({
+        fixedDynamicText({
           chart: this,
           selector: "label",
           annotations: params.labels,
@@ -542,7 +551,7 @@ function run(data) {
         });
 
         // Render segment index and history count...
-        soda.dynamicText({
+        fixedDynamicText({
           chart: this,
           selector: "segmentInfo",
           annotations: params.historySegments,
@@ -578,7 +587,7 @@ function run(data) {
         });
 
         // Display the name of the block...
-        soda.dynamicText({
+        fixedDynamicText({
           chart: this,
           selector: "blocksLabel",
           annotations: params.historyBlocks,
@@ -625,7 +634,7 @@ function run(data) {
         soda.clickBehavior({
           chart: this,
           annotations: params.historyBlocks,
-          click: (s, d) => {
+          click: function (s, d) {
             let processedLinks = d.a.link_data;
 
             if (processedLinks) {
@@ -874,7 +883,7 @@ function run(data) {
             });
 
           annotations = annotations.concat(supplement);
-          soda.dynamicText({
+          fixedDynamicText({
             chart: this,
             selector: "labels",
             annotations,
@@ -883,7 +892,7 @@ function run(data) {
           });
 
           // tandem repeat labels
-          soda.dynamicText({
+          fixedDynamicText({
             chart: this,
             selector: "tr-labels",
             annotations: params.tandemRepeats,
@@ -934,7 +943,7 @@ function run(data) {
                   : d3.interpolatePlasma,
             });
 
-            soda.dynamicText({
+            fixedDynamicText({
               chart: this,
               selector: `ali-seq-conf-labels-${i}`,
               fillColor: "black",
@@ -1033,14 +1042,14 @@ function run(data) {
                   let cell = Math.floor(
                     (x / bbox.width) * data.a.values.length,
                   );
-                  console.log(
-                    `clicked ${cell}, with value ${data.a.values[cell]}`,
-                  );
 
-                  let dialog = d3
-                    .select(document.body)
+                  let bodyElem = d3.select(document.body);
+                  let dialogClass = `heatmap-info-${data.a.row}-${cell}`;
+                  let moveEvtSelector = `mousemove.${dialogClass}`;
+
+                  let dialog = bodyElem
                     .append("div")
-                    .attr("class", `heatmap-info-${data.a.row}-${cell}`)
+                    .attr("class", dialogClass)
                     .style("position", "fixed")
                     .style("z-index", "500")
                     .style("left", "50%")
@@ -1053,23 +1062,80 @@ function run(data) {
 
                   let center_val = Math.ceil(data.a.start) + cell;
 
-                  dialog
+                  let dialog_header = dialog
                     .append("div")
                     .style("width", "100%")
                     .style("height", "1.5em")
                     .style("text-align", "center")
                     .text(
                       `Query '${params.proxy.find((d) => d.row == data.a.row)?.query}', Alignment ${data.a.row}, Target Position ${center_val}`,
-                    )
+                    );
+
+                  let pos = [0, 0];
+                  let offset = [0, 0];
+                  let inDrag = false;
+
+                  dialog_header
+                    .on("mousedown", () => {
+                      let evt = d3.event;
+                      if (!inDrag) {
+                        pos = [
+                          Math.floor(
+                            evt.clientX - document.body.clientWidth / 2,
+                          ),
+                          Math.floor(
+                            evt.clientY - document.body.clientHeight / 2,
+                          ),
+                        ];
+                        let dRect = dialog.node().getBoundingClientRect();
+                        offset = [
+                          Math.floor(
+                            dRect.x +
+                              dRect.width / 2 -
+                              document.body.clientWidth / 2,
+                          ),
+                          Math.floor(
+                            dRect.y +
+                              dRect.height / 2 -
+                              document.body.clientHeight / 2,
+                          ),
+                        ];
+                        inDrag = true;
+                      }
+                    })
+                    .on("mouseup", () => {
+                      inDrag = false;
+                    });
+
+                  bodyElem.on(moveEvtSelector, () => {
+                    let evt = d3.event;
+                    if (inDrag) {
+                      let offX = Math.floor(
+                        evt.clientX - document.body.clientWidth / 2,
+                      );
+                      let offY = Math.floor(
+                        evt.clientY - document.body.clientHeight / 2,
+                      );
+
+                      let trueOffX = offset[0] + offX - pos[0];
+                      let trueOffY = offset[1] + offY - pos[1];
+
+                      dialog
+                        .style("left", `calc(50% + ${trueOffX}px)`)
+                        .style("top", `calc(50% + ${trueOffY}px)`);
+                    }
+                  });
+
+                  dialog_header
                     .append("button")
                     .text("X")
                     .style("float", "right")
                     .on("click", () => {
+                      bodyElem.on(moveEvtSelector, null);
                       dialog.remove();
                     });
 
                   let chart_selection = `window-score-${data.a.row}-${cell}`;
-                  console.log(data.a);
 
                   let unclamped_start_val =
                     center_val - Math.floor(params.scoreWindowSize / 2);
@@ -1166,18 +1232,22 @@ function run(data) {
                     },
                     draw(params) {
                       let d3 = soda.internalD3;
+                      let seqOffset = this.rowHeight * (1 / 3);
 
                       soda.sequence({
                         chart: this,
                         selector: "genome",
                         annotations: params.genome,
-                        height: 30,
+                        y: (d) =>
+                          this.rowHeight * this.layout.row(d) + seqOffset,
                       });
 
                       soda.sequence({
                         chart: this,
                         selector: "ali-seq",
                         annotations: params.sequences,
+                        y: (d) =>
+                          this.rowHeight * this.layout.row(d) + seqOffset,
                         fillColor: (d) =>
                           d.a.id[0] == "m"
                             ? "green"
@@ -1190,7 +1260,8 @@ function run(data) {
                         chart: this,
                         selector: "ali-gaps",
                         annotations: params.gaps,
-                        y: (d) => this.rowHeight * this.layout.row(d) - 11,
+                        y: (d) =>
+                          this.rowHeight * this.layout.row(d) - 11 + seqOffset,
                         fillColor: "red",
                       });
 
@@ -1211,12 +1282,29 @@ function run(data) {
 
                       attachHeatmapTooltip(dialog_heatmap_selection);
 
-                      soda.dynamicText({
+                      fixedDynamicText({
                         chart: this,
                         selector: "heatmap_desc",
                         annotations: params.annotations,
                         text: (d) => [`${d.a.name}`],
                         fontSize: 12,
+                      });
+
+                      soda.rectangle({
+                        chart: this,
+                        selector: "center-highlight",
+                        annotations: [
+                          {
+                            id: "center-highlight-1",
+                            row: 0,
+                            start: center_val - 0.5,
+                            end: center_val + 0.5,
+                          },
+                        ],
+                        fillColor: "transparent",
+                        strokeColor: "black",
+                        strokeWidth: 2,
+                        height: this.rowHeight * 2,
                       });
                     },
                   });
@@ -1236,7 +1324,6 @@ function run(data) {
                   let sumValue = matrixData
                     .map((v) => v.values.reduce((a, b) => a + b))
                     .reduce((a, b) => a + b);
-                  console.log(sumValue);
                   matrixText += `\n\nTotal Sum: ${sumValue}\nAurora Value: ${data.a.values[cell]}`;
 
                   dialog_content.append("h4").text("Raw Values");
@@ -1297,11 +1384,13 @@ function run(data) {
         });
 
         soda.tooltip({
+          chart: this,
           annotations: params.ambiguousTrace.concat(params.conclusiveTrace),
           text: (d) => `confidence: ${d.a.conf}`,
         });
 
         soda.tooltip({
+          chart: this,
           annotations: params.confidenceSegments,
           text: (d) =>
             `${d.a.query}: ` +
@@ -2003,11 +2092,6 @@ function run(data) {
       ...params.alignments,
       ...coords,
     });
-
-    // Remove generated svg elements...
-    for (let emptySvg of document.querySelectorAll("body > svg")) {
-      emptySvg.remove();
-    }
   }
 
   function render() {
