@@ -527,10 +527,10 @@ fn check_for_joins(args: JoinCheckArgs) -> (PossibleJoinLinks, JoinBlockIndexes,
     }
 
     // Resolve into possible joins, merging joins with the same score...
-    let (block_indexes, join_links): (Vec<_>, Vec<_>) = sides_solved
+    let mut ordered_joins: Vec<(usize, [Option<JoinLink>; 2])> = sides_solved
         .iter()
         .enumerate()
-        .sorted_by_key(|v| v.1)
+        .sorted_by_key(|v| (v.1, current_group_indexes[v.0]))
         .filter_map(|(i, v)| {
             if v[0].is_none() && v[1].is_none() {
                 None
@@ -538,14 +538,14 @@ fn check_for_joins(args: JoinCheckArgs) -> (PossibleJoinLinks, JoinBlockIndexes,
                 Some((current_group_indexes[i], v.clone()))
             }
         })
-        .unzip();
+        .collect();
 
     let mut prior_val: Option<&[Option<JoinLink>; 2]> = None;
 
-    let split_indexes = join_links
+    let split_indexes = ordered_joins
         .iter()
         .enumerate()
-        .filter_map(|(i, v)| {
+        .filter_map(|(i, (_, v))| {
             if let Some(val) = prior_val {
                 if v.iter().zip(val.iter()).any(|(v1, v2)| match (v1, v2) {
                     (Some(jl1), Some(jl2)) => !jl1.match_within_epsilon(jl2, epsilon),
@@ -563,6 +563,12 @@ fn check_for_joins(args: JoinCheckArgs) -> (PossibleJoinLinks, JoinBlockIndexes,
             }
         })
         .collect_vec();
+
+    for (start, end) in iterate_from_split_points(&split_indexes, ordered_joins.len()) {
+        ordered_joins[start..end].sort_unstable();
+    }
+
+    let (block_indexes, join_links): (Vec<_>, Vec<_>) = ordered_joins.into_iter().unzip();
 
     (join_links, block_indexes, split_indexes)
 }
@@ -759,7 +765,9 @@ fn add_joins_to_history(
     history_depth: usize,
 ) {
     // JOIN HISTORIES...
-    for (join_start, join_end) in iterate_from_split_points(join_split_points, join_links.len()) {
+    for (join_start, join_end) in
+        iterate_from_split_points(join_split_points, join_block_indexes.len())
+    {
         // All joins in group should match, so just use the first one...
         let [left_join, right_join] = &join_links[join_start];
 

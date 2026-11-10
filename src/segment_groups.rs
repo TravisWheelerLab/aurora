@@ -144,6 +144,8 @@ impl SegmentGroups {
     }
 
     pub fn add_group(&mut self, segment: &Segment, new_segment: &[usize]) -> usize {
+        debug_assert!(new_segment.is_sorted());
+
         let group_offsets = &self.group_offsets;
         let indexes = &self.indexes;
 
