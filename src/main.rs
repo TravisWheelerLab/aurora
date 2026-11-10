@@ -161,17 +161,6 @@ pub struct AnnotationArgs {
     )]
     pub query_jump_penalty: f64,
 
-    /// The number of skip loops that are
-    /// equal to a jump between query models
-    #[arg(
-        short = 'L',
-        long = "skip-loop",
-        default_value = "30",
-        value_name = "n",
-        value_parser = ranged::<usize>(1..)
-    )]
-    pub num_skip_loops_eq_to_jump: usize,
-
     /// The max distance across positions
     /// in the target (genome) at which a join is
     /// considered between compatible alignments
@@ -256,7 +245,7 @@ pub struct AnnotationArgs {
     )]
     pub skip_state_score_shift: f64,
 
-    /// The percent identity sequence the skip state should model.
+    /// The percent identity of sequence the skip state should model.
     #[arg(
         short = 'P',
         long = "skip-state-percent-id",

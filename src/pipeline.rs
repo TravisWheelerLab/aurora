@@ -13,7 +13,7 @@ use crate::{
     },
     join_estimation::{JoinEstimator, JoinStatisticsCollector},
     matrix::{Matrix, MatrixDef},
-    score_params::{approximate_ideal_skip_state_score, ScoreParams},
+    score_params::ScoreParams,
     segments::{assemble_and_link_segments, segments_from_matrix_trace, InitialSegments},
     support::windowed_confidence,
     trace_statistics::TraceStatistics,
@@ -174,7 +174,6 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
     let score_params = ScoreParams::new(
         proximity_group.alignments.len(),
         annot_args.query_jump_penalty,
-        annot_args.num_skip_loops_eq_to_jump,
     );
 
     let matrix_def = MatrixDef::from_proximity_group(proximity_group, true);
@@ -192,15 +191,8 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
         &target_seq,
         target_start,
         target_length,
-        args.annotation_args.background_window_size,
+        annot_args.background_window_size,
     );
-
-    let skip_state_score = approximate_ideal_skip_state_score(
-        &score_params,
-        annot_args.num_skip_loops_eq_to_jump as f64,
-        annot_args.skip_state_score_shift,
-    );
-    //let skip_state_score = annot_args.skip_state_score_shift;
 
     windowed_score(
         &mut confidence_matrix,
@@ -208,9 +200,9 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
         proximity_group.tandem_repeats,
         &alignment_data.substitution_matrices,
         &background,
-        args.annotation_args.score_window_size,
-        args.annotation_args.skip_state_percent_identity,
-        skip_state_score,
+        annot_args.score_window_size,
+        annot_args.skip_state_percent_identity,
+        annot_args.skip_state_score_shift,
     )
     .unwrap();
 

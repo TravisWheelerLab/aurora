@@ -438,7 +438,6 @@ fn init_skip_state(
     skip_state_percent_id: f64,
     skip_state_shift: f64,
 ) {
-    /*
     let skip_scores = get_skip_state_scores(
         matrix,
         alignments,
@@ -454,10 +453,6 @@ fn init_skip_state(
         *skip_score += skip_state_shift;
     }
     copy_to_matrix(matrix, 0, &skip_windowed_scores);
-    */
-    for col in 0..matrix.num_cols() {
-        matrix.set_skip(col, skip_state_shift);
-    }
 }
 
 pub fn windowed_score(

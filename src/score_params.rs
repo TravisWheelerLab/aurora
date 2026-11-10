@@ -10,14 +10,6 @@ pub struct ScoreParams {
     pub skip_loop_score: f64,
 }
 
-pub fn approximate_ideal_skip_state_score(
-    score_params: &ScoreParams,
-    num_skip_loops_match_jump: f64,
-    penalty_shift: f64,
-) -> f64 {
-    -(score_params.query_jump_score / num_skip_loops_match_jump) + penalty_shift
-}
-
 fn fast_select(a: f64, b: f64, switch: bool) -> f64 {
     /*let sw = (!switch as u64).wrapping_sub(1);
     f64::from_bits((a.to_bits() & sw) | (b.to_bits() & !sw))*/
@@ -28,28 +20,32 @@ fn fast_select(a: f64, b: f64, switch: bool) -> f64 {
     }
 }
 
+const NEG_LN2: f64 = -0.6931471806;
+
+// See https://cran.uib.no/web/packages/Rmpfr/vignettes/log1mexp-note.pdf
+fn ln_1m_exp(v: f64) -> f64 {
+    let v_neg = -v.abs();
+    if v_neg < NEG_LN2 {
+        (-v_neg.exp()).ln_1p()
+    } else {
+        (-v_neg.exp_m1()).ln()
+    }
+}
+
 impl ScoreParams {
-    pub fn new(
-        num_alignments: usize,
-        query_jump_penalty_nats: f64,
-        num_skip_loops_eq_to_jump: usize,
-    ) -> Self {
+    pub fn new(num_alignments: usize, query_jump_penalty_nats: f64) -> Self {
         let query_jump_score = query_jump_penalty_nats - (num_alignments.max(1) as f64).ln();
         // jumping to the skip state and then jumping back to a query sequence
         // should be the same cost as jumping between query sequences
-        // note for 2nd term: add a tiny bit of penalty to make entering and leaving asymmetrical
-        let query_to_skip_score =
-            (query_jump_score / 2.0) + query_jump_score / num_skip_loops_eq_to_jump as f64;
+        let query_to_skip_score = (query_jump_score / 2.0) as f64;
 
         // staying in the same query sequence is essentially free (this should
         // not be zero mathematically, but it becomes zero due to floating point
         // arithmetic)
-        // TODO: if we never want to parameterize this, we should remove it entirely
-        let query_loop_score = 0.0;
+        let query_loop_score = ln_1m_exp(query_jump_score);
 
-        // staying in the skip state for some amount of positions (default = 30)
-        // should be the same cost as jumping between query sequences
-        let skip_loop_score = query_jump_score / num_skip_loops_eq_to_jump as f64; // 0.0;
+        // staying in the skip state for some amount of positions is the same as staying in a query sequence...
+        let skip_loop_score = query_loop_score; // 0.0;
 
         Self {
             query_jump_score,
