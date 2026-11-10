@@ -184,10 +184,10 @@ function run(data) {
 
   function fixedDynamicText(config) {
     let res = soda.dynamicText(config);
-    // To circumvent bug in soda's addToTextMaps ...
+    /*// To circumvent bug in soda's addToTextMaps ...
     for (let emptySvg of document.querySelectorAll("body > svg")) {
       emptySvg.remove();
-    }
+    }*/
     return res;
   }
 
