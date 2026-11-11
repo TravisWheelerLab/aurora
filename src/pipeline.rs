@@ -174,6 +174,7 @@ pub fn run_naive_trace<T: JoinStatisticsCollector>(
     let score_params = ScoreParams::new(
         proximity_group.alignments.len(),
         annot_args.query_jump_penalty,
+        annot_args.skip_jump_multiplier,
     );
 
     let matrix_def = MatrixDef::from_proximity_group(proximity_group, true);

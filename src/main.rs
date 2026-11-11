@@ -161,6 +161,16 @@ pub struct AnnotationArgs {
     )]
     pub query_jump_penalty: f64,
 
+    /// The cost of jumping to the skip state measured in query jump penalties.
+    #[arg(
+        short = 'S',
+        long = "skip-jump-multiplier",
+        default_value = "1.0",
+        value_name = "f",
+        value_parser = ranged::<f64>(0.0..)
+    )]
+    pub skip_jump_multiplier: f64,
+
     /// The max distance across positions
     /// in the target (genome) at which a join is
     /// considered between compatible alignments
