@@ -163,7 +163,7 @@ pub struct AnnotationArgs {
 
     /// The cost of jumping to the skip state measured in query jump penalties.
     #[arg(
-        short = 'S',
+        short = 'M',
         long = "skip-jump-multiplier",
         default_value = "1.0",
         value_name = "f",
