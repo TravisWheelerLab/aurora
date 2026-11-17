@@ -1,7 +1,6 @@
 use std::{
     cmp::Ordering,
     ops::{Add, AddAssign},
-    usize,
 };
 
 use crate::statistics::Distribution;

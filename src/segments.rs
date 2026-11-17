@@ -1,4 +1,3 @@
-use core::f64;
 use std::{cmp::Ordering, collections::HashMap, fmt::Debug, iter::Fuse};
 
 use crate::{

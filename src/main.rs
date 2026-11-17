@@ -165,7 +165,7 @@ pub struct AnnotationArgs {
     #[arg(
         short = 'M',
         long = "skip-jump-multiplier",
-        default_value = "1.0",
+        default_value = "0.55",
         value_name = "f",
         value_parser = ranged::<f64>(0.0..)
     )]

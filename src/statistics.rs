@@ -1,4 +1,3 @@
-use core::f64;
 use puruspe::{beta, betai, invbetai};
 use std::fmt::Debug;
 
@@ -176,7 +175,7 @@ impl HalfT {
 
     pub fn from_sample_mean(mean: f64, degrees_of_freedom: usize) -> Self {
         Self {
-            standard_deviation: mean * (2.0 / f64::consts::PI).sqrt(),
+            standard_deviation: mean * (2.0 / std::f64::consts::PI).sqrt(),
             degrees_of_freedom,
         }
     }

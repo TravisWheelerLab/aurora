@@ -1,5 +1,4 @@
 use crate::{matrix::Matrix, score_params::ScoreParams};
-use core::f64;
 use itertools::multizip;
 
 /// Compute the maximum scoring paths through an alignment confidence matrix. Stores resulting path scores and paths
@@ -104,7 +103,7 @@ pub fn viterbi_collapsed(
                             .logical_to_sparse_row_idx(logical_row_to_idx, col_from_idx);
                         (
                             viterbi_matrix.get_sparse(sparse_row_from_idx, col_from_idx)
-                                // NOTE: we're not adding the query loop score 
+                                // NOTE: we're not adding the query loop score
                                 // here since it's currently always ZERO
                                 + score_params.skip_loop_score * row_is_ghost as usize as f64,
                             sparse_row_from_idx,
