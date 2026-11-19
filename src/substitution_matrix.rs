@@ -154,6 +154,7 @@ impl AlignmentScore for SubstitutionMatrix {
         } else {
             // TODO: Why did jack do this?
             // this may not be in the same base (bits instead of nats)...
+            // TODO: Idea: Maybe replace with weighted expected value of likelihood ratios?
             self.scores[t][q]
         }
     }

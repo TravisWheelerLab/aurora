@@ -259,7 +259,7 @@ pub struct AnnotationArgs {
     #[arg(
         short = 'P',
         long = "skip-state-percent-id",
-        default_value = "0.5",
+        default_value = "0.4",
         value_name = "f",
         value_parser = ranged::<f64>(0.0..1.0)
     )]
